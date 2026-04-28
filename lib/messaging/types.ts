@@ -6,6 +6,33 @@ import type {
 
 export type AudioSource = "mic" | "tab";
 
+// ── Auth messages (per ADR-0005) ──────────────────────────────────────────────
+
+/** Side panel → Background: initiate OTP login */
+export type SignInRequest = {
+	type: "signInRequest";
+	email: string;
+};
+
+/** Side panel → Background: verify the OTP code */
+export type VerifyOtpRequest = {
+	type: "verifyOtpRequest";
+	email: string;
+	token: string;
+};
+
+/** Side panel → Background: sign out current user */
+export type SignOutRequest = { type: "signOutRequest" };
+
+/**
+ * Offscreen → Background: obtain current access token.
+ * Per ADR-0005: SW responds async (return true) with TokenResult.
+ * Response is handled via the sendMessage callback, not via this union.
+ */
+export type GetAccessToken = { type: "getAccessToken" };
+
+// ── Recording messages ────────────────────────────────────────────────────────
+
 // Side panel → Background
 export type StartRecording = {
 	type: "start-recording";
@@ -47,6 +74,9 @@ export type StartCapture = {
 };
 export type StopCapture = { type: "stop-capture" };
 
+// Background → Offscreen: force-close on logout (per ADR-0005 logout flow)
+export type ForceClose = { type: "forceClose" };
+
 // Offscreen → Background
 export type CaptureTokens = {
 	type: "capture-tokens";
@@ -64,6 +94,12 @@ export type CaptureError = {
 };
 
 export type Message =
+	// Auth
+	| SignInRequest
+	| VerifyOtpRequest
+	| SignOutRequest
+	| GetAccessToken
+	// Recording
 	| StartRecording
 	| StopRecording
 	| RecordingStateChanged
@@ -71,6 +107,7 @@ export type Message =
 	| TranscriptionComplete
 	| StartCapture
 	| StopCapture
+	| ForceClose
 	| CaptureTokens
 	| CaptureComplete
 	| CaptureError;

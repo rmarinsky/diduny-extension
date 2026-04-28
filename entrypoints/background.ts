@@ -1,9 +1,18 @@
-import {
-	getTokens,
-	refreshOnStartup,
-	refreshTokens,
-	setupAlarmListener,
-} from "../lib/auth/token-manager";
+/**
+ * Background service worker — single entry point per ADR-0005.
+ *
+ * Auth responsibilities (ADR-0005):
+ * - Holds the sole Supabase client instance (with chrome.storage.local adapter).
+ * - Responds to auth messages: signInRequest, verifyOtpRequest, signOutRequest.
+ * - Responds to getAccessToken from offscreen document (async sendMessage pattern).
+ *
+ * Recording responsibilities:
+ * - Manages offscreen document lifecycle.
+ * - Routes recording messages between side panel and offscreen.
+ * - Maintains badge state.
+ */
+import { supabase } from "../lib/auth/supabaseClient";
+import type { TokenResult } from "../lib/auth/tokenBridge";
 import { crashLog, getCrashLogs, logError } from "../lib/crash-log";
 import { onMessage, sendMessage } from "../lib/messaging/bridge";
 import type { Message } from "../lib/messaging/types";
@@ -36,10 +45,6 @@ export default defineBackground(() => {
 
 	// Side panel opens on action click
 	chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-
-	// Set up token refresh alarm and refresh on startup
-	setupAlarmListener();
-	refreshOnStartup();
 
 	// Log uncaught errors in service worker
 	self.addEventListener("error", (event) => {
@@ -80,7 +85,149 @@ export default defineBackground(() => {
 		})
 		.catch(() => {});
 
-	// Keyboard shortcut: Alt+Shift+D toggles recording
+	// ── Auth message handler (per ADR-0005) ────────────────────────────────────
+	//
+	// Uses the raw chrome.runtime.onMessage API (not the typed bridge) because:
+	// 1. getAccessToken requires sendResponse (async, return true pattern).
+	// 2. Auth messages return data back to caller, unlike recording messages.
+	chrome.runtime.onMessage.addListener(
+		(msg: unknown, _sender, sendResponse) => {
+			if (!msg || typeof msg !== "object" || !("type" in msg)) return false;
+			const message = msg as { type: string; [k: string]: unknown };
+
+			switch (message.type) {
+				case "getAccessToken": {
+					// Per ADR-0005: return true to keep channel open, respond async.
+					// SW may have been suspended; SDK reads session from chrome.storage.local.
+					supabase.auth.getSession().then(({ data, error }) => {
+						if (error || !data.session) {
+							sendResponse({
+								error: "NOT_AUTHENTICATED",
+							} satisfies TokenResult);
+							return;
+						}
+
+						const session = data.session;
+						const now = Math.floor(Date.now() / 1000);
+
+						// If token is expired, attempt refresh before responding
+						if (session.expires_at !== undefined && session.expires_at < now) {
+							supabase.auth
+								.refreshSession()
+								.then(({ data: refreshed, error: refreshError }) => {
+									if (refreshError || !refreshed.session) {
+										sendResponse({
+											error: "SESSION_EXPIRED",
+										} satisfies TokenResult);
+									} else {
+										sendResponse({
+											token: refreshed.session.access_token,
+											expires_at: refreshed.session.expires_at ?? 0,
+										} satisfies TokenResult);
+									}
+								})
+								.catch(() => {
+									sendResponse({
+										error: "STORAGE_READ_FAILED",
+									} satisfies TokenResult);
+								});
+						} else {
+							sendResponse({
+								token: session.access_token,
+								expires_at: session.expires_at ?? 0,
+							} satisfies TokenResult);
+						}
+					});
+					return true; // keep channel open for async sendResponse
+				}
+
+				case "signInRequest": {
+					const email = message.email as string;
+					supabase.auth
+						.signInWithOtp({ email })
+						.then(({ error }) => {
+							if (error) {
+								sendResponse({ ok: false, error: error.message });
+							} else {
+								sendResponse({ ok: true });
+							}
+						})
+						.catch((err) => {
+							sendResponse({
+								ok: false,
+								error: err instanceof Error ? err.message : "Unknown error",
+							});
+						});
+					return true;
+				}
+
+				case "verifyOtpRequest": {
+					const email = message.email as string;
+					const token = message.token as string;
+					supabase.auth
+						.verifyOtp({ email, token, type: "email" })
+						.then(({ data, error }) => {
+							if (error || !data.session) {
+								sendResponse({
+									ok: false,
+									error: error?.message ?? "Verification failed",
+								});
+							} else {
+								sendResponse({
+									ok: true,
+									user: data.session.user,
+								});
+							}
+						})
+						.catch((err) => {
+							sendResponse({
+								ok: false,
+								error: err instanceof Error ? err.message : "Unknown error",
+							});
+						});
+					return true;
+				}
+
+				case "getSessionUser": {
+					// Returns the current Supabase user without exposing tokens.
+					supabase.auth.getUser().then(({ data, error }) => {
+						if (error || !data.user) {
+							sendResponse({ ok: false });
+						} else {
+							sendResponse({
+								ok: true,
+								user: { id: data.user.id, email: data.user.email },
+							});
+						}
+					});
+					return true;
+				}
+
+				case "signOutRequest": {
+					supabase.auth
+						.signOut()
+						.then(() => {
+							// Per ADR-0005: broadcast forceClose to offscreen so it can flush
+							// partial transcript and close WS cleanly.
+							sendMessage({ type: "forceClose" }).catch(() => {});
+							sendResponse({ ok: true });
+						})
+						.catch((err) => {
+							sendResponse({
+								ok: false,
+								error: err instanceof Error ? err.message : "Unknown error",
+							});
+						});
+					return true;
+				}
+
+				default:
+					return false;
+			}
+		},
+	);
+
+	// ── Keyboard shortcut ───────────────────────────────────────────────────────
 	chrome.commands.onCommand.addListener(async (command) => {
 		if (command !== "toggle-recording") return;
 
@@ -95,7 +242,7 @@ export default defineBackground(() => {
 		}
 	});
 
-	// Message routing
+	// ── Recording message routing ───────────────────────────────────────────────
 	onMessage(async (msg) => {
 		crashLog("bg:msg", "info", `received: ${msg.type}`);
 		switch (msg.type) {
@@ -147,6 +294,8 @@ export default defineBackground(() => {
 		}
 	});
 
+	// ── Recording helpers ───────────────────────────────────────────────────────
+
 	async function startRecording(
 		mode: RecordingMode,
 		language: string,
@@ -159,18 +308,18 @@ export default defineBackground(() => {
 			`mode=${mode}, lang=${language}, diarization=${diarization}, hasStream=${!!selection?.streamId}`,
 		);
 
-		const tokens = await getFreshTokensForRecording();
-		if (!tokens) {
+		// Per ADR-0005: get access token from Supabase SDK (reads chrome.storage.local)
+		const { data: sessionData } = await supabase.auth.getSession();
+		if (!sessionData.session) {
 			await setState("error", "Not authenticated");
 			return;
 		}
+		const accessToken = sessionData.session.access_token;
 
 		try {
-			// Ensure mic permission is granted
 			await ensureMicPermission();
 			crashLog("bg:startRecording", "info", "mic permission OK");
 
-			// Stream IDs expire quickly, so do all slow setup before requesting one.
 			await createOffscreen();
 			crashLog("bg:startRecording", "info", "offscreen created");
 
@@ -183,7 +332,7 @@ export default defineBackground(() => {
 			await sendToOffscreenWithRetry({
 				type: "start-capture",
 				mode,
-				accessToken: tokens.accessToken,
+				accessToken,
 				language,
 				diarization,
 				streamId: selection?.streamId,
@@ -205,16 +354,6 @@ export default defineBackground(() => {
 	async function stopRecording() {
 		await setState("processing");
 		await sendMessage({ type: "stop-capture" });
-	}
-
-	async function getFreshTokensForRecording() {
-		const currentTokens = await getTokens();
-		if (!currentTokens) {
-			return null;
-		}
-
-		const refreshedTokens = await refreshTokens().catch(() => null);
-		return refreshedTokens ?? currentTokens;
 	}
 
 	async function setState(state: RecordingState, error?: string) {

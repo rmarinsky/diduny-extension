@@ -1,30 +1,66 @@
+/**
+ * useAuth — side panel auth hook.
+ *
+ * Per ADR-0005: all Supabase calls go through the background SW, which holds
+ * the sole Supabase client instance with the chrome.storage.local adapter.
+ * Side panel never imports supabase directly.
+ *
+ * Auth state is derived by asking the SW for the current session on mount.
+ */
 import { useCallback, useEffect, useState } from "react";
-import { sendOtp, verifyOtp } from "../../../lib/api/auth";
-import {
-	clearTokens,
-	getTokens,
-	saveTokens,
-} from "../../../lib/auth/token-manager";
 import { crashLog } from "../../../lib/crash-log";
-import type { AuthTokens } from "../../../lib/types";
 
 type AuthStep = "email" | "otp" | "authenticated";
+
+interface AuthUser {
+	id: string;
+	email: string | undefined;
+}
+
+function sendToBackground<T>(msg: Record<string, unknown>): Promise<T> {
+	return new Promise((resolve, reject) => {
+		chrome.runtime.sendMessage(msg, (response) => {
+			if (chrome.runtime.lastError) {
+				reject(new Error(chrome.runtime.lastError.message));
+				return;
+			}
+			resolve(response as T);
+		});
+	});
+}
 
 export function useAuth() {
 	const [step, setStep] = useState<AuthStep>("email");
 	const [email, setEmail] = useState("");
-	const [user, setUser] = useState<AuthTokens["user"] | null>(null);
-	const [loading, setLoading] = useState(false);
+	const [user, setUser] = useState<AuthUser | null>(null);
+	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 
-	// Check existing session on mount
+	// Check existing session on mount by querying SW
 	useEffect(() => {
-		getTokens().then((tokens) => {
-			if (tokens) {
-				setUser(tokens.user);
-				setStep("authenticated");
-			}
-		});
+		sendToBackground<{ token: string; expires_at: number } | { error: string }>(
+			{ type: "getAccessToken" },
+		)
+			.then((res) => {
+				if ("token" in res) {
+					// Session exists — fetch user details via getAccessToken response
+					// (user info is in the session stored in chrome.storage.local)
+					// We use a secondary message to get the user object.
+					return sendToBackground<{
+						ok: boolean;
+						user?: { id: string; email: string };
+					}>({ type: "getSessionUser" }).then((userRes) => {
+						if (userRes.ok && userRes.user) {
+							setUser({ id: userRes.user.id, email: userRes.user.email });
+							setStep("authenticated");
+						}
+					});
+				}
+			})
+			.catch(() => {
+				// No session or SW not yet awake — stay on email step
+			})
+			.finally(() => setLoading(false));
 	}, []);
 
 	const requestOtp = useCallback(async (emailInput: string) => {
@@ -32,7 +68,11 @@ export function useAuth() {
 		setLoading(true);
 		setError(null);
 		try {
-			await sendOtp(emailInput);
+			const res = await sendToBackground<{ ok: boolean; error?: string }>({
+				type: "signInRequest",
+				email: emailInput,
+			});
+			if (!res.ok) throw new Error(res.error ?? "Failed to send OTP");
 			setEmail(emailInput);
 			setStep("otp");
 		} catch (err) {
@@ -53,9 +93,17 @@ export function useAuth() {
 			setLoading(true);
 			setError(null);
 			try {
-				const tokens = await verifyOtp(email, otp);
-				await saveTokens(tokens);
-				setUser(tokens.user);
+				const res = await sendToBackground<{
+					ok: boolean;
+					error?: string;
+					user?: { id: string; email: string };
+				}>({
+					type: "verifyOtpRequest",
+					email,
+					token: otp,
+				});
+				if (!res.ok) throw new Error(res.error ?? "Invalid OTP");
+				setUser(res.user ? { id: res.user.id, email: res.user.email } : null);
 				setStep("authenticated");
 				crashLog("sidepanel:auth", "info", "authenticated");
 			} catch (err) {
@@ -74,10 +122,15 @@ export function useAuth() {
 
 	const logout = useCallback(async () => {
 		crashLog("sidepanel:auth", "info", "logout");
-		await clearTokens();
-		setUser(null);
-		setEmail("");
-		setStep("email");
+		setLoading(true);
+		try {
+			await sendToBackground<{ ok: boolean }>({ type: "signOutRequest" });
+		} finally {
+			setUser(null);
+			setEmail("");
+			setStep("email");
+			setLoading(false);
+		}
 	}, []);
 
 	return { step, email, user, loading, error, requestOtp, submitOtp, logout };
