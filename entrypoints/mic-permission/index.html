@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Diduny — Microphone Access</title>
+  <script type="module" src="./main.ts"></script>
+  <style>
+    body { font-family: -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #fafafa; }
+    .card { text-align: center; padding: 40px; background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); max-width: 360px; }
+    h2 { margin: 0 0 8px; }
+    p { color: #666; margin: 0 0 24px; font-size: 14px; }
+    button { padding: 12px 24px; background: #6366f1; color: white; border: none; border-radius: 8px; font-size: 15px; cursor: pointer; }
+    button:hover { background: #4f46e5; }
+    .success { color: #22c55e; font-weight: 500; }
+    .error { color: #ef4444; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Microphone Access</h2>
+    <p>Diduny needs microphone access for voice recording. Click below and allow when prompted.</p>
+    <button id="grant">Grant Microphone Access</button>
+    <p id="status"></p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,393 @@
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	font-size: 14px;
+	color: #1a1a1a;
+	background: #fafafa;
+	min-height: 100vh;
+}
+
+#root {
+	display: flex;
+	flex-direction: column;
+	min-height: 100vh;
+	padding: 16px;
+	gap: 16px;
+}
+
+/* Auth */
+.auth-screen {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 12px;
+	padding-top: 40px;
+}
+
+.auth-screen h2 {
+	font-size: 20px;
+	font-weight: 600;
+}
+
+.auth-screen p {
+	color: #666;
+	font-size: 13px;
+}
+
+.input-group {
+	display: flex;
+	gap: 8px;
+	width: 100%;
+}
+
+.input-group input {
+	flex: 1;
+	padding: 10px 12px;
+	border: 1px solid #ddd;
+	border-radius: 8px;
+	font-size: 14px;
+	outline: none;
+}
+
+.input-group input:focus {
+	border-color: #6366f1;
+}
+
+/* Buttons */
+.btn {
+	padding: 10px 16px;
+	border: none;
+	border-radius: 8px;
+	font-size: 14px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: opacity 0.15s;
+}
+
+.btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.btn-primary {
+	background: #6366f1;
+	color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+	background: #4f46e5;
+}
+
+.btn-danger {
+	background: #ef4444;
+	color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+	background: #dc2626;
+}
+
+.btn-secondary {
+	background: #e5e7eb;
+	color: #374151;
+}
+
+.btn-ghost {
+	background: none;
+	color: #6366f1;
+	padding: 6px 8px;
+	font-size: 13px;
+}
+
+/* Recording Controls */
+.controls {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.controls-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+}
+
+.controls-header .user-email {
+	font-size: 12px;
+	color: #888;
+}
+
+.mode-toggle {
+	display: flex;
+	gap: 4px;
+	background: #f3f4f6;
+	border-radius: 8px;
+	padding: 3px;
+}
+
+.mode-toggle button {
+	flex: 1;
+	padding: 8px 12px;
+	border: none;
+	border-radius: 6px;
+	font-size: 13px;
+	cursor: pointer;
+	background: none;
+	color: #666;
+}
+
+.mode-toggle button.active {
+	background: white;
+	color: #1a1a1a;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.record-btn {
+	width: 64px;
+	height: 64px;
+	border-radius: 50%;
+	border: 3px solid #ef4444;
+	background: white;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	align-self: center;
+	transition: all 0.15s;
+}
+
+.record-btn:hover {
+	background: #fef2f2;
+}
+
+.record-btn .dot {
+	width: 28px;
+	height: 28px;
+	background: #ef4444;
+	border-radius: 50%;
+	transition: all 0.15s;
+}
+
+.record-btn.recording .dot {
+	border-radius: 4px;
+	width: 22px;
+	height: 22px;
+}
+
+.record-btn.recording {
+	border-color: #ef4444;
+	animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+	0%,
+	100% {
+		box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.3);
+	}
+	50% {
+		box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+	}
+}
+
+.state-label {
+	text-align: center;
+	font-size: 13px;
+	color: #888;
+}
+
+.state-label.recording {
+	color: #ef4444;
+}
+.state-label.processing {
+	color: #eab308;
+}
+.state-label.success {
+	color: #22c55e;
+}
+.state-label.error {
+	color: #ef4444;
+}
+
+/* Language selector */
+.settings-row {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	font-size: 13px;
+}
+
+.settings-row select {
+	padding: 6px 8px;
+	border: 1px solid #ddd;
+	border-radius: 6px;
+	font-size: 13px;
+}
+
+.settings-row label {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	cursor: pointer;
+}
+
+.hint-text {
+	margin-top: -4px;
+	font-size: 12px;
+	line-height: 1.4;
+	color: #6b7280;
+}
+
+/* Transcript */
+.transcript {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.transcript-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+}
+
+.transcript-header h3 {
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.transcript-text {
+	flex: 1;
+	padding: 12px;
+	background: white;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	font-size: 14px;
+	line-height: 1.6;
+	min-height: 100px;
+	max-height: 400px;
+	overflow-y: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.transcript-text .interim {
+	color: #9ca3af;
+}
+
+.transcript-text .speaker {
+	font-weight: 600;
+	color: #6366f1;
+}
+
+/* Meeting split view */
+.meeting-sources {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	flex: 1;
+}
+
+.source-panel {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.source-label {
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: #6366f1;
+}
+
+.error-msg {
+	padding: 8px 12px;
+	background: #fef2f2;
+	border: 1px solid #fecaca;
+	border-radius: 8px;
+	color: #dc2626;
+	font-size: 13px;
+}
+
+/* Crash logs */
+.crash-logs {
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.crash-logs-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 6px 12px;
+	background: #f9fafb;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.crash-logs-list {
+	max-height: 240px;
+	overflow-y: auto;
+	font-size: 11px;
+	font-family: ui-monospace, monospace;
+}
+
+.crash-log-empty {
+	padding: 12px;
+	text-align: center;
+	color: #9ca3af;
+}
+
+.crash-log-entry {
+	padding: 6px 10px;
+	border-top: 1px solid #f3f4f6;
+}
+
+.crash-log-entry.error {
+	background: #fef2f2;
+}
+
+.crash-log-entry.warn {
+	background: #fffbeb;
+}
+
+.crash-log-meta {
+	display: flex;
+	gap: 8px;
+	margin-bottom: 2px;
+}
+
+.crash-log-time {
+	color: #9ca3af;
+}
+
+.crash-log-ctx {
+	color: #6366f1;
+	font-weight: 600;
+}
+
+.crash-log-msg {
+	color: #1f2937;
+	word-break: break-word;
+}
+
+.crash-log-stack {
+	margin: 4px 0 0;
+	padding: 4px 6px;
+	background: #f3f4f6;
+	border-radius: 4px;
+	font-size: 10px;
+	color: #6b7280;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	word-break: break-all;
+}

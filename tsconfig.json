@@ -1,0 +1,9 @@
+{
+	"extends": "./.wxt/tsconfig.json",
+	"compilerOptions": {
+		"jsx": "react-jsx",
+		"strict": true,
+		"noUncheckedIndexedAccess": true
+	},
+	"exclude": ["lib/audio/pcm-worklet.ts", "public/**"]
+}
