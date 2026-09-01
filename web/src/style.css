@@ -108,7 +108,10 @@ textarea {
 .library-filters,
 .recording-list,
 .history,
-.delete-recording {
+.delete-recording,
+.settings,
+.settings-section,
+.settings-section form {
 	display: grid;
 	gap: 0.8rem;
 }
@@ -125,9 +128,40 @@ textarea {
 .library h3,
 .recording-detail h2,
 .recording-detail h3,
+.settings h2,
+.settings h3,
 .library p,
-.recording-detail p {
+.recording-detail p,
+.settings p {
 	margin: 0;
+}
+
+.settings > header {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 1rem;
+}
+
+.settings-section {
+	padding: 1rem;
+	border: 1px solid #aaa;
+	border-radius: 0.4rem;
+}
+
+.settings-section label {
+	display: grid;
+	gap: 0.35rem;
+	font-weight: 600;
+}
+
+.settings-section label.checkbox {
+	display: flex;
+	align-items: center;
+}
+
+.settings-section label.checkbox input {
+	width: auto;
 }
 
 .library-filters {

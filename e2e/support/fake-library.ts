@@ -159,5 +159,6 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 		library,
 		savedTexts: () =>
 			[...recordings.values()].map((recording) => recording.text),
+		settings: () => settings,
 	};
 }

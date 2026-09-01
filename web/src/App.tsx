@@ -7,6 +7,7 @@ import {
 } from "react";
 import { speechPreCheck } from "../../src/core/speech-precheck";
 import { LibraryPane } from "./LibraryPane";
+import { SettingsPane } from "./SettingsPane";
 import {
 	DEFAULT_SHORTCUT,
 	appendTranscript,
@@ -18,7 +19,7 @@ import "./style.css";
 
 type AuthState = "checking" | "otp-sent" | "signed-in" | "signed-out";
 type CaptureState = "idle" | "recording" | "sending";
-type WorkspaceView = "dictation" | "library";
+type WorkspaceView = "dictation" | "library" | "settings";
 
 interface ActiveCapture {
 	audioContext: AudioContext;
@@ -425,6 +426,14 @@ export function App() {
 						>
 							Library
 						</button>
+						<button
+							aria-current={view === "settings" ? "page" : undefined}
+							disabled={captureState !== "idle"}
+							onClick={() => setView("settings")}
+							type="button"
+						>
+							Settings
+						</button>
 					</nav>
 					<button onClick={() => void signOut()} type="button">
 						Sign out
@@ -433,6 +442,8 @@ export function App() {
 			</header>
 			{view === "library" ? (
 				<LibraryPane />
+			) : view === "settings" ? (
+				<SettingsPane />
 			) : (
 				<>
 					<label className="language" htmlFor="language">

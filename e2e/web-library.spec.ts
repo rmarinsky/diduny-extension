@@ -122,6 +122,14 @@ test("the web library searches server-side and edits, copies, plays, and deletes
 		await expect(
 			page.getByText("No recordings match your search."),
 		).toBeVisible();
+
+		await page.getByRole("button", { name: "Settings" }).click();
+		await expect(page.getByText("Storage on this device")).toBeVisible();
+		await page.getByLabel("Enable filler-word cleanup").uncheck();
+		await page.getByRole("button", { name: "Save cleanup" }).click();
+		await expect
+			.poll(() => e2eLibrary.settings().textCleanupEnabled)
+			.toBe(false);
 	} finally {
 		bff.server.closeAllConnections?.();
 		upstream.server.closeAllConnections?.();
