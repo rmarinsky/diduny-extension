@@ -24,21 +24,44 @@ function frameHasSpeech(samples: PcmSamples, offset: number) {
 export function speechPreCheck(
 	samples: PcmSamples | null,
 ): SpeechPreCheckResult {
-	if (!samples) return { hasSpeech: true, reason: "unreadable" };
+	const preCheck = createSpeechPreCheckAccumulator();
+	preCheck.push(samples);
+	return preCheck.result();
+}
+
+export function createSpeechPreCheckAccumulator() {
+	const frame = new Float32Array(VAD.frameSamples);
+	let frameLength = 0;
+	let unreadable = false;
 	let voicedSamples = 0;
-	for (
-		let offset = 0;
-		offset + VAD.frameSamples <= samples.length;
-		offset += VAD.frameSamples
-	) {
-		const voiced = frameHasSpeech(samples, offset);
-		if (voiced === null) return { hasSpeech: true, reason: "unreadable" };
-		if (voiced) voicedSamples += VAD.frameSamples;
-	}
-	const minimumVoicedSamples =
-		(AUDIO_FORMAT.sampleRate * VAD.minimumVoicedDurationMs) /
-		TIME.millisecondsPerSecond;
-	return voicedSamples >= minimumVoicedSamples
-		? { hasSpeech: true }
-		: { hasSpeech: false, reason: "silence" };
+
+	return {
+		push(samples: PcmSamples | null) {
+			if (!samples) {
+				unreadable = true;
+				return;
+			}
+			for (const value of samples) {
+				if (!Number.isFinite(value)) {
+					unreadable = true;
+					return;
+				}
+				frame[frameLength] =
+					samples instanceof Int16Array ? value / 32_768 : value;
+				frameLength += 1;
+				if (frameLength !== VAD.frameSamples) continue;
+				if (frameHasSpeech(frame, 0)) voicedSamples += VAD.frameSamples;
+				frameLength = 0;
+			}
+		},
+		result(): SpeechPreCheckResult {
+			if (unreadable) return { hasSpeech: true, reason: "unreadable" };
+			const minimumVoicedSamples =
+				(AUDIO_FORMAT.sampleRate * VAD.minimumVoicedDurationMs) /
+				TIME.millisecondsPerSecond;
+			return voicedSamples >= minimumVoicedSamples
+				? { hasSpeech: true }
+				: { hasSpeech: false, reason: "silence" };
+		},
+	};
 }

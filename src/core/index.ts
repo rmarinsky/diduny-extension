@@ -60,7 +60,10 @@ export {
 	type RealtimeToken,
 } from "./realtime-session";
 export { SessionMachine } from "./session-machine";
-export { speechPreCheck } from "./speech-precheck";
+export {
+	createSpeechPreCheckAccumulator,
+	speechPreCheck,
+} from "./speech-precheck";
 
 import type { Platform } from "./ports";
 
