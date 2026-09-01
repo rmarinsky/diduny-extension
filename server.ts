@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { PassThrough } from "node:stream";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
@@ -11,6 +12,7 @@ import type {
 	NewLibraryRecording,
 } from "./src/core/ports";
 import { type BffAuthGateway, ProxyOtpGateway } from "./src/server/auth";
+import type { LibraryExportEntry } from "./src/server/library-store";
 import { RealtimeRelay } from "./src/server/realtime-relay";
 import {
 	extensionSessionCookieName,
@@ -23,6 +25,7 @@ import {
 	InMemorySessionStore,
 	type SessionStore,
 } from "./src/server/session-store";
+import { type ZipEntry, writeZip } from "./src/server/zip";
 
 export interface ServerOptions {
 	auth?: BffAuthGateway;
@@ -34,6 +37,7 @@ export interface ServerOptions {
 }
 
 export interface BffLibrary {
+	exportEntries(): AsyncIterable<LibraryExportEntry>;
 	list(options?: LibraryListOptions): Promise<LibraryPage>;
 	media(id: string): Promise<{
 		contentType: string;
@@ -164,6 +168,58 @@ function captionsVtt(recording: LibraryDetail) {
 	return `WEBVTT\n\n00:00:00.000 --> ${vttTimestamp(
 		Math.max(recording.durationSeconds * 1_000, 1),
 	)}\n${captionText(recording.displayText)}\n`;
+}
+
+async function* libraryArchiveEntries(
+	library: BffLibrary,
+): AsyncIterable<ZipEntry> {
+	yield {
+		name: "README.txt",
+		source: Buffer.from(
+			"Diduny Library Export\n\nEach recordings/<id>/ directory contains portable transcript.txt, metadata.json, transcript-history/*.txt, and the original audio file when it is still present on disk.\n",
+		),
+	};
+	for await (const { media, recording } of library.exportEntries()) {
+		const base = `recordings/${recording.id}`;
+		yield {
+			modifiedAt: recording.createdAt,
+			name: `${base}/transcript.txt`,
+			source: Buffer.from(recording.displayText),
+		};
+		yield {
+			modifiedAt: recording.createdAt,
+			name: `${base}/metadata.json`,
+			source: Buffer.from(
+				`${JSON.stringify(
+					{
+						createdAt: recording.createdAt,
+						description: recording.description ?? null,
+						durationSeconds: recording.durationSeconds,
+						id: recording.id,
+						status: recording.status,
+						title: recording.title ?? null,
+						type: recording.type,
+					},
+					null,
+					2,
+				)}\n`,
+			),
+		};
+		for (const [index, version] of recording.history.entries()) {
+			yield {
+				modifiedAt: version.createdAt,
+				name: `${base}/transcript-history/${String(index + 1).padStart(2, "0")}-${index === 0 ? "current" : "previous"}.txt`,
+				source: Buffer.from(version.text),
+			};
+		}
+		if (media) {
+			yield {
+				modifiedAt: recording.createdAt,
+				name: `${base}/audio/${media.fileName}`,
+				source: createReadStream(media.path),
+			};
+		}
+	}
 }
 
 function queryValues(value: unknown) {
@@ -542,6 +598,22 @@ export async function buildServer({
 				...(status ? { status } : {}),
 				...(type ? { type } : {}),
 			});
+		});
+		server.get("/bff/library/export", async (request, reply) => {
+			if (!(await requireSession(request, reply))) return;
+			const archive = new PassThrough();
+			void writeZip(archive, libraryArchiveEntries(library)).catch((error) =>
+				archive.destroy(
+					error instanceof Error ? error : new Error("export_failed"),
+				),
+			);
+			return reply
+				.header(
+					"content-disposition",
+					'attachment; filename="diduny-library.zip"',
+				)
+				.header("content-type", "application/zip")
+				.send(archive);
 		});
 		server.get("/bff/library/:id", async (request, reply) => {
 			if (!(await requireSession(request, reply))) return;

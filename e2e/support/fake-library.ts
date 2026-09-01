@@ -41,6 +41,7 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 		initial.map((recording) => [recording.id, recording]),
 	);
 	const library: BffLibrary = {
+		async *exportEntries() {},
 		async list(options = {}) {
 			const limit = options.limit ?? 50;
 			const offset = options.offset ?? 0;

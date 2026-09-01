@@ -74,6 +74,11 @@ export interface LibraryMediaFile {
 	path: string;
 }
 
+export interface LibraryExportEntry {
+	media: LibraryMediaFile | null;
+	recording: LibraryDetail;
+}
+
 export interface LibraryStoreOptions {
 	dataDir: string;
 	log?: (event: string, fields: Readonly<Record<string, number>>) => void;
@@ -609,6 +614,20 @@ export class LibraryStore implements LibraryPort {
 			};
 		} catch {
 			return null;
+		}
+	}
+
+	async *exportEntries(): AsyncIterable<LibraryExportEntry> {
+		const ids = this.database
+			.query<{ id: string }, []>(
+				"SELECT id FROM recordings ORDER BY createdAt ASC, id ASC",
+			)
+			.all()
+			.map((row) => row.id);
+		for (const id of ids) {
+			const recording = await this.open(id);
+			if (!recording) continue;
+			yield { media: await this.media(id), recording };
 		}
 	}
 
