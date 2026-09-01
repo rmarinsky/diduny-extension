@@ -34,9 +34,11 @@ creates a package. Load the unpacked build in Chrome and configure its local
 BFF origin (default: `http://localhost:3000`). The extension signs in through
 the BFF, keeps bearer tokens out of extension/page storage, sends completed
 dictation to the backend, then delivers the returned text to the focused field.
-The BFF accepts extension-session requests only from this package's Chrome
-origin. Set `DIDUNY_EXTENSION_ORIGIN` only when deploying a separately signed
-package with a different Chrome extension ID.
+The BFF accepts extension-session requests from this package's Chrome origin.
+Chromium omits that `Origin` header for extension fetches, so the BFF also
+accepts its browser-controlled originless Fetch Metadata combination. Set
+`DIDUNY_EXTENSION_ORIGIN` only when deploying a separately signed package with
+a different Chrome extension ID.
 
 ## Verification
 
