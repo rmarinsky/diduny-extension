@@ -6,6 +6,7 @@ import {
 
 const supportedBrowser = {
 	AudioWorkletNode: function AudioWorkletNode() {},
+	documentPictureInPicture: { requestWindow() {} },
 	FileSystemFileHandle: function FileSystemFileHandle() {},
 	SpeechRecognition: function SpeechRecognition() {},
 	navigator: {
@@ -22,6 +23,7 @@ test("passes a capable Chromium-like browser without inspecting its brand", () =
 
 	expect(capabilities).toEqual({
 		audioWorklet: true,
+		documentPictureInPicture: true,
 		displayCaptureAudio: true,
 		onDeviceSpeechRecognition: true,
 		opfsSyncAccess: true,
@@ -31,6 +33,7 @@ test("passes a capable Chromium-like browser without inspecting its brand", () =
 
 test("names every missing API and never looks at a user agent", async () => {
 	const capabilities = detectBrowserCapabilities({ navigator: {} });
+	expect(capabilities.documentPictureInPicture).toBe(false);
 
 	expect(missingBrowserCapabilities(capabilities)).toEqual([
 		expect.objectContaining({ key: "audioWorklet" }),

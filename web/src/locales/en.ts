@@ -107,6 +107,12 @@ export const en = {
 		final: "Final",
 		provisional: "Provisional",
 	},
+	floatingPanel: {
+		open: "Float live panel",
+		return: "Return live panel to page",
+		unavailable:
+			"Diduny could not open a floating panel. Keep the live panel in this page and try again.",
+	},
 	commandPalette: {
 		title: "Command palette",
 		close: "Close command palette",

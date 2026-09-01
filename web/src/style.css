@@ -259,6 +259,11 @@ textarea {
 	background: #fff;
 }
 
+.live-transcript-panel {
+	display: grid;
+	gap: 0.55rem;
+}
+
 .live-transcript h2,
 .live-transcript p {
 	margin: 0;

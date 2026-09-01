@@ -6,6 +6,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { AUDIO_FORMAT } from "../../src/core/constants";
 import type { RealtimeToken } from "../../src/core/realtime-session";
@@ -37,6 +38,10 @@ import {
 import i18n, { setUiLocale } from "./i18n";
 import { createWorkspaceInvalidationBus } from "./invalidation";
 import { saveToLibrary } from "./library";
+import {
+	copyDocumentStyles,
+	documentPictureInPictureApi,
+} from "./picture-in-picture";
 import { type WebRealtimeSession, startWebRealtime } from "./realtime";
 import { acquireRecordingLock } from "./recording-lock";
 import { getWorkspaceSettings } from "./settings";
@@ -110,6 +115,44 @@ function releaseCapture(capture: ActiveCapture) {
 	void capture.audioContext.close();
 }
 
+function LiveTranscriptPanel({
+	announceLiveTranscript,
+	liveFinalText,
+	liveProvisionalText,
+	onReturnToPage,
+}: {
+	announceLiveTranscript: boolean;
+	liveFinalText: string;
+	liveProvisionalText: string;
+	onReturnToPage?: () => void;
+}) {
+	const { t } = useTranslation();
+	return (
+		<div className="live-transcript-panel">
+			<section
+				aria-hidden={announceLiveTranscript ? undefined : true}
+				aria-label={t("liveTranscript.title")}
+				className="live-transcript"
+			>
+				<h2>{t("liveTranscript.title")}</h2>
+				<p aria-live={announceLiveTranscript ? "polite" : undefined}>
+					<span className="token-state">{t("liveTranscript.final")}</span>
+					<span data-testid="live-final-text">{liveFinalText}</span>
+				</p>
+				<p aria-hidden="true" className="provisional-token">
+					<span className="token-state">{t("liveTranscript.provisional")}</span>
+					<span data-testid="live-provisional-text">{liveProvisionalText}</span>
+				</p>
+			</section>
+			{onReturnToPage ? (
+				<button onClick={onReturnToPage} type="button">
+					{t("floatingPanel.return")}
+				</button>
+			) : null}
+		</div>
+	);
+}
+
 export function App() {
 	const [capabilities] = useState(detectBrowserCapabilities);
 	const { t } = useTranslation();
@@ -142,6 +185,8 @@ export function App() {
 	const [liveFinalText, setLiveFinalText] = useState("");
 	const [liveProvisionalText, setLiveProvisionalText] = useState("");
 	const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+	const [pictureInPictureContainer, setPictureInPictureContainer] =
+		useState<HTMLElement | null>(null);
 	const [microphoneDeviceId, setMicrophoneDeviceId] = useState<string | null>(
 		null,
 	);
@@ -161,6 +206,7 @@ export function App() {
 	const documentInput = useRef<HTMLTextAreaElement>(null);
 	const holdCaptureRef = useRef(false);
 	const paletteReturnFocus = useRef<HTMLElement | null>(null);
+	const pictureInPictureWindow = useRef<Window | null>(null);
 	const recordingLockReleaseRef = useRef<(() => void) | null>(null);
 	const stopHoldWhenReadyRef = useRef(false);
 	const statusElement = useRef<HTMLParagraphElement>(null);
@@ -195,6 +241,44 @@ export function App() {
 				: null;
 		setIsCommandPaletteOpen(true);
 	}, []);
+
+	const closeFloatingPanel = useCallback(() => {
+		const floating = pictureInPictureWindow.current;
+		pictureInPictureWindow.current = null;
+		setPictureInPictureContainer(null);
+		if (floating && !floating.closed) floating.close();
+	}, []);
+
+	const openFloatingPanel = useCallback(async () => {
+		const api = documentPictureInPictureApi();
+		if (!api || pictureInPictureWindow.current) return;
+		try {
+			const floating = await api.requestWindow({ height: 260, width: 420 });
+			copyDocumentStyles(document, floating.document);
+			const container = floating.document.createElement("div");
+			floating.document.body.append(container);
+			pictureInPictureWindow.current = floating;
+			floating.addEventListener(
+				"pagehide",
+				() => {
+					if (pictureInPictureWindow.current !== floating) return;
+					pictureInPictureWindow.current = null;
+					setPictureInPictureContainer(null);
+				},
+				{ once: true },
+			);
+			setPictureInPictureContainer(container);
+		} catch {
+			setStatus(t("floatingPanel.unavailable"));
+		}
+	}, [t]);
+
+	useEffect(
+		() => () => {
+			pictureInPictureWindow.current?.close();
+		},
+		[],
+	);
 
 	useEffect(() => {
 		const bus = createWorkspaceInvalidationBus();
@@ -275,6 +359,7 @@ export function App() {
 		} finally {
 			releaseCapture(capture);
 			releaseRecordingLock();
+			closeFloatingPanel();
 			setCaptureState("idle");
 			setElapsed(0);
 			setLevel(0);
@@ -282,7 +367,7 @@ export function App() {
 			setLiveProvisionalText("");
 			setStatus(t("status.cancelled"));
 		}
-	}, [releaseRecordingLock, t]);
+	}, [closeFloatingPanel, releaseRecordingLock, t]);
 
 	const finishCapture = useCallback(async () => {
 		stopHoldWhenReadyRef.current = false;
@@ -376,6 +461,7 @@ export function App() {
 		} finally {
 			releaseCapture(capture);
 			releaseRecordingLock();
+			closeFloatingPanel();
 			setCaptureState("idle");
 			setElapsed(0);
 			setLevel(0);
@@ -383,6 +469,7 @@ export function App() {
 			setLiveProvisionalText("");
 		}
 	}, [
+		closeFloatingPanel,
 		invalidateWorkspace,
 		language,
 		releaseRecordingLock,
@@ -819,27 +906,24 @@ export function App() {
 						placeholder={t("dictation.documentPlaceholder")}
 						value={documentText}
 					/>
-					{captureState !== "idle" ? (
-						<section
-							aria-hidden={announceLiveTranscript ? undefined : true}
-							aria-label={t("liveTranscript.title")}
-							className="live-transcript"
-						>
-							<h2>{t("liveTranscript.title")}</h2>
-							<p aria-live={announceLiveTranscript ? "polite" : undefined}>
-								<span className="token-state">{t("liveTranscript.final")}</span>
-								<span data-testid="live-final-text">{liveFinalText}</span>
-							</p>
-							<p aria-hidden="true" className="provisional-token">
-								<span className="token-state">
-									{t("liveTranscript.provisional")}
-								</span>
-								<span data-testid="live-provisional-text">
-									{liveProvisionalText}
-								</span>
-							</p>
-						</section>
+					{captureState !== "idle" && !pictureInPictureContainer ? (
+						<LiveTranscriptPanel
+							announceLiveTranscript={announceLiveTranscript}
+							liveFinalText={liveFinalText}
+							liveProvisionalText={liveProvisionalText}
+						/>
 					) : null}
+					{pictureInPictureContainer
+						? createPortal(
+								<LiveTranscriptPanel
+									announceLiveTranscript={announceLiveTranscript}
+									liveFinalText={liveFinalText}
+									liveProvisionalText={liveProvisionalText}
+									onReturnToPage={closeFloatingPanel}
+								/>,
+								pictureInPictureContainer,
+							)
+						: null}
 					<div className="controls">
 						<button
 							disabled={captureState === "sending"}
@@ -864,6 +948,13 @@ export function App() {
 						>
 							{t("dictation.cancel")}
 						</button>
+						{captureState !== "idle" &&
+						capabilities.documentPictureInPicture &&
+						!pictureInPictureContainer ? (
+							<button onClick={() => void openFloatingPanel()} type="button">
+								{t("floatingPanel.open")}
+							</button>
+						) : null}
 						<button
 							disabled={!documentText}
 							onClick={() => void copyDocument()}

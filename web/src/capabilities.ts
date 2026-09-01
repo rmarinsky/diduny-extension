@@ -1,5 +1,6 @@
 export interface BrowserCapabilities {
 	audioWorklet: boolean;
+	documentPictureInPicture: boolean;
 	displayCaptureAudio: boolean;
 	onDeviceSpeechRecognition: boolean;
 	opfsSyncAccess: boolean;
@@ -7,6 +8,7 @@ export interface BrowserCapabilities {
 
 interface BrowserEnvironment {
 	AudioWorkletNode?: unknown;
+	documentPictureInPicture?: { requestWindow?: unknown };
 	FileSystemFileHandle?: unknown;
 	SpeechRecognition?: unknown;
 	navigator?: {
@@ -43,6 +45,8 @@ export function detectBrowserCapabilities(
 ): BrowserCapabilities {
 	return {
 		audioWorklet: typeof environment.AudioWorkletNode === "function",
+		documentPictureInPicture:
+			typeof environment.documentPictureInPicture?.requestWindow === "function",
 		displayCaptureAudio:
 			typeof environment.navigator?.mediaDevices?.getDisplayMedia ===
 			"function",
