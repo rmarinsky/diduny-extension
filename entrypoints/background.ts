@@ -30,7 +30,8 @@ interface DesktopCaptureSelection {
 
 export default defineBackground(() => {
 	let currentState: RecordingState = "idle";
-	const completedSources = new Set<string>();
+	const completedSources = new Set<"mic" | "tab">();
+	const persistedSources = new Set<"mic" | "tab">();
 	const KEEPALIVE_ALARM = "recording-keepalive";
 	const DELIVERY_SESSION_STORAGE_KEY = "didunyDeliverySession";
 	let deliverySession: DeliverySession | undefined;
@@ -201,14 +202,31 @@ export default defineBackground(() => {
 					source: msg.source,
 				});
 				completedSources.add(msg.source);
-				if (completedSources.size >= 1) {
+				if (persistedSources.has(msg.source)) {
+					completedSources.delete(msg.source);
+					persistedSources.delete(msg.source);
+				}
+				if (completedSources.size === 0) {
 					await setState("success");
 					await closeOffscreen();
-					completedSources.clear();
+				}
+				break;
+			}
+			case "capture-persisted": {
+				if (completedSources.has(msg.source)) {
+					completedSources.delete(msg.source);
+				} else {
+					persistedSources.add(msg.source);
+				}
+				if (completedSources.size === 0 && persistedSources.size === 0) {
+					await setState("success");
+					await closeOffscreen();
 				}
 				break;
 			}
 			case "capture-error": {
+				completedSources.clear();
+				persistedSources.clear();
 				await clearDeliveryStatus();
 				await setState("error", msg.error);
 				await closeOffscreen();
@@ -241,6 +259,8 @@ export default defineBackground(() => {
 		}
 
 		try {
+			completedSources.clear();
+			persistedSources.clear();
 			await clearDeliveryStatus();
 			await saveDeliverySession(
 				mode === "voice" ? await prepareDeliveryTarget() : undefined,

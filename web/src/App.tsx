@@ -12,6 +12,7 @@ import {
 	isEditableTarget,
 	matchesDictationShortcut,
 } from "./dictation";
+import { saveToLibrary } from "./library";
 import "./style.css";
 
 type AuthState = "checking" | "otp-sent" | "signed-in" | "signed-out";
@@ -149,14 +150,11 @@ export function App() {
 				return;
 			}
 
+			const audio = new Blob(capture.chunks, {
+				type: capture.mediaRecorder.mimeType || "audio/webm",
+			});
 			const form = new FormData();
-			form.append(
-				"audio",
-				new Blob(capture.chunks, {
-					type: capture.mediaRecorder.mimeType || "audio/webm",
-				}),
-				"dictation.webm",
-			);
+			form.append("audio", audio, "dictation.webm");
 			form.append(
 				"config",
 				JSON.stringify({
@@ -180,6 +178,17 @@ export function App() {
 				appendTranscript(current, result.text ?? ""),
 			);
 			setStatus("Dictation added to this document.");
+			void saveToLibrary({
+				audio,
+				durationSeconds: elapsedSeconds(capture.startedAt),
+				text: result.text,
+			}).catch(() => {
+				if (!captureRef.current) {
+					setStatus(
+						"Dictation added. The local library could not save a copy.",
+					);
+				}
+			});
 		} catch (error) {
 			setStatus(error instanceof Error ? error.message : "Dictation failed.");
 		} finally {

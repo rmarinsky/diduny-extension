@@ -82,7 +82,6 @@ test("constructs the core from a complete platform fake without browser or netwo
 	expect(diduny.state).toBe("idle");
 	expect(Object.keys(platform).sort()).toEqual([
 		"audio",
-		"blobs",
 		"clipboard",
 		"clock",
 		"devices",
@@ -90,8 +89,8 @@ test("constructs the core from a complete platform fake without browser or netwo
 		"http",
 		"inference",
 		"keyEvents",
+		"library",
 		"logger",
-		"metadata",
 		"permissions",
 		"power",
 		"remoteMedia",

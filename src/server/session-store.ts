@@ -58,6 +58,8 @@ export class SqliteSessionStore implements SessionStore {
 
 	constructor(path: string) {
 		this.database = openBunDatabase(path);
+		this.database.exec("PRAGMA foreign_keys = ON");
+		this.database.exec("PRAGMA busy_timeout = 5000");
 		this.database.exec(`
 			CREATE TABLE IF NOT EXISTS bff_sessions (
 				id TEXT PRIMARY KEY,

@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import { buildServer } from "./server";
 import { SupabaseOtpGateway } from "./src/server/auth";
+import { LibraryStore } from "./src/server/library-store";
 import { SqliteSessionStore } from "./src/server/session-store";
 import { prepareBffStartup } from "./src/server/startup";
 
@@ -15,12 +16,14 @@ const startup = await prepareBffStartup({
 	dataDir: process.env.DATA_DIR,
 	host,
 });
+const library = await LibraryStore.open({ dataDir: startup.dataDir });
 const server = await buildServer({
 	auth: new SupabaseOtpGateway(
 		globalThis.fetch,
 		supabaseUrl,
 		supabasePublishableKey,
 	),
+	library,
 	sessions: new SqliteSessionStore(join(startup.dataDir, "diduny.db")),
 	staticDir: resolve("web/dist"),
 });

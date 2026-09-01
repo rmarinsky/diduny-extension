@@ -66,6 +66,10 @@ export type CaptureComplete = {
 	text: string;
 	source: AudioSource;
 };
+export type CapturePersisted = {
+	type: "capture-persisted";
+	source: AudioSource;
+};
 export type CaptureError = {
 	type: "capture-error";
 	error: string;
@@ -84,4 +88,5 @@ export type Message =
 	| ForceClose
 	| CaptureTokens
 	| CaptureComplete
+	| CapturePersisted
 	| CaptureError;

@@ -4,7 +4,8 @@ import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import Fastify from "fastify";
 import { chromium } from "playwright";
-import { buildServer } from "../server";
+import { type BffLibrary, buildServer } from "../server";
+import type { LibraryDetail, NewLibraryRecording } from "../src/core/ports";
 
 function serverUrl(server: ReturnType<typeof Fastify>, hostname = "127.0.0.1") {
 	const address = server.server.address();
@@ -13,7 +14,81 @@ function serverUrl(server: ReturnType<typeof Fastify>, hostname = "127.0.0.1") {
 	return `http://${hostname}:${address.port}`;
 }
 
-test("loaded extension signs in through the BFF, triggers its backend relay, and delivers dictation", async () => {
+function createE2eLibrary() {
+	const recordings = new Map<string, LibraryDetail>();
+	const library: BffLibrary = {
+		async list() {
+			return {
+				items: [...recordings.values()].map((recording) => ({
+					createdAt: recording.createdAt,
+					displayTitle: "Untitled recording",
+					durationSeconds: recording.durationSeconds,
+					hasTranslation: false,
+					id: recording.id,
+					status: recording.status,
+					type: recording.type,
+				})),
+			};
+		},
+		async media() {
+			return null;
+		},
+		async open(id) {
+			return recordings.get(id) ?? null;
+		},
+		async remove(ids) {
+			for (const id of ids) recordings.delete(id);
+		},
+		async saveStream(
+			recording: NewLibraryRecording,
+			stream: NodeJS.ReadableStream,
+			contentType: string,
+		) {
+			let fileSizeBytes = 0;
+			for await (const chunk of stream) {
+				fileSizeBytes +=
+					typeof chunk === "string"
+						? Buffer.byteLength(chunk)
+						: chunk.byteLength;
+			}
+			const id = crypto.randomUUID();
+			const createdAt = Date.now();
+			const detail: LibraryDetail = {
+				createdAt,
+				displayText: recording.text,
+				durationSeconds: recording.durationSeconds,
+				history: [
+					{
+						createdAt,
+						id: `${id}:current`,
+						kind: "cloud",
+						provider: "e2e",
+						text: recording.text,
+					},
+				],
+				id,
+				media: {
+					contentType,
+					fileName: `${id}.webm`,
+					fileSizeBytes,
+					id,
+				},
+				status: recording.status,
+				text: recording.text,
+				type: recording.type,
+			};
+			recordings.set(id, detail);
+			return detail;
+		},
+	};
+	return {
+		library,
+		savedTexts: () =>
+			[...recordings.values()].map((recording) => recording.text),
+	};
+}
+
+test("loaded extension signs in through the BFF, triggers its backend relay, delivers dictation, and saves it", async () => {
 	const upstream = Fastify();
 	let transcriptionRequests = 0;
 	let transcriptionBytes = 0;
@@ -50,8 +125,10 @@ test("loaded extension signs in through the BFF, triggers its backend relay, and
 	});
 	await upstream.listen({ host: "localhost", port: 0 });
 	const upstreamUrl = serverUrl(upstream, "localhost");
+	const e2eLibrary = createE2eLibrary();
 
 	const bff = await buildServer({
+		library: e2eLibrary.library,
 		staticDir: resolve("web/dist"),
 		upstreamUrl,
 	});
@@ -134,6 +211,9 @@ test("loaded extension signs in through the BFF, triggers its backend relay, and
 		expect(transcriptionRequests).toBe(1);
 		expect(transcriptionBytes).toBeGreaterThan(0);
 		expect(upstreamAuthorization).toBe("Bearer test-server-token");
+		await expect
+			.poll(() => e2eLibrary.savedTexts(), { timeout: 10_000 })
+			.toEqual(["Hello from backend"]);
 	} finally {
 		await context?.close();
 		bff.server.closeAllConnections?.();

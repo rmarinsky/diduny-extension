@@ -1,4 +1,10 @@
-import type { Recording } from "./models";
+import type {
+	ProcessingStatus,
+	Recording,
+	RecordingType,
+	TranscriptSegment,
+	TranscriptVersion,
+} from "./models";
 import type { Settings } from "./settings";
 
 export type AudioBytes = Uint8Array;
@@ -53,19 +59,97 @@ export interface KeyEventPort {
 	stop(): Promise<void>;
 }
 
-// No transaction concept: durable library ownership belongs to the BFF.
-export interface BlobStorePort {
-	readonly isAvailable: boolean;
-	delete(ids: readonly string[]): Promise<void>;
-	read(id: string): Promise<AudioBytes>;
-	write(id: string, bytes: AudioBytes): Promise<void>;
+export type RetentionCategory = "dictation" | "meeting";
+export type RetentionPolicy =
+	| "days7"
+	| "days30"
+	| "days90"
+	| "forever"
+	| "never"
+	| "year1";
+
+export interface LibraryAudio {
+	bytes: Uint8Array;
+	contentType: string;
 }
 
-export interface MetadataStorePort {
+export interface NewLibraryRecording {
+	createdAt?: number;
+	description?: string;
+	durationSeconds: number;
+	provider?: string;
+	segments?: readonly TranscriptSegment[];
+	status: ProcessingStatus;
+	text: string;
+	title?: string;
+	type: RecordingType;
+}
+
+export interface LibraryMedia {
+	contentType: string;
+	fileName: string;
+	fileSizeBytes: number;
+	id: string;
+}
+
+export interface LibraryDetail extends Recording {
+	description?: string;
+	displayText: string;
+	durationSeconds: number;
+	history: readonly TranscriptVersion[];
+	media: LibraryMedia;
+}
+
+export interface RecordingSummary {
+	createdAt: number;
+	displayTitle: string;
+	durationSeconds: number;
+	hasTranslation: boolean;
+	id: string;
+	snippet?: string;
+	status: ProcessingStatus;
+	type: RecordingType;
+}
+
+export interface LibraryListOptions {
+	limit?: number;
+	offset?: number;
+	search?: string;
+	status?: readonly ProcessingStatus[];
+	type?: readonly RecordingType[];
+}
+
+export interface LibraryPage {
+	items: readonly RecordingSummary[];
+	nextOffset?: number;
+}
+
+export interface LibraryMaintenance {
+	reconcile(): Promise<{ removedOrphans: number }>;
+	sweepRetention(): Promise<{ removed: number }>;
+}
+
+export interface BatchLibraryPort {
+	remove(id: string): Promise<{ removedRecordings: readonly string[] }>;
+}
+
+// One server-side owner holds the database/filesystem transaction. The core has no blob transaction.
+export interface LibraryPort {
+	readonly batches: BatchLibraryPort;
 	readonly isAvailable: boolean;
-	deleteRecordings(ids: readonly string[]): Promise<void>;
-	loadAll(): Promise<readonly Recording[]>;
-	upsertRecording(recording: Recording): Promise<void>;
+	readonly maintenance: LibraryMaintenance;
+	getRetentionPolicies(): Promise<Record<RetentionCategory, RetentionPolicy>>;
+	list(options?: LibraryListOptions): Promise<LibraryPage>;
+	open(id: string): Promise<LibraryDetail | null>;
+	remove(ids: readonly string[]): Promise<void>;
+	save(
+		recording: NewLibraryRecording,
+		audio: LibraryAudio,
+	): Promise<LibraryDetail | null>;
+	setRetentionPolicy(
+		category: RetentionCategory,
+		policy: RetentionPolicy,
+	): Promise<void>;
 }
 
 export interface SettingsPort {
@@ -141,7 +225,6 @@ export interface LoggerPort {
 
 export interface Platform {
 	audio: AudioRecorderPort;
-	blobs: BlobStorePort;
 	clock: ClockPort;
 	clipboard: ClipboardPort;
 	devices: AudioDevicePort;
@@ -149,8 +232,8 @@ export interface Platform {
 	http: HttpPort;
 	inference: LocalInferencePort;
 	keyEvents: KeyEventPort;
+	library: LibraryPort;
 	logger: LoggerPort;
-	metadata: MetadataStorePort;
 	permissions: PermissionPort;
 	power: PowerPort;
 	remoteMedia: RemoteMediaPort;

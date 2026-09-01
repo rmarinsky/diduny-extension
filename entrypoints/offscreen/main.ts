@@ -1,5 +1,6 @@
 import { transcribeAudio } from "../../lib/api/transcription";
 import { mixStreams } from "../../lib/audio/mixer";
+import { saveExtensionRecording } from "../../lib/bff/library";
 import { crashLog, logError } from "../../lib/crash-log";
 import { onMessage, sendMessage } from "../../lib/messaging/bridge";
 import type { AudioSource, StartCapture } from "../../lib/messaging/types";
@@ -11,7 +12,9 @@ interface AudioPipeline {
 	diarization: boolean;
 	language: string;
 	recorder: MediaRecorder;
+	recordingType: "meeting" | "voice";
 	source: AudioSource;
+	startedAt: number;
 	stream: MediaStream;
 }
 
@@ -42,6 +45,7 @@ function createPipeline(
 	bffOrigin: string,
 	language: string,
 	diarization: boolean,
+	recordingType: "meeting" | "voice",
 ): AudioPipeline {
 	const chunks: Blob[] = [];
 	const recorder = new MediaRecorder(stream);
@@ -56,7 +60,9 @@ function createPipeline(
 		diarization,
 		language,
 		recorder,
+		recordingType,
 		source,
+		startedAt: Date.now(),
 		stream,
 	};
 }
@@ -134,6 +140,7 @@ async function startCapture(msg: StartCapture) {
 					msg.bffOrigin,
 					msg.language,
 					msg.diarization,
+					msg.mode,
 				);
 				pipeline.cleanupContexts.push(mixerContext);
 				pipelines = [pipeline];
@@ -145,6 +152,7 @@ async function startCapture(msg: StartCapture) {
 						msg.bffOrigin,
 						msg.language,
 						msg.diarization,
+						msg.mode,
 					),
 				];
 			}
@@ -153,7 +161,14 @@ async function startCapture(msg: StartCapture) {
 				audio: true,
 			});
 			pipelines = [
-				createPipeline(micStream, "mic", msg.bffOrigin, msg.language, false),
+				createPipeline(
+					micStream,
+					"mic",
+					msg.bffOrigin,
+					msg.language,
+					false,
+					msg.mode,
+				),
 			];
 		}
 		await sendMessage({ type: "capture-ready" });
@@ -185,6 +200,27 @@ async function stopCapture() {
 				text: result.text,
 				source: pipeline.source,
 			});
+			try {
+				await saveExtensionRecording(
+					{
+						audio,
+						durationSeconds: Math.max(
+							0,
+							Math.floor((Date.now() - pipeline.startedAt) / 1000),
+						),
+						text: result.text,
+						type: pipeline.recordingType,
+					},
+					pipeline.bffOrigin,
+				);
+			} catch (error) {
+				logError("offscreen:library", error);
+			} finally {
+				await sendMessage({
+					type: "capture-persisted",
+					source: pipeline.source,
+				});
+			}
 		} catch (error) {
 			logError("offscreen:transcribe", error);
 			await sendMessage({

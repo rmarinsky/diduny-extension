@@ -23,6 +23,7 @@ test("ships a container, Apache-2.0 license, and CI quality gates", async () => 
 	]);
 
 	expect(dockerfile).toContain('CMD ["bun", "run", "start:web"]');
+	expect(dockerfile).toContain("COPY --from=build /app/src ./src");
 	expect(license).toContain("Apache License");
 	expect(license).toContain("Version 2.0, January 2004");
 	expect(workflow).toContain("bun run lint");

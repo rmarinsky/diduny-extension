@@ -1,6 +1,13 @@
+import { createReadStream } from "node:fs";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import type {
+	LibraryDetail,
+	LibraryListOptions,
+	LibraryPage,
+	NewLibraryRecording,
+} from "./src/core/ports";
 import { type BffAuthGateway, ProxyOtpGateway } from "./src/server/auth";
 import { RealtimeRelay } from "./src/server/realtime-relay";
 import {
@@ -18,9 +25,26 @@ import {
 export interface ServerOptions {
 	auth?: BffAuthGateway;
 	fetch?: typeof globalThis.fetch;
+	library?: BffLibrary;
 	sessions?: SessionStore;
 	staticDir?: string;
 	upstreamUrl?: string;
+}
+
+export interface BffLibrary {
+	list(options?: LibraryListOptions): Promise<LibraryPage>;
+	media(id: string): Promise<{
+		contentType: string;
+		fileSizeBytes: number;
+		path: string;
+	} | null>;
+	open(id: string): Promise<LibraryDetail | null>;
+	remove(ids: readonly string[]): Promise<void>;
+	saveStream(
+		recording: NewLibraryRecording,
+		stream: NodeJS.ReadableStream,
+		contentType: string,
+	): Promise<LibraryDetail | null>;
 }
 
 function validEmail(email: unknown): email is string {
@@ -63,9 +87,96 @@ function isExtensionRequest(request: FastifyRequest) {
 	return typeof origin === "string" && origin.startsWith("chrome-extension://");
 }
 
+function validRecordingId(id: unknown): id is string {
+	return (
+		typeof id === "string" &&
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+	);
+}
+
+function parseRange(range: string | undefined, size: number) {
+	if (!range) return null;
+	const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+	if (!match) return "invalid";
+	const startText = match[1];
+	const endText = match[2];
+	if (!startText && !endText) return "invalid";
+	const start = startText
+		? Number(startText)
+		: Math.max(size - Number(endText), 0);
+	const end = endText ? Number(endText) : size - 1;
+	if (
+		!Number.isInteger(start) ||
+		!Number.isInteger(end) ||
+		start < 0 ||
+		end < start ||
+		start >= size
+	) {
+		return "invalid";
+	}
+	return { end: Math.min(end, size - 1), start };
+}
+
+function queryValues(value: unknown) {
+	return typeof value === "string"
+		? value
+				.split(",")
+				.map((item) => item.trim())
+				.filter(Boolean)
+		: [];
+}
+
+function isReadableStream(value: unknown): value is NodeJS.ReadableStream {
+	return !!value && typeof value === "object" && "pipe" in value;
+}
+
+function parseLibraryRecording(value: unknown): NewLibraryRecording | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const record = value as Record<string, unknown>;
+	if (
+		Object.keys(record).some(
+			(key) => !["durationSeconds", "status", "text", "type"].includes(key),
+		)
+	) {
+		return null;
+	}
+	if (
+		typeof record.text !== "string" ||
+		typeof record.durationSeconds !== "number" ||
+		!Number.isFinite(record.durationSeconds) ||
+		record.durationSeconds < 0 ||
+		typeof record.type !== "string" ||
+		![
+			"fileTranscription",
+			"meeting",
+			"meetingTranslation",
+			"translation",
+			"voice",
+		].includes(record.type) ||
+		typeof record.status !== "string" ||
+		![
+			"failed",
+			"partiallyRecovered",
+			"processing",
+			"transcribed",
+			"translated",
+			"unprocessed",
+		].includes(record.status)
+	) {
+		return null;
+	}
+	return {
+		durationSeconds: record.durationSeconds,
+		status: record.status as NewLibraryRecording["status"],
+		text: record.text,
+		type: record.type as NewLibraryRecording["type"],
+	};
+}
+
 export async function buildServer({
 	auth,
 	fetch = globalThis.fetch,
+	library,
 	sessions = new InMemorySessionStore(),
 	staticDir,
 	upstreamUrl = process.env.DIDUNY_UPSTREAM_URL ?? "http://127.0.0.1:3910",
@@ -74,9 +185,23 @@ export async function buildServer({
 	const authGateway = auth ?? new ProxyOtpGateway(fetch, upstreamUrl);
 	const realtimeRelay = new RealtimeRelay(fetch, sessions, upstreamUrl);
 	const refreshes = new Map<string, Promise<BffSession>>();
+	const maxPendingLibrarySavesPerSession = 8;
+	const pendingLibrarySaves = new Map<
+		string,
+		{ createdAt: number; recording: NewLibraryRecording; sessionId: string }
+	>();
 	await server.register(websocket);
 	server.addContentTypeParser(
 		/^multipart\/form-data/i,
+		(_request, payload, done) => {
+			done(null, payload);
+		},
+	);
+	server.addContentTypeParser(/^audio\//i, (_request, payload, done) => {
+		done(null, payload);
+	});
+	server.addContentTypeParser(
+		/^application\/octet-stream/i,
 		(_request, payload, done) => {
 			done(null, payload);
 		},
@@ -158,6 +283,23 @@ export async function buildServer({
 		if (session) await authGateway.logout(session).catch(() => undefined);
 		return reply.code(204).send();
 	};
+	const requireSession = async (
+		request: FastifyRequest,
+		reply: FastifyReply,
+		cookieName = sessionCookieName,
+		extensionOnly = false,
+	) => {
+		if (extensionOnly && !isExtensionRequest(request)) {
+			reply.code(403).send({ error: "extension_origin_required" });
+			return null;
+		}
+		const id = sessionIdFromCookie(request.headers.cookie, cookieName);
+		if (!id || !(await sessions.get(id))) {
+			reply.code(401).send({ error: "unauthenticated" });
+			return null;
+		}
+		return id;
+	};
 
 	server.get("/bff/health", async () => ({
 		activeRealtimeSockets: realtimeRelay.activeUpstreamSockets,
@@ -193,6 +335,174 @@ export async function buildServer({
 	server.get("/bff/auth/session", (request) => sessionResponse(request));
 	server.post("/bff/auth/logout", (request, reply) => logout(request, reply));
 	server.all("/bff/api/*", (request, reply) => relay(request, reply));
+	if (library) {
+		const stageLibrarySave = (
+			request: FastifyRequest,
+			reply: FastifyReply,
+			sessionId: string,
+		) => {
+			const recording = parseLibraryRecording(request.body);
+			if (!recording) {
+				return reply.code(400).send({ error: "invalid_recording" });
+			}
+			const now = Date.now();
+			let pendingForSession = 0;
+			for (const [id, pending] of pendingLibrarySaves) {
+				if (pending.createdAt < now - 10 * 60 * 1000)
+					pendingLibrarySaves.delete(id);
+				else if (pending.sessionId === sessionId) pendingForSession += 1;
+			}
+			if (pendingForSession >= maxPendingLibrarySavesPerSession) {
+				return reply.code(429).send({ error: "too_many_pending_recordings" });
+			}
+			const id = crypto.randomUUID();
+			pendingLibrarySaves.set(id, {
+				createdAt: now,
+				recording,
+				sessionId,
+			});
+			return reply.code(201).send({ id });
+		};
+		const saveStagedLibraryAudio = async (
+			request: FastifyRequest,
+			reply: FastifyReply,
+			sessionId: string,
+		) => {
+			const id = (request.params as { id?: unknown }).id;
+			if (!validRecordingId(id))
+				return reply.code(400).send({ error: "invalid_recording_id" });
+			const pending = pendingLibrarySaves.get(id);
+			if (!pending || pending.sessionId !== sessionId) {
+				return reply.code(404).send({ error: "pending_recording_not_found" });
+			}
+			const contentType = request.headers["content-type"];
+			if (
+				typeof contentType !== "string" ||
+				!contentType.startsWith("audio/")
+			) {
+				return reply.code(415).send({ error: "audio_content_type_required" });
+			}
+			if (!isReadableStream(request.body)) {
+				return reply.code(415).send({ error: "audio_stream_required" });
+			}
+			try {
+				const saved = await library.saveStream(
+					pending.recording,
+					request.body,
+					contentType,
+				);
+				pendingLibrarySaves.delete(id);
+				return reply.code(201).send(saved ?? { saved: false });
+			} catch {
+				return reply.code(500).send({ error: "library_save_failed" });
+			}
+		};
+		server.post("/bff/library", async (request, reply) => {
+			const sessionId = await requireSession(request, reply);
+			if (!sessionId) return;
+			return stageLibrarySave(request, reply, sessionId);
+		});
+		server.put("/bff/library/:id/media", async (request, reply) => {
+			const sessionId = await requireSession(request, reply);
+			if (!sessionId) return;
+			return saveStagedLibraryAudio(request, reply, sessionId);
+		});
+		server.post("/bff/extension/library", async (request, reply) => {
+			const sessionId = await requireSession(
+				request,
+				reply,
+				extensionSessionCookieName,
+				true,
+			);
+			if (!sessionId) return;
+			return stageLibrarySave(request, reply, sessionId);
+		});
+		server.put("/bff/extension/library/:id/media", async (request, reply) => {
+			const sessionId = await requireSession(
+				request,
+				reply,
+				extensionSessionCookieName,
+				true,
+			);
+			if (!sessionId) return;
+			return saveStagedLibraryAudio(request, reply, sessionId);
+		});
+		server.get("/bff/library", async (request, reply) => {
+			if (!(await requireSession(request, reply))) return;
+			const query = request.query as {
+				limit?: string;
+				offset?: string;
+				search?: string;
+				status?: string;
+				type?: string;
+			};
+			const limit = query.limit ? Number(query.limit) : undefined;
+			const offset = query.offset ? Number(query.offset) : undefined;
+			if (
+				(limit !== undefined && (!Number.isInteger(limit) || limit < 1)) ||
+				(offset !== undefined && (!Number.isInteger(offset) || offset < 0))
+			) {
+				return reply.code(400).send({ error: "invalid_pagination" });
+			}
+			return library.list({
+				...(limit === undefined ? {} : { limit }),
+				...(offset === undefined ? {} : { offset }),
+				...(query.search ? { search: query.search } : {}),
+				...(query.status ? { status: queryValues(query.status) as never } : {}),
+				...(query.type ? { type: queryValues(query.type) as never } : {}),
+			});
+		});
+		server.get("/bff/library/:id", async (request, reply) => {
+			if (!(await requireSession(request, reply))) return;
+			const id = (request.params as { id?: unknown }).id;
+			if (!validRecordingId(id))
+				return reply.code(400).send({ error: "invalid_recording_id" });
+			const detail = await library.open(id);
+			return detail
+				? detail
+				: reply.code(404).send({ error: "recording_not_found" });
+		});
+		server.delete("/bff/library/:id", async (request, reply) => {
+			if (!(await requireSession(request, reply))) return;
+			const id = (request.params as { id?: unknown }).id;
+			if (!validRecordingId(id))
+				return reply.code(400).send({ error: "invalid_recording_id" });
+			await library.remove([id]);
+			return reply.code(204).send();
+		});
+		server.get("/bff/library/:id/media", async (request, reply) => {
+			if (!(await requireSession(request, reply))) return;
+			const id = (request.params as { id?: unknown }).id;
+			if (!validRecordingId(id))
+				return reply.code(400).send({ error: "invalid_recording_id" });
+			const media = await library.media(id);
+			if (!media) return reply.code(404).send({ error: "media_not_found" });
+			const range = parseRange(request.headers.range, media.fileSizeBytes);
+			if (range === "invalid") {
+				return reply
+					.code(416)
+					.header("content-range", `bytes */${media.fileSizeBytes}`)
+					.send();
+			}
+			if (!range) {
+				return reply
+					.header("accept-ranges", "bytes")
+					.header("content-length", media.fileSizeBytes)
+					.header("content-type", media.contentType)
+					.send(createReadStream(media.path));
+			}
+			return reply
+				.code(206)
+				.header("accept-ranges", "bytes")
+				.header("content-length", range.end - range.start + 1)
+				.header(
+					"content-range",
+					`bytes ${range.start}-${range.end}/${media.fileSizeBytes}`,
+				)
+				.header("content-type", media.contentType)
+				.send(createReadStream(media.path, range));
+		});
+	}
 	server.get("/bff/extension/auth/session", async (request, reply) => {
 		if (!isExtensionRequest(request)) {
 			return reply.code(403).send({ error: "extension_origin_required" });

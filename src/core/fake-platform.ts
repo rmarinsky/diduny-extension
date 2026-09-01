@@ -1,10 +1,13 @@
-import type { Recording } from "./models";
+import type { TranscriptVersion } from "./models";
 import type {
-	AudioBytes,
 	HttpPort,
 	HttpRequest,
 	HttpResponse,
+	LibraryDetail,
+	NewLibraryRecording,
 	Platform,
+	RetentionCategory,
+	RetentionPolicy,
 } from "./ports";
 import { DEFAULT_SETTINGS, type Settings } from "./settings";
 
@@ -18,8 +21,11 @@ function unavailable(name: string): never {
 
 export function createFakePlatform(): Platform & { http: FakeHttpPort } {
 	let settings: Settings = DEFAULT_SETTINGS;
-	const blobs = new Map<string, AudioBytes>();
-	const recordings = new Map<string, Recording>();
+	const recordings = new Map<string, LibraryDetail>();
+	const retention = new Map<RetentionCategory, RetentionPolicy>([
+		["dictation", "forever"],
+		["meeting", "forever"],
+	]);
 	const requests: HttpRequest[] = [];
 	const http: FakeHttpPort = {
 		isAvailable: true,
@@ -43,18 +49,6 @@ export function createFakePlatform(): Platform & { http: FakeHttpPort } {
 			async start() {},
 			async stop() {
 				return new Uint8Array();
-			},
-		},
-		blobs: {
-			isAvailable: true,
-			async delete(ids) {
-				for (const id of ids) blobs.delete(id);
-			},
-			async read(id) {
-				return blobs.get(id) ?? unavailable(`blob ${id}`);
-			},
-			async write(id, bytes) {
-				blobs.set(id, bytes);
 			},
 		},
 		clock: { now: () => 0 },
@@ -91,19 +85,114 @@ export function createFakePlatform(): Platform & { http: FakeHttpPort } {
 			},
 		},
 		keyEvents: { isAvailable: false, async start() {}, async stop() {} },
-		logger: { error() {}, info() {} },
-		metadata: {
+		library: {
+			batches: {
+				async remove() {
+					return { removedRecordings: [] };
+				},
+			},
 			isAvailable: true,
-			async deleteRecordings(ids) {
+			maintenance: {
+				async reconcile() {
+					return { removedOrphans: 0 };
+				},
+				async sweepRetention() {
+					return { removed: 0 };
+				},
+			},
+			async getRetentionPolicies() {
+				return {
+					dictation: retention.get("dictation") ?? "forever",
+					meeting: retention.get("meeting") ?? "forever",
+				};
+			},
+			async list(options) {
+				const matches = [...recordings.values()]
+					.filter((recording) => {
+						if (
+							options?.type?.length &&
+							!options.type.includes(recording.type)
+						) {
+							return false;
+						}
+						if (
+							options?.status?.length &&
+							!options.status.includes(recording.status)
+						) {
+							return false;
+						}
+						return (
+							!options?.search || recording.displayText.includes(options.search)
+						);
+					})
+					.sort((left, right) => right.createdAt - left.createdAt);
+				const offset = options?.offset ?? 0;
+				const limit = options?.limit ?? 50;
+				return {
+					items: matches.slice(offset, offset + limit).map((recording) => ({
+						createdAt: recording.createdAt,
+						displayTitle: "Untitled recording",
+						durationSeconds: recording.durationSeconds,
+						hasTranslation: recording.history.some(
+							(version) => version.kind === "translation",
+						),
+						id: recording.id,
+						status: recording.status,
+						type: recording.type,
+					})),
+				};
+			},
+			async open(id) {
+				return recordings.get(id) ?? null;
+			},
+			async remove(ids) {
 				for (const id of ids) recordings.delete(id);
 			},
-			async loadAll() {
-				return [...recordings.values()];
+			async save(recording: NewLibraryRecording, audio) {
+				const category =
+					recording.type === "meeting" ||
+					recording.type === "meetingTranslation"
+						? "meeting"
+						: "dictation";
+				if (retention.get(category) === "never") return null;
+				const id = crypto.randomUUID();
+				const createdAt = recording.createdAt ?? 0;
+				const history: readonly TranscriptVersion[] = [
+					{
+						createdAt,
+						id: `${id}:current`,
+						kind: recording.type === "translation" ? "translation" : "cloud",
+						provider: recording.provider ?? "fake",
+						...(recording.segments ? { segments: recording.segments } : {}),
+						text: recording.text,
+					},
+				];
+				const detail: LibraryDetail = {
+					createdAt,
+					displayText: recording.text,
+					durationSeconds: recording.durationSeconds,
+					history,
+					id,
+					media: {
+						contentType: audio.contentType,
+						fileName: `${id}.webm`,
+						fileSizeBytes: audio.bytes.byteLength,
+						id,
+					},
+					...(recording.provider ? { provider: recording.provider } : {}),
+					...(recording.segments ? { segments: recording.segments } : {}),
+					status: recording.status,
+					text: recording.text,
+					type: recording.type,
+				};
+				recordings.set(id, detail);
+				return detail;
 			},
-			async upsertRecording(recording) {
-				recordings.set(recording.id, recording);
+			async setRetentionPolicy(category, policy) {
+				retention.set(category, policy);
 			},
 		},
+		logger: { error() {}, info() {} },
 		permissions: {
 			isAvailable: true,
 			async request() {
