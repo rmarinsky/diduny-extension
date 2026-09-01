@@ -68,6 +68,7 @@ async function waitFor(check) {
 
 test("relays websocket text and binary frames while attaching the upstream token only server-side", async () => {
 	let upstreamToken;
+	let upstreamCloseCode;
 	const upstream = Fastify();
 	servers.push(upstream);
 	await upstream.register(websocket);
@@ -80,6 +81,9 @@ test("relays websocket text and binary frames while attaching the upstream token
 		socket.on("message", (data, isBinary) =>
 			socket.send(data, { binary: isBinary }),
 		);
+		socket.on("close", (code) => {
+			upstreamCloseCode = code;
+		});
 	});
 	await upstream.listen({ host: "127.0.0.1", port: 0 });
 	const upstreamAddress = upstream.server.address();
@@ -105,9 +109,10 @@ test("relays websocket text and binary frames while attaching the upstream token
 	expect(Buffer.from((await binary)[0])).toEqual(Buffer.from([0, 1, 2, 3]));
 	expect(upstreamToken).toBe("server-only-token");
 
-	client.close();
+	client.close(1001);
 	await once(client, "close");
 	await waitFor(() => upstream.websocketServer.clients.size === 0);
+	expect(upstreamCloseCode).toBe(1000);
 	expect(
 		(await bff.inject({ method: "GET", url: "/bff/health" })).json(),
 	).toEqual({

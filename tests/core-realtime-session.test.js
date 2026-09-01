@@ -74,17 +74,43 @@ test("times out a socket that never becomes proxy_ready", () => {
 	expect(errors).toEqual(["realtime_ready_timeout"]);
 });
 
+test("fails promptly when the proxy rejects the session before readiness", () => {
+	const timer = scheduler();
+	const errors = [];
+	let handlers;
+	const session = new RealtimeSession({
+		connect(next) {
+			handlers = next;
+			return { close() {}, send() {} };
+		},
+		onComplete() {},
+		onError(error) {
+			errors.push(error.code);
+		},
+		onTokens() {},
+		scheduler: timer,
+	});
+
+	session.start();
+	handlers.message('{"error":"unsupported language"}');
+
+	expect(errors).toEqual(["realtime_rejected"]);
+});
+
 test("coalesces clean tokens, then finalizes with the configured fast profile", () => {
 	const timer = scheduler();
 	const updates = [];
 	const sent = [];
+	const completed = [];
 	let handlers;
 	const session = new RealtimeSession({
 		connect(next) {
 			handlers = next;
 			return { close() {}, send: (frame) => sent.push(frame) };
 		},
-		onComplete() {},
+		onComplete(text) {
+			completed.push(text);
+		},
 		onError() {},
 		onTokens(tokens) {
 			updates.push(tokens);
@@ -106,8 +132,15 @@ test("coalesces clean tokens, then finalizes with the configured fast profile", 
 	]);
 
 	session.finalize();
+	expect(sent).toEqual(['{"type":"finalize"}']);
 	timer.run(FINALIZE_PROFILES.dictationFast.controlMessageDelayMs);
 	expect(sent).toEqual(['{"type":"finalize"}', new Uint8Array()]);
+	handlers.message(
+		'{"tokens":[{"text":" done","is_final":true}],"finished":true}',
+	);
+	expect(completed).toEqual([]);
+	timer.run(FINALIZE_PROFILES.dictationFast.quietWindowMs);
+	expect(completed).toEqual(["Hello done"]);
 });
 
 test("reconnects if the socket closes while finalization is pending", () => {

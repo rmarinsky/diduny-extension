@@ -4,6 +4,7 @@ export type RealtimeErrorCode =
 	| "quota_exhausted"
 	| "realtime_buffer_overflow"
 	| "realtime_ready_timeout"
+	| "realtime_rejected"
 	| "realtime_unavailable";
 
 export class RealtimeSessionError extends Error {
@@ -75,15 +76,18 @@ export class RealtimeSession {
 	private completed = false;
 	private connection = 0;
 	private finalText = "";
+	private finalizeControlSent = false;
 	private finalizeControlTimer: unknown;
 	private finalizeTimeout: unknown;
 	private finalizing = false;
+	private finished = false;
 	private flushing = false;
 	private pendingBytes = 0;
 	private pendingFrames: Uint8Array[] = [];
 	private reconnectAttempts = 0;
 	private reconnectTimer: unknown;
 	private ready = false;
+	private quietTimer: unknown;
 	private socket: RealtimeSocket | null = null;
 	private terminal = false;
 	private tokenTimer: unknown;
@@ -109,7 +113,7 @@ export class RealtimeSession {
 	finalize() {
 		if (this.terminal || this.completed || this.finalizing) return;
 		this.finalizing = true;
-		this.scheduleFinalizeControl(this.profile.controlMessageDelayMs);
+		this.sendFinalizeControl();
 	}
 
 	close() {
@@ -147,6 +151,14 @@ export class RealtimeSession {
 		this.socket = null;
 		this.ready = false;
 		if (this.terminal || this.completed) return;
+		if (this.finished) {
+			this.complete();
+			return;
+		}
+		if (this.finalizing) {
+			this.clearFinalizeTimers();
+			this.finalizeControlSent = false;
+		}
 		if (code === REALTIME.quotaCloseCode) {
 			this.fail("quota_exhausted");
 			return;
@@ -169,9 +181,12 @@ export class RealtimeSession {
 			this.ready = true;
 			this.clearWatchdog();
 			this.flushPendingFrames();
-			if (this.finalizing && !this.finalizeControlTimer) {
-				this.scheduleFinalizeControl(this.profile.controlMessageDelayMs);
-			}
+			if (this.finalizing && !this.finalizeControlSent)
+				this.sendFinalizeControl();
+			return;
+		}
+		if (typeof message.error === "string") {
+			this.fail("realtime_rejected");
 			return;
 		}
 		const tokens = messageTokens(message.tokens);
@@ -181,16 +196,13 @@ export class RealtimeSession {
 			}
 			this.tokenUpdates.push(...tokens);
 			this.scheduleTokenUpdate();
-			if (this.finalizing && this.finalizeControlTimer) {
-				this.scheduleFinalizeControl(this.profile.quietWindowMs);
-			}
+			if (this.finished) this.scheduleQuietCompletion();
 		}
 		if (message.finished === true) {
-			this.completed = true;
-			this.clearFinalizeTimers();
+			this.finished = true;
 			this.flushTokenUpdates();
-			this.options.onComplete(this.finalText);
-			this.close();
+			if (this.finalizing) this.scheduleQuietCompletion();
+			else this.complete();
 		}
 	}
 
@@ -231,19 +243,42 @@ export class RealtimeSession {
 		this.options.onTokens(tokens);
 	}
 
-	private scheduleFinalizeControl(delayMs: number) {
-		if (this.finalizeControlTimer)
-			this.options.scheduler.clearTimeout(this.finalizeControlTimer);
+	private sendFinalizeControl() {
+		if (
+			this.finalizeControlSent ||
+			!this.socket ||
+			!this.ready ||
+			this.terminal
+		)
+			return;
+		this.finalizeControlSent = true;
+		this.socket.send('{"type":"finalize"}');
 		this.finalizeControlTimer = this.options.scheduler.setTimeout(() => {
 			this.finalizeControlTimer = undefined;
 			if (!this.socket || !this.ready || this.terminal) return;
-			this.socket.send('{"type":"finalize"}');
 			this.socket.send(new Uint8Array());
 			this.finalizeTimeout = this.options.scheduler.setTimeout(
 				() => this.fail("realtime_unavailable"),
 				this.profile.timeoutMs,
 			);
-		}, delayMs);
+		}, this.profile.controlMessageDelayMs);
+	}
+
+	private scheduleQuietCompletion() {
+		if (this.quietTimer) this.options.scheduler.clearTimeout(this.quietTimer);
+		this.quietTimer = this.options.scheduler.setTimeout(() => {
+			this.quietTimer = undefined;
+			if (this.finished) this.complete();
+		}, this.profile.quietWindowMs);
+	}
+
+	private complete() {
+		if (this.completed || this.terminal) return;
+		this.completed = true;
+		this.clearTimers();
+		this.flushTokenUpdates();
+		this.options.onComplete(this.finalText);
+		this.close();
 	}
 
 	private fail(code: RealtimeErrorCode) {
@@ -268,8 +303,10 @@ export class RealtimeSession {
 			this.options.scheduler.clearTimeout(this.finalizeControlTimer);
 		if (this.finalizeTimeout)
 			this.options.scheduler.clearTimeout(this.finalizeTimeout);
+		if (this.quietTimer) this.options.scheduler.clearTimeout(this.quietTimer);
 		this.finalizeControlTimer = undefined;
 		this.finalizeTimeout = undefined;
+		this.quietTimer = undefined;
 	}
 
 	private clearTimers() {

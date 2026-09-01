@@ -27,9 +27,7 @@ function reasonText(value: Buffer) {
 }
 
 function closeCode(code: number) {
-	if (code === 1000 || code === 1001 || code === 1002 || code === 1003) {
-		return code;
-	}
+	if (code === 1000) return code;
 	if (code >= 3000 && code <= 4999) return code;
 	return 1000;
 }

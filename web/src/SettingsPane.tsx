@@ -242,6 +242,7 @@ export function SettingsPane({
 	const [snapshot, setSnapshot] = useState<WorkspaceSettingsSnapshot | null>(
 		null,
 	);
+	const [announceLiveTranscript, setAnnounceLiveTranscript] = useState(false);
 	const [cleanupEnabled, setCleanupEnabled] = useState(false);
 	const [dictationShortcut, setDictationShortcut] = useState("");
 	const [fillerWords, setFillerWords] = useState("");
@@ -260,6 +261,7 @@ export function SettingsPane({
 		try {
 			const next = await getWorkspaceSettings();
 			setSnapshot(next);
+			setAnnounceLiveTranscript(next.settings.announceLiveTranscript);
 			setCleanupEnabled(next.settings.textCleanupEnabled);
 			setDictationShortcut(next.settings.dictationShortcut);
 			setFillerWords(next.settings.fillerWords.join("\n"));
@@ -381,6 +383,21 @@ export function SettingsPane({
 		}
 	}
 
+	async function saveAccessibility(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		try {
+			const settings = await updateWorkspaceSettings({
+				announceLiveTranscript,
+			});
+			setSnapshot((current) => (current ? { ...current, settings } : current));
+			setAnnounceLiveTranscript(settings.announceLiveTranscript);
+			setMessage("Accessibility setting saved.");
+			onSettingsChanged();
+		} catch (error) {
+			setMessage(errorMessage(error));
+		}
+	}
+
 	function startTypingTest() {
 		setTypingText("");
 		setTypingStartedAt(performance.now());
@@ -478,6 +495,31 @@ export function SettingsPane({
 						</select>
 					</label>
 					<button type="submit">Save interface language</button>
+				</form>
+			</section>
+
+			<section
+				aria-labelledby="accessibility-title"
+				className="settings-section"
+			>
+				<h3 id="accessibility-title">Accessibility</h3>
+				<form onSubmit={saveAccessibility}>
+					<label className="checkbox" htmlFor="announce-live-transcript">
+						<input
+							checked={announceLiveTranscript}
+							id="announce-live-transcript"
+							onChange={(event) =>
+								setAnnounceLiveTranscript(event.target.checked)
+							}
+							type="checkbox"
+						/>
+						Announce final live transcript
+					</label>
+					<p>
+						Live transcript is hidden from screen readers unless you enable
+						this.
+					</p>
+					<button type="submit">Save accessibility settings</button>
 				</form>
 			</section>
 

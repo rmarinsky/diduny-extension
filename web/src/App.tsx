@@ -7,6 +7,7 @@ import {
 	useState,
 } from "react";
 import { AUDIO_FORMAT } from "../../src/core/constants";
+import type { RealtimeToken } from "../../src/core/realtime-session";
 import { speechPreCheck } from "../../src/core/speech-precheck";
 import { LibraryPane } from "./LibraryPane";
 import { SettingsPane } from "./SettingsPane";
@@ -28,6 +29,7 @@ import {
 import { setUiLocale } from "./i18n";
 import { createWorkspaceInvalidationBus } from "./invalidation";
 import { saveToLibrary } from "./library";
+import { type WebRealtimeSession, startWebRealtime } from "./realtime";
 import { acquireRecordingLock } from "./recording-lock";
 import { getWorkspaceSettings } from "./settings";
 import {
@@ -46,6 +48,7 @@ interface ActiveCapture {
 	chunks: Blob[];
 	frames: Int16Array[];
 	mediaRecorder: MediaRecorder;
+	realtime: WebRealtimeSession;
 	stats: { sampleCount: number };
 	stream: MediaStream;
 	worklet: AudioWorkletNode;
@@ -101,6 +104,7 @@ async function stopRecorder(recorder: MediaRecorder) {
 }
 
 function releaseCapture(capture: ActiveCapture) {
+	capture.realtime.close();
 	capture.worklet.disconnect();
 	for (const track of capture.stream.getTracks()) track.stop();
 	void capture.audioContext.close();
@@ -127,6 +131,7 @@ export function App() {
 		);
 	}
 	const [authState, setAuthState] = useState<AuthState>("checking");
+	const [announceLiveTranscript, setAnnounceLiveTranscript] = useState(false);
 	const [captureState, setCaptureState] = useState<CaptureState>("idle");
 	const [documentText, setDocumentText] = useState("");
 	const [dictationShortcut, setDictationShortcut] = useState(DEFAULT_SHORTCUT);
@@ -134,6 +139,8 @@ export function App() {
 	const [elapsed, setElapsed] = useState(0);
 	const [language, setLanguage] = useState("uk");
 	const [level, setLevel] = useState(0);
+	const [liveFinalText, setLiveFinalText] = useState("");
+	const [liveProvisionalText, setLiveProvisionalText] = useState("");
 	const [microphoneDeviceId, setMicrophoneDeviceId] = useState<string | null>(
 		null,
 	);
@@ -150,9 +157,11 @@ export function App() {
 	const [view, setView] = useState<WorkspaceView>("dictation");
 	const [workspaceRevision, setWorkspaceRevision] = useState(0);
 	const captureRef = useRef<ActiveCapture | null>(null);
+	const documentInput = useRef<HTMLTextAreaElement>(null);
 	const holdCaptureRef = useRef(false);
 	const recordingLockReleaseRef = useRef<(() => void) | null>(null);
 	const stopHoldWhenReadyRef = useRef(false);
+	const statusElement = useRef<HTMLParagraphElement>(null);
 	const workspaceBusRef = useRef<ReturnType<
 		typeof createWorkspaceInvalidationBus
 	> | null>(null);
@@ -206,6 +215,7 @@ export function App() {
 	useEffect(() => {
 		void workspaceRevision;
 		if (authState !== "signed-in") {
+			setAnnounceLiveTranscript(false);
 			setDictationShortcut(DEFAULT_SHORTCUT);
 			setMicrophoneDeviceId(null);
 			setTranslationSourceLanguage("uk");
@@ -215,6 +225,7 @@ export function App() {
 		}
 		void getWorkspaceSettings()
 			.then(({ settings }) => {
+				setAnnounceLiveTranscript(settings.announceLiveTranscript);
 				setDictationShortcut(settings.dictationShortcut);
 				setMicrophoneDeviceId(settings.microphoneDeviceId);
 				setTranslationSourceLanguage(settings.translationSourceLanguage);
@@ -222,6 +233,7 @@ export function App() {
 				void setUiLocale(settings.uiLocale);
 			})
 			.catch(() => {
+				setAnnounceLiveTranscript(false);
 				setDictationShortcut(DEFAULT_SHORTCUT);
 				setMicrophoneDeviceId(null);
 				setTranslationSourceLanguage("uk");
@@ -247,6 +259,8 @@ export function App() {
 			setCaptureState("idle");
 			setElapsed(0);
 			setLevel(0);
+			setLiveFinalText("");
+			setLiveProvisionalText("");
 			setStatus("Dictation cancelled.");
 		}
 	}, [releaseRecordingLock]);
@@ -269,41 +283,55 @@ export function App() {
 			const audio = new Blob(capture.chunks, {
 				type: capture.mediaRecorder.mimeType || "audio/webm",
 			});
-			const form = new FormData();
-			form.append("audio", audio, "dictation.webm");
-			const languageHints = translationMode
-				? [translationSourceLanguage]
-				: language
-						.split(",")
-						.map((value) => value.trim())
-						.filter(Boolean);
-			form.append(
-				"config",
-				JSON.stringify(
-					buildTranscriptionConfig({
-						languageHints,
-						...(translationMode
-							? {
-									translation: {
-										sourceLanguage: translationSourceLanguage,
-										targetLanguage: translationTargetLanguage,
-									},
-								}
-							: {}),
-					}),
-				),
-			);
-			const result = await bffJson<TranscriptionResponse>(
-				"/bff/api/transcriptions",
-				{ body: form, method: "POST" },
-			);
-			if (!result.text?.trim()) {
+			let transcriptionText: string | undefined;
+			capture.realtime.finalize();
+			try {
+				transcriptionText = await capture.realtime.result;
+			} catch {
+				setStatus(
+					"Realtime is unavailable. Transcribing the completed recording…",
+				);
+			}
+			if (!transcriptionText?.trim()) {
+				const form = new FormData();
+				form.append("audio", audio, "dictation.webm");
+				const languageHints = translationMode
+					? [translationSourceLanguage]
+					: language
+							.split(",")
+							.map((value) => value.trim())
+							.filter(Boolean);
+				form.append(
+					"config",
+					JSON.stringify(
+						buildTranscriptionConfig({
+							languageHints,
+							...(translationMode
+								? {
+										translation: {
+											sourceLanguage: translationSourceLanguage,
+											targetLanguage: translationTargetLanguage,
+										},
+									}
+								: {}),
+						}),
+					),
+				);
+				const result = await bffJson<TranscriptionResponse>(
+					"/bff/api/transcriptions",
+					{ body: form, method: "POST" },
+				);
+				transcriptionText = result.text;
+			}
+			if (!transcriptionText?.trim()) {
 				setStatus("The transcription returned no text.");
+				queueMicrotask(() => statusElement.current?.focus());
 				return;
 			}
 			setDocumentText((current) =>
-				appendTranscript(current, result.text ?? ""),
+				appendTranscript(current, transcriptionText),
 			);
+			queueMicrotask(() => documentInput.current?.focus());
 			setStatus(
 				translationMode
 					? "Translation added to this document."
@@ -317,7 +345,7 @@ export function App() {
 				...(translationMode
 					? { status: "translated" as const, type: "translation" as const }
 					: {}),
-				text: result.text,
+				text: transcriptionText,
 			})
 				.then(invalidateWorkspace)
 				.catch(() => {
@@ -329,12 +357,15 @@ export function App() {
 				});
 		} catch (error) {
 			setStatus(error instanceof Error ? error.message : "Dictation failed.");
+			queueMicrotask(() => statusElement.current?.focus());
 		} finally {
 			releaseCapture(capture);
 			releaseRecordingLock();
 			setCaptureState("idle");
 			setElapsed(0);
 			setLevel(0);
+			setLiveFinalText("");
+			setLiveProvisionalText("");
 		}
 	}, [
 		invalidateWorkspace,
@@ -353,6 +384,7 @@ export function App() {
 		}
 		let stream: MediaStream | undefined;
 		let pipeline: Awaited<ReturnType<typeof createPcmCapture>> | undefined;
+		let realtime: WebRealtimeSession | undefined;
 		let fallbackDeviceName: string | undefined;
 		try {
 			const release = await acquireRecordingLock();
@@ -377,10 +409,49 @@ export function App() {
 			if (!stream) throw new Error("Could not start the microphone.");
 			const frames: Int16Array[] = [];
 			const stats = { sampleCount: 0 };
+			const languageHints = translationMode
+				? [translationSourceLanguage]
+				: language
+						.split(",")
+						.map((value) => value.trim())
+						.filter(Boolean);
+			realtime = startWebRealtime({
+				config: {
+					audio_format: AUDIO_FORMAT.wireFormat,
+					num_channels: AUDIO_FORMAT.channels,
+					sample_rate: AUDIO_FORMAT.sampleRate,
+					...buildTranscriptionConfig({
+						languageHints,
+						...(translationMode
+							? {
+									translation: {
+										sourceLanguage: translationSourceLanguage,
+										targetLanguage: translationTargetLanguage,
+									},
+								}
+							: {}),
+					}),
+				},
+				onTokens(tokens: readonly RealtimeToken[]) {
+					const finalized = tokens
+						.filter((token) => token.isFinal)
+						.map((token) => token.text)
+						.join("");
+					if (finalized)
+						setLiveFinalText((current) => `${current}${finalized}`);
+					setLiveProvisionalText(
+						tokens
+							.filter((token) => !token.isFinal)
+							.map((token) => token.text)
+							.join(""),
+					);
+				},
+			});
 			pipeline = await createPcmCapture({
 				onFrame(frame) {
 					frames.push(frame);
 					stats.sampleCount += frame.length;
+					realtime?.sendAudio(frame);
 					const nextElapsed = Math.floor(
 						stats.sampleCount / AUDIO_FORMAT.sampleRate,
 					);
@@ -407,6 +478,7 @@ export function App() {
 				chunks,
 				frames,
 				mediaRecorder,
+				realtime,
 				stats,
 				stream,
 				worklet: pipeline.worklet,
@@ -425,6 +497,7 @@ export function App() {
 				void finishCapture();
 			}
 		} catch (error) {
+			realtime?.close();
 			pipeline?.worklet.disconnect();
 			for (const track of stream?.getTracks() ?? []) track.stop();
 			void pipeline?.audioContext.close();
@@ -436,7 +509,16 @@ export function App() {
 					: "Could not start the microphone.",
 			);
 		}
-	}, [captureState, finishCapture, microphoneDeviceId, releaseRecordingLock]);
+	}, [
+		captureState,
+		finishCapture,
+		language,
+		microphoneDeviceId,
+		releaseRecordingLock,
+		translationMode,
+		translationSourceLanguage,
+		translationTargetLanguage,
+	]);
 
 	useEffect(() => {
 		const onShortcut = (event: KeyboardEvent) => {
@@ -707,10 +789,30 @@ export function App() {
 					) : null}
 					<textarea
 						aria-label="Dictation document"
+						ref={documentInput}
 						onChange={(event) => setDocumentText(event.target.value)}
 						placeholder="Your dictation appears here. You can edit it while you work."
 						value={documentText}
 					/>
+					{captureState !== "idle" ? (
+						<section
+							aria-hidden={announceLiveTranscript ? undefined : true}
+							aria-label="Live transcript"
+							className="live-transcript"
+						>
+							<h2>Live transcript</h2>
+							<p aria-live={announceLiveTranscript ? "polite" : undefined}>
+								<span className="token-state">Final</span>
+								<span data-testid="live-final-text">{liveFinalText}</span>
+							</p>
+							<p aria-hidden="true" className="provisional-token">
+								<span className="token-state">Provisional</span>
+								<span data-testid="live-provisional-text">
+									{liveProvisionalText}
+								</span>
+							</p>
+						</section>
+					) : null}
 					<div className="controls">
 						<button
 							disabled={captureState === "sending"}
@@ -792,7 +894,12 @@ export function App() {
 						</button>
 						<output aria-label="Translation result">{translationResult}</output>
 					</section>
-					<p aria-live="polite" className="status">
+					<p
+						aria-live="polite"
+						className="status"
+						ref={statusElement}
+						tabIndex={-1}
+					>
 						{status}
 					</p>
 				</>
