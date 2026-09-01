@@ -31,6 +31,26 @@ test("builds an explicit one-way translation request without consulting UI local
 		sl: "uk",
 		tl: "en",
 	});
+	expect(buildTranscriptionConfig({ languageHints: [] })).toEqual({
+		enable_speaker_diarization: false,
+		mode: "transcribe",
+	});
+	expect(
+		buildTranscriptionConfig({
+			languageHints: ["en", "uk"],
+			translation: {
+				languageA: "en",
+				languageB: "uk",
+				type: "two_way",
+			},
+		}),
+	).toEqual({
+		enable_speaker_diarization: false,
+		language_hints: ["en", "uk"],
+		language_hints_strict: true,
+		mode: "translate",
+		translation: { language_a: "en", language_b: "uk", type: "two_way" },
+	});
 });
 
 test("joins the translated sentences returned by the proxy", () => {

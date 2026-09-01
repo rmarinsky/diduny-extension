@@ -1,29 +1,8 @@
+export { buildTranscriptionConfig } from "../../src/core/transcription-config";
+
 export interface TranslationPair {
 	sourceLanguage: string;
 	targetLanguage: string;
-}
-
-export function buildTranscriptionConfig({
-	languageHints,
-	translation,
-}: {
-	languageHints: readonly string[];
-	translation?: TranslationPair;
-}) {
-	return {
-		enable_speaker_diarization: false,
-		language_hints: languageHints,
-		...(languageHints.length ? { language_hints_strict: true } : {}),
-		mode: translation ? "translate" : "transcribe",
-		...(translation
-			? {
-					translation: {
-						target_language: translation.targetLanguage,
-						type: "one_way" as const,
-					},
-				}
-			: {}),
-	};
 }
 
 export function translationUrl(text: string, pair: TranslationPair) {

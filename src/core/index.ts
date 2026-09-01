@@ -64,6 +64,10 @@ export {
 	createSpeechPreCheckAccumulator,
 	speechPreCheck,
 } from "./speech-precheck";
+export {
+	buildTranscriptionConfig,
+	type TranscriptionTranslation,
+} from "./transcription-config";
 
 import type { Platform } from "./ports";
 
