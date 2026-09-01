@@ -5,11 +5,12 @@ import {
 	readdir,
 	rename,
 	stat,
+	statfs,
 	unlink as unlinkFile,
 	writeFile,
 } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import {
 	type ProcessingStatus,
@@ -17,7 +18,10 @@ import {
 	type RecordingType,
 	type TranscriptKind,
 	type TranscriptVersion,
+	cleanDictationText,
 	displayRecordingText,
+	timeSavedSecondsForWords,
+	wordCount,
 } from "../core/models";
 import type {
 	LibraryAudio,
@@ -32,6 +36,13 @@ import type {
 	RetentionCategory,
 	RetentionPolicy,
 } from "../core/ports";
+import {
+	DEFAULT_SETTINGS,
+	type Settings,
+	normalizeSettings,
+	textCleanupFromSettings,
+	updateSettings,
+} from "../core/settings";
 
 export type {
 	LibraryAudio,
@@ -77,6 +88,19 @@ export interface LibraryMediaFile {
 export interface LibraryExportEntry {
 	media: LibraryMediaFile | null;
 	recording: LibraryDetail;
+}
+
+export interface LibraryStorageStats {
+	dataDir: string;
+	freeBytes: number;
+	usedBytes: number;
+}
+
+export interface LibraryUsageStats {
+	dictationDurationSeconds: number;
+	recordingCount: number;
+	timeSavedSeconds: number | null;
+	wordCount: number;
 }
 
 export interface LibraryStoreOptions {
@@ -142,6 +166,12 @@ type MetadataRow = {
 	title: string | null;
 };
 
+type StatisticsRow = {
+	durationSeconds: number;
+	text: string;
+	type: RecordingType;
+};
+
 function isRecordingId(value: string) {
 	return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
 		value,
@@ -189,11 +219,22 @@ function currentTranscript(history: readonly TranscriptVersion[]) {
 	return history[0];
 }
 
+async function directoryBytes(path: string): Promise<number> {
+	let total = 0;
+	for (const entry of await readdir(path, { withFileTypes: true })) {
+		const child = join(path, entry.name);
+		if (entry.isDirectory()) total += await directoryBytes(child);
+		else if (entry.isFile()) total += (await stat(child)).size;
+	}
+	return total;
+}
+
 export class LibraryStore implements LibraryPort {
 	readonly batches: LibraryPort["batches"];
 	readonly isAvailable = true;
 	readonly maintenance: LibraryPort["maintenance"];
 	private readonly database: BunDatabase;
+	private readonly dataDir: string;
 	private readonly log: (
 		event: string,
 		fields: Readonly<Record<string, number>>,
@@ -203,8 +244,9 @@ export class LibraryStore implements LibraryPort {
 	private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
 	private constructor(options: LibraryStoreOptions) {
-		this.recordingsDir = join(options.dataDir, "recordings");
-		this.database = openDatabase(join(options.dataDir, "diduny.db"));
+		this.dataDir = resolve(options.dataDir);
+		this.recordingsDir = join(this.dataDir, "recordings");
+		this.database = openDatabase(join(this.dataDir, "diduny.db"));
 		this.log = options.log ?? (() => {});
 		this.unlink = options.unlink ?? unlinkFile;
 		this.batches = {
@@ -227,9 +269,10 @@ export class LibraryStore implements LibraryPort {
 	}
 
 	static async open(options: LibraryStoreOptions) {
-		await mkdir(options.dataDir, { recursive: true });
-		await mkdir(join(options.dataDir, "recordings"), { recursive: true });
-		const store = new LibraryStore(options);
+		const dataDir = resolve(options.dataDir);
+		await mkdir(dataDir, { recursive: true });
+		await mkdir(join(dataDir, "recordings"), { recursive: true });
+		const store = new LibraryStore({ ...options, dataDir });
 		try {
 			store.migrate();
 			await store.sweepRetention();
@@ -266,6 +309,63 @@ export class LibraryStore implements LibraryPort {
 			 ON CONFLICT(key) DO UPDATE SET valueJson = excluded.valueJson, updatedAt = excluded.updatedAt`,
 			[`retention:${category}`, JSON.stringify(policy), Date.now()],
 		);
+	}
+
+	async getWorkspaceSettings(): Promise<Settings> {
+		return this.workspaceSettings();
+	}
+
+	async updateWorkspaceSettings(changes: Partial<Settings>): Promise<Settings> {
+		const settings = updateSettings(this.workspaceSettings(), changes);
+		this.database.run(
+			`INSERT INTO settings (key, valueJson, updatedAt) VALUES (?, ?, ?)
+			 ON CONFLICT(key) DO UPDATE SET valueJson = excluded.valueJson, updatedAt = excluded.updatedAt`,
+			["workspace", JSON.stringify(settings), Date.now()],
+		);
+		return settings;
+	}
+
+	async getStorageStats(): Promise<LibraryStorageStats> {
+		const [usedBytes, filesystem] = await Promise.all([
+			directoryBytes(this.dataDir),
+			statfs(this.dataDir),
+		]);
+		return {
+			dataDir: this.dataDir,
+			freeBytes: Number(filesystem.bavail) * Number(filesystem.bsize),
+			usedBytes,
+		};
+	}
+
+	async getUsageStats(): Promise<LibraryUsageStats> {
+		const rows = this.database
+			.query<StatisticsRow, []>(
+				"SELECT type, durationSeconds, transcriptionText AS text FROM recordings",
+			)
+			.all();
+		const dictations = rows.filter(
+			(row) => row.type === "voice" || row.type === "translation",
+		);
+		const settings = this.workspaceSettings();
+		const cleanup = textCleanupFromSettings(settings);
+		const totalWords = dictations.reduce(
+			(total, row) => total + wordCount(cleanDictationText(row.text, cleanup)),
+			0,
+		);
+		const dictationDurationSeconds = dictations.reduce(
+			(total, row) => total + row.durationSeconds,
+			0,
+		);
+		return {
+			dictationDurationSeconds,
+			recordingCount: rows.length,
+			timeSavedSeconds: timeSavedSecondsForWords(
+				totalWords,
+				dictationDurationSeconds,
+				settings.typingSpeedWordsPerMinute,
+			),
+			wordCount: totalWords,
+		};
 	}
 
 	async save(recording: NewLibraryRecording, audio: LibraryAudio) {
@@ -429,7 +529,10 @@ export class LibraryStore implements LibraryPort {
 		return {
 			...recording,
 			...(row.description ? { description: row.description } : {}),
-			displayText: displayRecordingText(recording),
+			displayText: displayRecordingText(
+				recording,
+				textCleanupFromSettings(this.workspaceSettings()),
+			),
 			durationSeconds: row.durationSeconds,
 			history,
 			media: {
@@ -662,6 +765,20 @@ export class LibraryStore implements LibraryPort {
 				: "forever";
 		} catch {
 			return "forever";
+		}
+	}
+
+	private workspaceSettings(): Settings {
+		const row = this.database
+			.query<{ valueJson: string }, [string]>(
+				"SELECT valueJson FROM settings WHERE key = ?",
+			)
+			.get("workspace");
+		if (!row) return DEFAULT_SETTINGS;
+		try {
+			return normalizeSettings(JSON.parse(row.valueJson));
+		} catch {
+			return DEFAULT_SETTINGS;
 		}
 	}
 

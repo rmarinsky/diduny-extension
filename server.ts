@@ -10,9 +10,16 @@ import type {
 	LibraryMetadata,
 	LibraryPage,
 	NewLibraryRecording,
+	RetentionCategory,
+	RetentionPolicy,
 } from "./src/core/ports";
+import type { Settings } from "./src/core/settings";
 import { type BffAuthGateway, ProxyOtpGateway } from "./src/server/auth";
-import type { LibraryExportEntry } from "./src/server/library-store";
+import type {
+	LibraryExportEntry,
+	LibraryStorageStats,
+	LibraryUsageStats,
+} from "./src/server/library-store";
 import { RealtimeRelay } from "./src/server/realtime-relay";
 import {
 	extensionSessionCookieName,
@@ -38,6 +45,10 @@ export interface ServerOptions {
 
 export interface BffLibrary {
 	exportEntries(): AsyncIterable<LibraryExportEntry>;
+	getRetentionPolicies(): Promise<Record<RetentionCategory, RetentionPolicy>>;
+	getStorageStats(): Promise<LibraryStorageStats>;
+	getUsageStats(): Promise<LibraryUsageStats>;
+	getWorkspaceSettings(): Promise<Settings>;
 	list(options?: LibraryListOptions): Promise<LibraryPage>;
 	media(id: string): Promise<{
 		contentType: string;
@@ -51,6 +62,11 @@ export interface BffLibrary {
 		stream: NodeJS.ReadableStream,
 		contentType: string,
 	): Promise<LibraryDetail | null>;
+	setRetentionPolicy(
+		category: RetentionCategory,
+		policy: RetentionPolicy,
+	): Promise<void>;
+	updateWorkspaceSettings(changes: Partial<Settings>): Promise<Settings>;
 	updateMetadata(
 		id: string,
 		metadata: LibraryMetadata,
@@ -72,6 +88,28 @@ const recordingTypes = [
 	"translation",
 	"voice",
 ] as const satisfies readonly RecordingType[];
+const retentionCategories = [
+	"dictation",
+	"meeting",
+] as const satisfies readonly RetentionCategory[];
+const retentionPolicies = [
+	"days7",
+	"days30",
+	"days90",
+	"year1",
+	"forever",
+	"never",
+] as const satisfies readonly RetentionPolicy[];
+const workspaceSettingKeys = [
+	"announceLiveTranscript",
+	"fillerWords",
+	"protectedLexicon",
+	"textCleanupEnabled",
+	"typingSpeedWordsPerMinute",
+	"translationSourceLanguage",
+	"translationTargetLanguage",
+	"uiLocale",
+] as const satisfies readonly (keyof Settings)[];
 
 function validEmail(email: unknown): email is string {
 	return typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -307,6 +345,83 @@ function parseLibraryMetadata(value: unknown): LibraryMetadata | null {
 	};
 }
 
+function validLanguage(value: unknown): value is string {
+	return (
+		typeof value === "string" && /^[a-z]{2,3}(?:-[a-z]{2,4})?$/i.test(value)
+	);
+}
+
+function validTerms(value: unknown): value is readonly string[] {
+	return (
+		Array.isArray(value) &&
+		value.length <= 100 &&
+		value.every((term) => typeof term === "string" && term.length <= 100)
+	);
+}
+
+function parseWorkspaceSettings(value: unknown): Partial<Settings> | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const settings = value as Record<string, unknown>;
+	const keys = Object.keys(settings);
+	if (
+		keys.length === 0 ||
+		keys.some(
+			(key) =>
+				!workspaceSettingKeys.includes(
+					key as (typeof workspaceSettingKeys)[number],
+				),
+		)
+	) {
+		return null;
+	}
+	if (
+		("announceLiveTranscript" in settings &&
+			typeof settings.announceLiveTranscript !== "boolean") ||
+		("textCleanupEnabled" in settings &&
+			typeof settings.textCleanupEnabled !== "boolean") ||
+		("fillerWords" in settings && !validTerms(settings.fillerWords)) ||
+		("protectedLexicon" in settings &&
+			!validTerms(settings.protectedLexicon)) ||
+		("typingSpeedWordsPerMinute" in settings &&
+			settings.typingSpeedWordsPerMinute !== null &&
+			(typeof settings.typingSpeedWordsPerMinute !== "number" ||
+				!Number.isFinite(settings.typingSpeedWordsPerMinute) ||
+				settings.typingSpeedWordsPerMinute <= 0 ||
+				settings.typingSpeedWordsPerMinute > 1_000)) ||
+		("uiLocale" in settings &&
+			settings.uiLocale !== "en" &&
+			settings.uiLocale !== "uk") ||
+		("translationSourceLanguage" in settings &&
+			!validLanguage(settings.translationSourceLanguage)) ||
+		("translationTargetLanguage" in settings &&
+			!validLanguage(settings.translationTargetLanguage))
+	) {
+		return null;
+	}
+	return settings as Partial<Settings>;
+}
+
+function parseRetentionSettings(value: unknown): {
+	category: RetentionCategory;
+	policy: RetentionPolicy;
+} | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const setting = value as Record<string, unknown>;
+	if (
+		Object.keys(setting).some(
+			(key) => key !== "category" && key !== "policy",
+		) ||
+		!retentionCategories.includes(setting.category as RetentionCategory) ||
+		!retentionPolicies.includes(setting.policy as RetentionPolicy)
+	) {
+		return null;
+	}
+	return {
+		category: setting.category as RetentionCategory,
+		policy: setting.policy as RetentionPolicy,
+	};
+}
+
 export async function buildServer({
 	auth,
 	fetch = globalThis.fetch,
@@ -470,6 +585,31 @@ export async function buildServer({
 	server.post("/bff/auth/logout", (request, reply) => logout(request, reply));
 	server.all("/bff/api/*", (request, reply) => relay(request, reply));
 	if (library) {
+		server.get("/bff/settings", async (request, reply) => {
+			if (!(await requireSession(request, reply))) return;
+			const [settings, retention, storage, stats] = await Promise.all([
+				library.getWorkspaceSettings(),
+				library.getRetentionPolicies(),
+				library.getStorageStats(),
+				library.getUsageStats(),
+			]);
+			return { retention, settings, stats, storage };
+		});
+		server.patch("/bff/settings", async (request, reply) => {
+			if (!(await requireSession(request, reply))) return;
+			const settings = parseWorkspaceSettings(request.body);
+			if (!settings)
+				return reply.code(400).send({ error: "invalid_workspace_settings" });
+			return library.updateWorkspaceSettings(settings);
+		});
+		server.put("/bff/settings/retention", async (request, reply) => {
+			if (!(await requireSession(request, reply))) return;
+			const settings = parseRetentionSettings(request.body);
+			if (!settings)
+				return reply.code(400).send({ error: "invalid_retention_settings" });
+			await library.setRetentionPolicy(settings.category, settings.policy);
+			return library.getRetentionPolicies();
+		});
 		const stageLibrarySave = (
 			request: FastifyRequest,
 			reply: FastifyReply,

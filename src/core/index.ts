@@ -18,6 +18,7 @@ export {
 	displayRecordingText,
 	resolveTranscriptHistory,
 	timeSavedSeconds,
+	timeSavedSecondsForWords,
 	wordCount,
 } from "./models";
 export type { Platform } from "./ports";
@@ -30,7 +31,12 @@ export {
 	UsageLimitError,
 	decodeTranscriptResult,
 } from "./proxy-api-client";
-export { DEFAULT_SETTINGS, updateSettings } from "./settings";
+export {
+	DEFAULT_SETTINGS,
+	normalizeSettings,
+	textCleanupFromSettings,
+	updateSettings,
+} from "./settings";
 export { SessionMachine } from "./session-machine";
 export { speechPreCheck } from "./speech-precheck";
 

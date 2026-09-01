@@ -140,7 +140,21 @@ export function timeSavedSeconds(
 	dictationDurationSeconds: number,
 	wordsPerMinute: number | null,
 ) {
+	return timeSavedSecondsForWords(
+		wordCount(text),
+		dictationDurationSeconds,
+		wordsPerMinute,
+	);
+}
+
+export function timeSavedSecondsForWords(
+	words: number,
+	dictationDurationSeconds: number,
+	wordsPerMinute: number | null,
+) {
 	if (
+		!Number.isFinite(words) ||
+		words < 0 ||
 		wordsPerMinute === null ||
 		!Number.isFinite(wordsPerMinute) ||
 		wordsPerMinute <= 0 ||
@@ -149,7 +163,7 @@ export function timeSavedSeconds(
 	) {
 		return null;
 	}
-	return (wordCount(text) * 60) / wordsPerMinute - dictationDurationSeconds;
+	return (words * 60) / wordsPerMinute - dictationDurationSeconds;
 }
 
 function legacyKind(recording: Recording): TranscriptKind {

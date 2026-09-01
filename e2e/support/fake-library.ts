@@ -3,7 +3,14 @@ import type {
 	LibraryDetail,
 	LibraryListOptions,
 	NewLibraryRecording,
+	RetentionCategory,
+	RetentionPolicy,
 } from "../../src/core/ports";
+import {
+	DEFAULT_SETTINGS,
+	type Settings,
+	updateSettings,
+} from "../../src/core/settings";
 
 function summary(recording: LibraryDetail) {
 	return {
@@ -40,8 +47,30 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 	const recordings = new Map(
 		initial.map((recording) => [recording.id, recording]),
 	);
+	let settings: Settings = DEFAULT_SETTINGS;
+	const retention: Record<RetentionCategory, RetentionPolicy> = {
+		dictation: "forever",
+		meeting: "forever",
+	};
 	const library: BffLibrary = {
 		async *exportEntries() {},
+		async getRetentionPolicies() {
+			return retention;
+		},
+		async getStorageStats() {
+			return { dataDir: "e2e", freeBytes: 0, usedBytes: 0 };
+		},
+		async getUsageStats() {
+			return {
+				dictationDurationSeconds: 0,
+				recordingCount: recordings.size,
+				timeSavedSeconds: null,
+				wordCount: 0,
+			};
+		},
+		async getWorkspaceSettings() {
+			return settings;
+		},
 		async list(options = {}) {
 			const limit = options.limit ?? 50;
 			const offset = options.offset ?? 0;
@@ -105,6 +134,13 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 			};
 			recordings.set(id, detail);
 			return detail;
+		},
+		async setRetentionPolicy(category, policy) {
+			retention[category] = policy;
+		},
+		async updateWorkspaceSettings(changes) {
+			settings = updateSettings(settings, changes);
+			return settings;
 		},
 		async updateMetadata(id, metadata) {
 			const recording = recordings.get(id);
