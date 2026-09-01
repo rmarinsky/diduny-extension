@@ -21,6 +21,10 @@ test("creates a persistent session secret and warns about a non-loopback binding
 	expect(logs).toEqual(
 		expect.arrayContaining([
 			expect.objectContaining({ event: "startup.data_dir", path: dataDir }),
+			expect.objectContaining({
+				event: "startup.session_secret",
+				path: startup.sessionSecretPath,
+			}),
 			expect.objectContaining({ event: "startup.non_loopback_warning" }),
 		]),
 	);

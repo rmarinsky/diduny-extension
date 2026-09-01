@@ -16,9 +16,10 @@ test("ships a loopback-only compose deployment with persistent local data", asyn
 });
 
 test("ships a container, Apache-2.0 license, and CI quality gates", async () => {
-	const [dockerfile, license, workflow] = await Promise.all([
+	const [dockerfile, license, readme, workflow] = await Promise.all([
 		readProjectFile("Dockerfile"),
 		readProjectFile("LICENSE"),
+		readProjectFile("README.md"),
 		readProjectFile(".github/workflows/ci.yml"),
 	]);
 
@@ -31,4 +32,9 @@ test("ships a container, Apache-2.0 license, and CI quality gates", async () => 
 	expect(workflow).toContain("bun run check:core");
 	expect(workflow).toContain("bun test");
 	expect(workflow).toContain("bun run build");
+	expect(readme).toContain("requires a Diduny account");
+	expect(readme).toContain("`DATA_DIR`");
+	expect(readme).toContain("Nothing is sent to Diduny maintainers");
+	expect(readme).toContain("Never remove the `diduny-data` volume");
+	expect(readme).toContain("Browser extension");
 });
