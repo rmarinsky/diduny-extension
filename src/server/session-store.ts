@@ -1,4 +1,11 @@
 import type { Database as BunDatabase } from "bun:sqlite";
+import {
+	createCipheriv,
+	createDecipheriv,
+	createHash,
+	randomBytes,
+} from "node:crypto";
+import { chmodSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -50,14 +57,50 @@ type SessionRow = {
 	access_token: string;
 	email: string | null;
 	expires_at: number | null;
+	id: string;
 	refresh_token: string | null;
 };
 
+function sessionEncryptionKey(secret: string) {
+	if (!secret) throw new Error("BFF session secret is required");
+	return createHash("sha256").update(secret).digest();
+}
+
+function encrypt(value: string, key: Buffer) {
+	const iv = randomBytes(12);
+	const cipher = createCipheriv("aes-256-gcm", key, iv);
+	const ciphertext = Buffer.concat([
+		cipher.update(value, "utf8"),
+		cipher.final(),
+	]);
+	return `v1:${iv.toString("base64url")}:${cipher.getAuthTag().toString("base64url")}:${ciphertext.toString("base64url")}`;
+}
+
+function decrypt(value: string, key: Buffer) {
+	if (!value.startsWith("v1:")) return value;
+	const [version, iv, tag, ciphertext, extra] = value.split(":");
+	if (version !== "v1" || !iv || !tag || !ciphertext || extra)
+		throw new Error("invalid encrypted BFF session value");
+	const decipher = createDecipheriv(
+		"aes-256-gcm",
+		key,
+		Buffer.from(iv, "base64url"),
+	);
+	decipher.setAuthTag(Buffer.from(tag, "base64url"));
+	return Buffer.concat([
+		decipher.update(Buffer.from(ciphertext, "base64url")),
+		decipher.final(),
+	]).toString("utf8");
+}
+
 export class SqliteSessionStore implements SessionStore {
 	private readonly database: BunDatabase;
+	private readonly key: Buffer;
 
-	constructor(path: string) {
+	constructor(path: string, secret: string) {
+		this.key = sessionEncryptionKey(secret);
 		this.database = openBunDatabase(path);
+		chmodSync(path, 0o600);
 		this.database.exec("PRAGMA foreign_keys = ON");
 		this.database.exec("PRAGMA busy_timeout = 5000");
 		this.database.exec(`
@@ -69,6 +112,7 @@ export class SqliteSessionStore implements SessionStore {
 				email TEXT
 			)
 		`);
+		this.encryptExistingSessions();
 	}
 
 	async create(session: BffSession) {
@@ -88,15 +132,17 @@ export class SqliteSessionStore implements SessionStore {
 	async get(id: string) {
 		const row = this.database
 			.query<SessionRow, [string]>(
-				"SELECT access_token, refresh_token, expires_at, email FROM bff_sessions WHERE id = ?",
+				"SELECT id, access_token, refresh_token, expires_at, email FROM bff_sessions WHERE id = ?",
 			)
 			.get(id);
 		if (!row) return null;
 		return {
-			accessToken: row.access_token,
-			...(row.email ? { email: row.email } : {}),
+			accessToken: decrypt(row.access_token, this.key),
+			...(row.email ? { email: decrypt(row.email, this.key) } : {}),
 			...(row.expires_at === null ? {} : { expiresAt: row.expires_at }),
-			...(row.refresh_token ? { refreshToken: row.refresh_token } : {}),
+			...(row.refresh_token
+				? { refreshToken: decrypt(row.refresh_token, this.key) }
+				: {}),
 		};
 	}
 
@@ -111,11 +157,36 @@ export class SqliteSessionStore implements SessionStore {
 			 email = excluded.email`,
 			[
 				id,
-				session.accessToken,
-				session.refreshToken ?? null,
+				encrypt(session.accessToken, this.key),
+				session.refreshToken ? encrypt(session.refreshToken, this.key) : null,
 				session.expiresAt ?? null,
-				session.email ?? null,
+				session.email ? encrypt(session.email, this.key) : null,
 			],
 		);
+	}
+
+	private encryptExistingSessions() {
+		const rows = this.database
+			.query<SessionRow, []>(
+				"SELECT id, access_token, refresh_token, expires_at, email FROM bff_sessions",
+			)
+			.all();
+		for (const row of rows) {
+			this.database.run(
+				"UPDATE bff_sessions SET access_token = ?, refresh_token = ?, email = ? WHERE id = ?",
+				[
+					row.access_token.startsWith("v1:")
+						? row.access_token
+						: encrypt(row.access_token, this.key),
+					row.refresh_token && !row.refresh_token.startsWith("v1:")
+						? encrypt(row.refresh_token, this.key)
+						: row.refresh_token,
+					row.email && !row.email.startsWith("v1:")
+						? encrypt(row.email, this.key)
+						: row.email,
+					row.id,
+				],
+			);
+		}
 	}
 }

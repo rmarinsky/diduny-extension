@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prepareBffStartup } from "../src/server/startup";
@@ -16,6 +16,8 @@ test("creates a persistent session secret and warns about a non-loopback binding
 
 	expect(startup.dataDir).toBe(dataDir);
 	expect(await readFile(startup.sessionSecretPath, "utf8")).not.toHaveLength(0);
+	expect((await stat(dataDir)).mode & 0o777).toBe(0o700);
+	expect((await stat(startup.sessionSecretPath)).mode & 0o777).toBe(0o600);
 	expect(logs).toEqual(
 		expect.arrayContaining([
 			expect.objectContaining({ event: "startup.data_dir", path: dataDir }),

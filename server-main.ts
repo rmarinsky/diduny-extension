@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { buildServer } from "./server";
 import { SupabaseOtpGateway } from "./src/server/auth";
@@ -24,7 +25,10 @@ const server = await buildServer({
 		supabasePublishableKey,
 	),
 	library,
-	sessions: new SqliteSessionStore(join(startup.dataDir, "diduny.db")),
+	sessions: new SqliteSessionStore(
+		join(startup.dataDir, "diduny.db"),
+		await readFile(startup.sessionSecretPath, "utf8"),
+	),
 	staticDir: resolve("web/dist"),
 });
 

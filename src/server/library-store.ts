@@ -1,5 +1,6 @@
 import type { Database as BunDatabase } from "bun:sqlite";
 import { createWriteStream } from "node:fs";
+import { chmodSync } from "node:fs";
 import {
 	mkdir,
 	readdir,
@@ -248,6 +249,7 @@ export class LibraryStore implements LibraryPort {
 		this.dataDir = resolve(options.dataDir);
 		this.recordingsDir = join(this.dataDir, "recordings");
 		this.database = openDatabase(join(this.dataDir, "diduny.db"));
+		chmodSync(join(this.dataDir, "diduny.db"), 0o600);
 		this.log = options.log ?? (() => {});
 		this.unlink = options.unlink ?? unlinkFile;
 		this.batches = {

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import {
 	access,
+	chmod,
 	mkdir,
 	readFile,
 	readdir,
@@ -44,7 +45,8 @@ export async function prepareBffStartup({
 }) {
 	const resolvedDataDir = resolve(dataDir);
 	try {
-		await mkdir(resolvedDataDir, { recursive: true });
+		await mkdir(resolvedDataDir, { mode: 0o700, recursive: true });
+		await chmod(resolvedDataDir, 0o700);
 		await access(resolvedDataDir, constants.R_OK | constants.W_OK);
 	} catch {
 		throw new Error(`DATA_DIR is not writable: ${resolvedDataDir}`);
@@ -64,6 +66,7 @@ export async function prepareBffStartup({
 		path: resolvedDataDir,
 		sizeBytes: await directorySize(resolvedDataDir),
 	});
+	log({ event: "startup.session_secret", path: sessionSecretPath });
 	if (!isLoopback(host)) log({ event: "startup.non_loopback_warning" });
 	return { dataDir: resolvedDataDir, sessionSecretPath };
 }

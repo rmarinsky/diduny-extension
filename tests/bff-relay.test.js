@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildServer } from "../server";
@@ -13,15 +13,19 @@ test("persists a BFF session across a local SQLite store reopen", async () => {
 		tmpdir(),
 		`diduny-session-${crypto.randomUUID()}.db`,
 	);
-	const store = new SqliteSessionStore(databasePath);
+	const store = new SqliteSessionStore(databasePath, "test-session-secret");
 	const sessionId = await store.create({
 		accessToken: "server-only-token",
 		email: "person@example.com",
 		refreshToken: "refresh-token",
 	});
 	store.close();
+	expect((await stat(databasePath)).mode & 0o777).toBe(0o600);
+	expect((await readFile(databasePath)).toString()).not.toContain(
+		"server-only-token",
+	);
 
-	const reopened = new SqliteSessionStore(databasePath);
+	const reopened = new SqliteSessionStore(databasePath, "test-session-secret");
 	expect(await reopened.get(sessionId)).toEqual({
 		accessToken: "server-only-token",
 		email: "person@example.com",
