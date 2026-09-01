@@ -6,6 +6,7 @@ import {
 	useState,
 } from "react";
 import { speechPreCheck } from "../../src/core/speech-precheck";
+import { LibraryPane } from "./LibraryPane";
 import {
 	DEFAULT_SHORTCUT,
 	appendTranscript,
@@ -17,6 +18,7 @@ import "./style.css";
 
 type AuthState = "checking" | "otp-sent" | "signed-in" | "signed-out";
 type CaptureState = "idle" | "recording" | "sending";
+type WorkspaceView = "dictation" | "library";
 
 interface ActiveCapture {
 	audioContext: AudioContext;
@@ -101,6 +103,7 @@ export function App() {
 	const [otp, setOtp] = useState("");
 	const [signedInEmail, setSignedInEmail] = useState("");
 	const [status, setStatus] = useState("Checking your session…");
+	const [view, setView] = useState<WorkspaceView>("dictation");
 	const captureRef = useRef<ActiveCapture | null>(null);
 
 	const refreshSession = useCallback(async () => {
@@ -405,73 +408,100 @@ export function App() {
 					<h1>Diduny</h1>
 					<p>{signedInEmail}</p>
 				</div>
-				<button onClick={() => void signOut()} type="button">
-					Sign out
-				</button>
-			</header>
-			<label className="language" htmlFor="language">
-				Language hints
-				<input
-					id="language"
-					onChange={(event) => setLanguage(event.target.value)}
-					value={language}
-				/>
-			</label>
-			<textarea
-				aria-label="Dictation document"
-				onChange={(event) => setDocumentText(event.target.value)}
-				placeholder="Your dictation appears here. You can edit it while you work."
-				value={documentText}
-			/>
-			<div className="controls">
-				<button
-					disabled={captureState === "sending"}
-					onClick={() => void (isRecording ? finishCapture() : startCapture())}
-					type="button"
-				>
-					{isRecording ? "Stop dictation" : "Start dictation"}
-				</button>
-				<button
-					disabled={!isRecording}
-					onClick={() => void cancelCapture()}
-					type="button"
-				>
-					Cancel
-				</button>
-				<button
-					disabled={!documentText}
-					onClick={() => void copyDocument()}
-					type="button"
-				>
-					Copy
-				</button>
-			</div>
-			<div className="meter-row">
-				<div
-					aria-label="Microphone level"
-					aria-valuemax={100}
-					aria-valuemin={0}
-					aria-valuenow={Math.round(level * 100)}
-					className="meter"
-					role="progressbar"
-					tabIndex={0}
-				>
-					<span style={{ transform: `scaleX(${level})` }} />
+				<div className="workspace-actions">
+					<nav aria-label="Workspace">
+						<button
+							aria-current={view === "dictation" ? "page" : undefined}
+							onClick={() => setView("dictation")}
+							type="button"
+						>
+							Dictation
+						</button>
+						<button
+							aria-current={view === "library" ? "page" : undefined}
+							disabled={captureState !== "idle"}
+							onClick={() => setView("library")}
+							type="button"
+						>
+							Library
+						</button>
+					</nav>
+					<button onClick={() => void signOut()} type="button">
+						Sign out
+					</button>
 				</div>
-				<output>
-					{isRecording
-						? `${elapsed}s`
-						: captureState === "sending"
-							? "Sending"
-							: "Idle"}
-				</output>
-			</div>
-			<p className="shortcut">
-				Shortcut: {DEFAULT_SHORTCUT} outside text fields.
-			</p>
-			<p aria-live="polite" className="status">
-				{status}
-			</p>
+			</header>
+			{view === "library" ? (
+				<LibraryPane />
+			) : (
+				<>
+					<label className="language" htmlFor="language">
+						Language hints
+						<input
+							id="language"
+							onChange={(event) => setLanguage(event.target.value)}
+							value={language}
+						/>
+					</label>
+					<textarea
+						aria-label="Dictation document"
+						onChange={(event) => setDocumentText(event.target.value)}
+						placeholder="Your dictation appears here. You can edit it while you work."
+						value={documentText}
+					/>
+					<div className="controls">
+						<button
+							disabled={captureState === "sending"}
+							onClick={() =>
+								void (isRecording ? finishCapture() : startCapture())
+							}
+							type="button"
+						>
+							{isRecording ? "Stop dictation" : "Start dictation"}
+						</button>
+						<button
+							disabled={!isRecording}
+							onClick={() => void cancelCapture()}
+							type="button"
+						>
+							Cancel
+						</button>
+						<button
+							disabled={!documentText}
+							onClick={() => void copyDocument()}
+							type="button"
+						>
+							Copy
+						</button>
+					</div>
+					<div className="meter-row">
+						<div
+							aria-label="Microphone level"
+							aria-valuemax={100}
+							aria-valuemin={0}
+							aria-valuenow={Math.round(level * 100)}
+							className="meter"
+							role="progressbar"
+							tabIndex={0}
+						>
+							<span style={{ transform: `scaleX(${level})` }} />
+						</div>
+						<output>
+							{isRecording
+								? `${elapsed}s`
+								: captureState === "sending"
+									? "Sending"
+									: "Idle"}
+						</output>
+					</div>
+					<p className="shortcut">
+						Shortcut: {DEFAULT_SHORTCUT} outside text fields.
+					</p>
+					<p aria-live="polite" className="status">
+						{status}
+					</p>
+				</>
+			)}
 		</main>
 	);
 }

@@ -82,3 +82,23 @@ test("a failed unlink leaves no library row and reconciliation clears its orphan
 		},
 	);
 });
+
+test("updates recording metadata and keeps title and description searchable", async () => {
+	await withStore(async ({ store }) => {
+		const saved = await store.save(voice("Original transcript"), {
+			bytes: new Uint8Array([1]),
+			contentType: "audio/webm",
+		});
+		const updated = await store.updateMetadata(saved?.id ?? "", {
+			description: "Follow-up from the board meeting",
+			title: "Board notes",
+		});
+		expect(updated).toMatchObject({
+			description: "Follow-up from the board meeting",
+			title: "Board notes",
+		});
+		expect((await store.list({ search: "board" })).items).toEqual([
+			expect.objectContaining({ id: saved?.id, displayTitle: "Board notes" }),
+		]);
+	});
+});

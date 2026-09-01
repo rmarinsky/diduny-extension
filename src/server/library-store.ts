@@ -24,6 +24,7 @@ import type {
 	LibraryDetail,
 	LibraryListOptions,
 	LibraryMedia,
+	LibraryMetadata,
 	LibraryPage,
 	LibraryPort,
 	NewLibraryRecording,
@@ -36,6 +37,7 @@ export type {
 	LibraryAudio,
 	LibraryDetail,
 	LibraryListOptions,
+	LibraryMetadata,
 	LibraryMedia,
 	LibraryPage,
 	NewLibraryRecording,
@@ -125,6 +127,12 @@ type FileRow = {
 	audioFileName: string;
 	description: string | null;
 	id: string;
+	text: string;
+	title: string | null;
+};
+
+type MetadataRow = {
+	description: string | null;
 	text: string;
 	title: string | null;
 };
@@ -410,6 +418,7 @@ export class LibraryStore implements LibraryPort {
 			...(current?.segments ? { segments: current.segments } : {}),
 			status: row.status,
 			text: current?.text ?? row.text,
+			...(row.title ? { title: row.title } : {}),
 			type: row.type,
 		};
 		return {
@@ -481,6 +490,51 @@ export class LibraryStore implements LibraryPort {
 			}
 		}
 		this.log("library.remove", { records: rows.length, unlinkFailures });
+	}
+
+	async updateMetadata(id: string, metadata: LibraryMetadata) {
+		if (!isRecordingId(id)) return null;
+		const row = this.database
+			.query<MetadataRow, [string]>(
+				"SELECT transcriptionText AS text, title, description FROM recordings WHERE id = ?",
+			)
+			.get(id);
+		if (!row) return null;
+		const title = metadata.title === undefined ? row.title : metadata.title;
+		const description =
+			metadata.description === undefined
+				? row.description
+				: metadata.description;
+		this.database.exec("BEGIN IMMEDIATE");
+		try {
+			const fts = this.database
+				.query<{ rowid: number }, [string]>(
+					"SELECT rowid FROM recordings_fts_map WHERE recordingId = ?",
+				)
+				.get(id);
+			if (fts) {
+				this.database.run(
+					`INSERT INTO recordings_fts(recordings_fts, rowid, text, title, description)
+					 VALUES ('delete', ?, ?, ?, ?)`,
+					[fts.rowid, row.text, row.title ?? "", row.description ?? ""],
+				);
+			}
+			this.database.run(
+				"UPDATE recordings SET title = ?, description = ? WHERE id = ?",
+				[title, description, id],
+			);
+			if (fts) {
+				this.database.run(
+					"INSERT INTO recordings_fts (rowid, text, title, description) VALUES (?, ?, ?, ?)",
+					[fts.rowid, row.text, title ?? "", description ?? ""],
+				);
+			}
+			this.database.exec("COMMIT");
+		} catch (error) {
+			this.database.exec("ROLLBACK");
+			throw error;
+		}
+		return this.open(id);
 	}
 
 	async reconcile() {

@@ -2,9 +2,11 @@ import { createReadStream } from "node:fs";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import type { ProcessingStatus, RecordingType } from "./src/core/models";
 import type {
 	LibraryDetail,
 	LibraryListOptions,
+	LibraryMetadata,
 	LibraryPage,
 	NewLibraryRecording,
 } from "./src/core/ports";
@@ -45,7 +47,27 @@ export interface BffLibrary {
 		stream: NodeJS.ReadableStream,
 		contentType: string,
 	): Promise<LibraryDetail | null>;
+	updateMetadata(
+		id: string,
+		metadata: LibraryMetadata,
+	): Promise<LibraryDetail | null>;
 }
+
+const processingStatuses = [
+	"failed",
+	"partiallyRecovered",
+	"processing",
+	"transcribed",
+	"translated",
+	"unprocessed",
+] as const satisfies readonly ProcessingStatus[];
+const recordingTypes = [
+	"fileTranscription",
+	"meeting",
+	"meetingTranslation",
+	"translation",
+	"voice",
+] as const satisfies readonly RecordingType[];
 
 function validEmail(email: unknown): email is string {
 	return typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -117,6 +139,33 @@ function parseRange(range: string | undefined, size: number) {
 	return { end: Math.min(end, size - 1), start };
 }
 
+function vttTimestamp(milliseconds: number) {
+	const total = Math.max(0, Math.round(milliseconds));
+	const hours = Math.floor(total / 3_600_000);
+	const minutes = Math.floor((total % 3_600_000) / 60_000);
+	const seconds = Math.floor((total % 60_000) / 1_000);
+	return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(total % 1_000).padStart(3, "0")}`;
+}
+
+function captionText(value: string) {
+	return value.replaceAll(/\r?\n/g, " ");
+}
+
+function captionsVtt(recording: LibraryDetail) {
+	const segments = recording.segments;
+	if (segments?.length) {
+		return `WEBVTT\n\n${segments
+			.map(
+				(segment) =>
+					`${vttTimestamp(segment.startMs)} --> ${vttTimestamp(Math.max(segment.endMs, segment.startMs + 1))}\n${captionText(segment.text)}`,
+			)
+			.join("\n\n")}\n`;
+	}
+	return `WEBVTT\n\n00:00:00.000 --> ${vttTimestamp(
+		Math.max(recording.durationSeconds * 1_000, 1),
+	)}\n${captionText(recording.displayText)}\n`;
+}
+
 function queryValues(value: unknown) {
 	return typeof value === "string"
 		? value
@@ -124,6 +173,17 @@ function queryValues(value: unknown) {
 				.map((item) => item.trim())
 				.filter(Boolean)
 		: [];
+}
+
+function parseLibraryFilter<T extends string>(
+	value: unknown,
+	allowed: readonly T[],
+): readonly T[] | null {
+	const values = queryValues(value);
+	const matches = values.filter((item): item is T =>
+		allowed.includes(item as T),
+	);
+	return values.length && matches.length === values.length ? matches : null;
 }
 
 function isReadableStream(value: unknown): value is NodeJS.ReadableStream {
@@ -146,22 +206,9 @@ function parseLibraryRecording(value: unknown): NewLibraryRecording | null {
 		!Number.isFinite(record.durationSeconds) ||
 		record.durationSeconds < 0 ||
 		typeof record.type !== "string" ||
-		![
-			"fileTranscription",
-			"meeting",
-			"meetingTranslation",
-			"translation",
-			"voice",
-		].includes(record.type) ||
+		!recordingTypes.includes(record.type as RecordingType) ||
 		typeof record.status !== "string" ||
-		![
-			"failed",
-			"partiallyRecovered",
-			"processing",
-			"transcribed",
-			"translated",
-			"unprocessed",
-		].includes(record.status)
+		!processingStatuses.includes(record.status as ProcessingStatus)
 	) {
 		return null;
 	}
@@ -170,6 +217,37 @@ function parseLibraryRecording(value: unknown): NewLibraryRecording | null {
 		status: record.status as NewLibraryRecording["status"],
 		text: record.text,
 		type: record.type as NewLibraryRecording["type"],
+	};
+}
+
+function parseLibraryMetadata(value: unknown): LibraryMetadata | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const metadata = value as Record<string, unknown>;
+	const keys = Object.keys(metadata);
+	if (
+		keys.length === 0 ||
+		keys.some((key) => key !== "description" && key !== "title")
+	) {
+		return null;
+	}
+	for (const [key, limit] of [
+		["title", 500],
+		["description", 10_000],
+	] as const) {
+		const field = metadata[key];
+		if (
+			key in metadata &&
+			field !== null &&
+			(typeof field !== "string" || field.length > limit)
+		) {
+			return null;
+		}
+	}
+	return {
+		...("title" in metadata ? { title: metadata.title as string | null } : {}),
+		...("description" in metadata
+			? { description: metadata.description as string | null }
+			: {}),
 	};
 }
 
@@ -438,18 +516,31 @@ export async function buildServer({
 			};
 			const limit = query.limit ? Number(query.limit) : undefined;
 			const offset = query.offset ? Number(query.offset) : undefined;
+			const status = query.status
+				? parseLibraryFilter(query.status, processingStatuses)
+				: undefined;
+			const type = query.type
+				? parseLibraryFilter(query.type, recordingTypes)
+				: undefined;
 			if (
 				(limit !== undefined && (!Number.isInteger(limit) || limit < 1)) ||
-				(offset !== undefined && (!Number.isInteger(offset) || offset < 0))
+				(offset !== undefined && (!Number.isInteger(offset) || offset < 0)) ||
+				status === null ||
+				type === null
 			) {
-				return reply.code(400).send({ error: "invalid_pagination" });
+				return reply.code(400).send({
+					error:
+						status === null || type === null
+							? "invalid_library_filter"
+							: "invalid_pagination",
+				});
 			}
 			return library.list({
 				...(limit === undefined ? {} : { limit }),
 				...(offset === undefined ? {} : { offset }),
 				...(query.search ? { search: query.search } : {}),
-				...(query.status ? { status: queryValues(query.status) as never } : {}),
-				...(query.type ? { type: queryValues(query.type) as never } : {}),
+				...(status ? { status } : {}),
+				...(type ? { type } : {}),
 			});
 		});
 		server.get("/bff/library/:id", async (request, reply) => {
@@ -462,6 +553,19 @@ export async function buildServer({
 				? detail
 				: reply.code(404).send({ error: "recording_not_found" });
 		});
+		server.patch("/bff/library/:id", async (request, reply) => {
+			if (!(await requireSession(request, reply))) return;
+			const id = (request.params as { id?: unknown }).id;
+			if (!validRecordingId(id))
+				return reply.code(400).send({ error: "invalid_recording_id" });
+			const metadata = parseLibraryMetadata(request.body);
+			if (!metadata)
+				return reply.code(400).send({ error: "invalid_recording_metadata" });
+			const detail = await library.updateMetadata(id, metadata);
+			return detail
+				? detail
+				: reply.code(404).send({ error: "recording_not_found" });
+		});
 		server.delete("/bff/library/:id", async (request, reply) => {
 			if (!(await requireSession(request, reply))) return;
 			const id = (request.params as { id?: unknown }).id;
@@ -469,6 +573,19 @@ export async function buildServer({
 				return reply.code(400).send({ error: "invalid_recording_id" });
 			await library.remove([id]);
 			return reply.code(204).send();
+		});
+		server.get("/bff/library/:id/captions.vtt", async (request, reply) => {
+			if (!(await requireSession(request, reply))) return;
+			const id = (request.params as { id?: unknown }).id;
+			if (!validRecordingId(id))
+				return reply.code(400).send({ error: "invalid_recording_id" });
+			const recording = await library.open(id);
+			if (!recording)
+				return reply.code(404).send({ error: "recording_not_found" });
+			return reply
+				.header("cache-control", "private, no-store")
+				.type("text/vtt; charset=utf-8")
+				.send(captionsVtt(recording));
 		});
 		server.get("/bff/library/:id/media", async (request, reply) => {
 			if (!(await requireSession(request, reply))) return;

@@ -14,6 +14,7 @@ body {
 
 button,
 input,
+select,
 textarea {
 	font: inherit;
 }
@@ -66,7 +67,9 @@ textarea {
 
 .workspace header,
 .controls,
-.meter-row {
+.meter-row,
+.workspace-actions,
+.workspace-actions nav {
 	display: flex;
 	align-items: center;
 	gap: 0.7rem;
@@ -74,6 +77,7 @@ textarea {
 
 .workspace header {
 	justify-content: space-between;
+	align-items: flex-start;
 }
 
 .workspace h1,
@@ -85,6 +89,101 @@ textarea {
 	min-height: 20rem;
 	resize: vertical;
 	line-height: 1.5;
+}
+
+.workspace-actions {
+	align-items: flex-start;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
+
+.workspace-actions nav button[aria-current="page"] {
+	background: #f6f3ee;
+	color: #222;
+}
+
+.library,
+.recording-detail,
+.metadata-form,
+.library-filters,
+.recording-list,
+.history,
+.delete-recording {
+	display: grid;
+	gap: 0.8rem;
+}
+
+.library header,
+.recording-detail > header {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 1rem;
+}
+
+.library h2,
+.library h3,
+.recording-detail h2,
+.recording-detail h3,
+.library p,
+.recording-detail p {
+	margin: 0;
+}
+
+.library-filters {
+	grid-template-columns: minmax(12rem, 1fr) repeat(2, minmax(9rem, 0.5fr)) auto;
+	align-items: end;
+}
+
+.library-filters label,
+.metadata-form label {
+	display: grid;
+	gap: 0.35rem;
+	font-weight: 600;
+}
+
+.recording-list,
+.history {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.recording-list button {
+	display: grid;
+	width: 100%;
+	gap: 0.25rem;
+	text-align: left;
+}
+
+.recording-list small {
+	color: inherit;
+	opacity: 0.8;
+}
+
+.transcript,
+.history pre {
+	margin: 0;
+	padding: 0.75rem;
+	border: 1px solid #aaa;
+	border-radius: 0.4rem;
+	background: #fff;
+	white-space: pre-wrap;
+	word-break: break-word;
+	font: inherit;
+}
+
+.history li {
+	display: grid;
+	gap: 0.45rem;
+	padding: 0.75rem;
+	border: 1px solid #aaa;
+	border-radius: 0.4rem;
+}
+
+.recovered {
+	font-weight: 700;
+	color: #7a3700;
 }
 
 .meter {
@@ -113,5 +212,22 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
 	.meter span {
 		transition: none;
+	}
+}
+
+@media (max-width: 45rem) {
+	.workspace header,
+	.library header,
+	.recording-detail > header {
+		align-items: stretch;
+		flex-direction: column;
+	}
+
+	.workspace-actions {
+		justify-content: flex-start;
+	}
+
+	.library-filters {
+		grid-template-columns: 1fr;
 	}
 }

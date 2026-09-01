@@ -4,88 +4,14 @@ import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import Fastify from "fastify";
 import { chromium } from "playwright";
-import { type BffLibrary, buildServer } from "../server";
-import type { LibraryDetail, NewLibraryRecording } from "../src/core/ports";
+import { buildServer } from "../server";
+import { createE2eLibrary } from "./support/fake-library";
 
 function serverUrl(server: ReturnType<typeof Fastify>, hostname = "127.0.0.1") {
 	const address = server.server.address();
 	if (!address || typeof address === "string")
 		throw new Error("Server did not bind a port");
 	return `http://${hostname}:${address.port}`;
-}
-
-function createE2eLibrary() {
-	const recordings = new Map<string, LibraryDetail>();
-	const library: BffLibrary = {
-		async list() {
-			return {
-				items: [...recordings.values()].map((recording) => ({
-					createdAt: recording.createdAt,
-					displayTitle: "Untitled recording",
-					durationSeconds: recording.durationSeconds,
-					hasTranslation: false,
-					id: recording.id,
-					status: recording.status,
-					type: recording.type,
-				})),
-			};
-		},
-		async media() {
-			return null;
-		},
-		async open(id) {
-			return recordings.get(id) ?? null;
-		},
-		async remove(ids) {
-			for (const id of ids) recordings.delete(id);
-		},
-		async saveStream(
-			recording: NewLibraryRecording,
-			stream: NodeJS.ReadableStream,
-			contentType: string,
-		) {
-			let fileSizeBytes = 0;
-			for await (const chunk of stream) {
-				fileSizeBytes +=
-					typeof chunk === "string"
-						? Buffer.byteLength(chunk)
-						: chunk.byteLength;
-			}
-			const id = crypto.randomUUID();
-			const createdAt = Date.now();
-			const detail: LibraryDetail = {
-				createdAt,
-				displayText: recording.text,
-				durationSeconds: recording.durationSeconds,
-				history: [
-					{
-						createdAt,
-						id: `${id}:current`,
-						kind: "cloud",
-						provider: "e2e",
-						text: recording.text,
-					},
-				],
-				id,
-				media: {
-					contentType,
-					fileName: `${id}.webm`,
-					fileSizeBytes,
-					id,
-				},
-				status: recording.status,
-				text: recording.text,
-				type: recording.type,
-			};
-			recordings.set(id, detail);
-			return detail;
-		},
-	};
-	return {
-		library,
-		savedTexts: () =>
-			[...recordings.values()].map((recording) => recording.text),
-	};
 }
 
 test("loaded extension signs in through the BFF, triggers its backend relay, delivers dictation, and saves it", async () => {

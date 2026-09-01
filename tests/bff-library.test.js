@@ -48,6 +48,14 @@ test("serves the authenticated local library with media ranges and rejects unsaf
 		expect(media.statusCode).toBe(206);
 		expect(media.headers["content-range"]).toBe("bytes 1-5/10");
 		expect(media.body).toBe("udio-");
+		const captions = await server.inject({
+			headers: { cookie },
+			method: "GET",
+			url: `/bff/library/${saved?.id}/captions.vtt`,
+		});
+		expect(captions.statusCode).toBe(200);
+		expect(captions.headers["content-type"]).toContain("text/vtt");
+		expect(captions.body).toContain("A saved Diduny note");
 
 		const unsafe = await server.inject({
 			headers: { cookie },
@@ -55,6 +63,41 @@ test("serves the authenticated local library with media ranges and rejects unsaf
 			url: "/bff/library/not-an-id/media",
 		});
 		expect(unsafe.statusCode).toBe(400);
+		const invalidFilter = await server.inject({
+			headers: { cookie },
+			method: "GET",
+			url: "/bff/library?status=not-a-status",
+		});
+		expect(invalidFilter.statusCode).toBe(400);
+		expect(invalidFilter.json()).toEqual({ error: "invalid_library_filter" });
+
+		const updated = await server.inject({
+			headers: { cookie },
+			method: "PATCH",
+			payload: {
+				description: "Notes from the extension review",
+				title: "Extension review",
+			},
+			url: `/bff/library/${saved?.id}`,
+		});
+		expect(updated.statusCode).toBe(200);
+		expect(updated.json()).toEqual(
+			expect.objectContaining({
+				description: "Notes from the extension review",
+				title: "Extension review",
+			}),
+		);
+		const titleSearch = await server.inject({
+			headers: { cookie },
+			method: "GET",
+			url: "/bff/library?search=extension",
+		});
+		expect(titleSearch.json().items).toEqual([
+			expect.objectContaining({
+				id: saved?.id,
+				displayTitle: "Extension review",
+			}),
+		]);
 
 		const removed = await server.inject({
 			headers: { cookie },

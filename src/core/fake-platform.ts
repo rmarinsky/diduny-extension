@@ -4,6 +4,7 @@ import type {
 	HttpRequest,
 	HttpResponse,
 	LibraryDetail,
+	LibraryMetadata,
 	NewLibraryRecording,
 	Platform,
 	RetentionCategory,
@@ -190,6 +191,21 @@ export function createFakePlatform(): Platform & { http: FakeHttpPort } {
 			},
 			async setRetentionPolicy(category, policy) {
 				retention.set(category, policy);
+			},
+			async updateMetadata(id, metadata: LibraryMetadata) {
+				const recording = recordings.get(id);
+				if (!recording) return null;
+				const next = { ...recording };
+				if (metadata.title !== undefined) {
+					if (metadata.title === null) next.title = undefined;
+					else next.title = metadata.title;
+				}
+				if (metadata.description !== undefined) {
+					if (metadata.description === null) next.description = undefined;
+					else next.description = metadata.description;
+				}
+				recordings.set(id, next);
+				return next;
 			},
 		},
 		logger: { error() {}, info() {} },

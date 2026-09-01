@@ -92,6 +92,11 @@ export interface LibraryMedia {
 	id: string;
 }
 
+export interface LibraryMetadata {
+	description?: string | null;
+	title?: string | null;
+}
+
 export interface LibraryDetail extends Recording {
 	description?: string;
 	displayText: string;
@@ -150,6 +155,10 @@ export interface LibraryPort {
 		category: RetentionCategory,
 		policy: RetentionPolicy,
 	): Promise<void>;
+	updateMetadata(
+		id: string,
+		metadata: LibraryMetadata,
+	): Promise<LibraryDetail | null>;
 }
 
 export interface SettingsPort {
