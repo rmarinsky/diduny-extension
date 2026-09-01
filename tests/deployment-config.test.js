@@ -29,6 +29,7 @@ test("ships a container, mock proxy, Apache-2.0 license, and CI quality gates", 
 		]);
 
 	expect(dockerfile).toContain('CMD ["bun", "run", "start:web"]');
+	expect(dockerfile).toContain("RUN bunx wxt prepare && bun run build:web");
 	expect(dockerfile).toContain("COPY --from=build /app/src ./src");
 	expect(dockerfile).toContain("COPY --from=build /app/mock-proxy-main.ts");
 	expect(packageJson).toContain('"start:mock-proxy"');

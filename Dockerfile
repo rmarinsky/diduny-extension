@@ -6,7 +6,7 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 COPY . .
-RUN bun run build:web
+RUN bunx wxt prepare && bun run build:web
 
 FROM oven/bun:1.3.10
 
