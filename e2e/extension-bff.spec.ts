@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 import Fastify from "fastify";
 import { chromium } from "playwright";
 import { buildServer } from "../server";
+import { buildMockProxy } from "../src/mock-proxy";
 import { installSupportedBrowserCapabilities } from "./support/browser-capabilities";
 import { createE2eLibrary } from "./support/fake-library";
 
@@ -15,46 +16,23 @@ function serverUrl(server: ReturnType<typeof Fastify>, hostname = "127.0.0.1") {
 	return `http://${hostname}:${address.port}`;
 }
 
-test("loaded extension signs in through the BFF, triggers its backend relay, delivers dictation, and saves it", async () => {
+test("loaded extension signs in through the mock proxy BFF, delivers dictation, and saves it", async () => {
 	const accessToken = "access-token-should-never-reach-page";
 	const refreshToken = "refresh-token-should-never-reach-page";
 	const tokenFragments = [accessToken, refreshToken];
-	const upstream = Fastify();
-	let transcriptionRequests = 0;
-	let transcriptionBytes = 0;
-	let upstreamAuthorization = "";
-	upstream.addContentTypeParser(
-		/^multipart\/form-data/i,
-		(_request, payload, done) => {
-			done(null, payload);
-		},
-	);
-	upstream.get("/fixture", async (_request, reply) =>
+	const mock = await buildMockProxy({ accessToken, refreshToken });
+	const fixtureServer = Fastify();
+	fixtureServer.get("/fixture", async (_request, reply) =>
 		reply.type("text/html").send(`
 			<!doctype html>
 			<title>Diduny delivery fixture</title>
 			<textarea id="target" aria-label="Dictation target"></textarea>
 		`),
 	);
-	upstream.post("/api/v1/auth/verify-otp", async () =>
-		JSON.stringify({
-			accessToken,
-			accessTokenExpiresAt: Date.now() + 300_000,
-			refreshToken,
-			user: { email: "person@example.com" },
-		}),
-	);
-	upstream.post("/api/v1/auth/send-otp", async () => ({}));
-	upstream.post("/api/v1/transcriptions", async (request) => {
-		transcriptionRequests += 1;
-		upstreamAuthorization = request.headers.authorization ?? "";
-		for await (const chunk of request.body as AsyncIterable<Uint8Array>) {
-			transcriptionBytes += chunk.byteLength;
-		}
-		return { text: "Hello from backend", tokens: [] };
-	});
-	await upstream.listen({ host: "localhost", port: 0 });
-	const upstreamUrl = serverUrl(upstream, "localhost");
+	await mock.server.listen({ host: "localhost", port: 0 });
+	await fixtureServer.listen({ host: "localhost", port: 0 });
+	const upstreamUrl = serverUrl(mock.server, "localhost");
+	const fixtureUrl = serverUrl(fixtureServer, "localhost");
 	const e2eLibrary = createE2eLibrary();
 
 	const bff = await buildServer({
@@ -102,7 +80,7 @@ test("loaded extension signs in through the BFF, triggers its backend relay, del
 		const extensionId = new URL(worker.url()).host;
 
 		const fixture = await context.newPage();
-		await fixture.goto(`${upstreamUrl}/fixture`);
+		await fixture.goto(`${fixtureUrl}/fixture`);
 		await fixture.locator("#target").focus();
 
 		const options = await context.newPage();
@@ -180,15 +158,17 @@ test("loaded extension signs in through the BFF, triggers its backend relay, del
 			chrome.runtime.sendMessage({ type: "stop-recording" });
 		});
 
-		await expect(fixture.locator("#target")).toHaveValue("Hello from backend", {
+		await expect(fixture.locator("#target")).toHaveValue("Mock transcript", {
 			timeout: 30_000,
 		});
-		expect(transcriptionRequests).toBe(1);
-		expect(transcriptionBytes).toBeGreaterThan(0);
-		expect(upstreamAuthorization).toBe(`Bearer ${accessToken}`);
+		expect(mock.transcriptions()).toHaveLength(1);
+		expect(mock.transcriptions()[0]).toMatchObject({
+			authorization: `Bearer ${accessToken}`,
+		});
+		expect(mock.transcriptions()[0]?.bytes).toBeGreaterThan(0);
 		await expect
 			.poll(() => e2eLibrary.savedTexts(), { timeout: 10_000 })
-			.toEqual(["Hello from backend"]);
+			.toEqual(["Mock transcript"]);
 		await Promise.all(responseReads);
 		const pageStorage = await webLogin.evaluate(() => ({
 			cookie: document.cookie,
@@ -217,9 +197,11 @@ test("loaded extension signs in through the BFF, triggers its backend relay, del
 	} finally {
 		await context?.close();
 		bff.server.closeAllConnections?.();
-		upstream.server.closeAllConnections?.();
+		mock.server.server.closeAllConnections?.();
+		fixtureServer.server.closeAllConnections?.();
 		await bff.close();
-		await upstream.close();
+		await mock.server.close();
+		await fixtureServer.close();
 		await rm(userDataDir, { force: true, recursive: true });
 	}
 });

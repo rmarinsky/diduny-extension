@@ -58,6 +58,12 @@ test("implements all fifteen frozen proxy paths with a local OTP mailbox", async
 				tokens: expect.any(Array),
 			}),
 		);
+		expect(mock.transcriptions()).toEqual([
+			expect.objectContaining({
+				authorization: "Bearer mock-access-token",
+				bytes: expect.any(Number),
+			}),
+		]);
 
 		const clean = await fetch(`${baseUrl}/api/v1/transcriptions/clean`, {
 			body: JSON.stringify({ text: "raw" }),

@@ -8,6 +8,16 @@ export interface MockMailboxMessage {
 	otp: string;
 }
 
+export interface MockProxyOptions {
+	accessToken?: string;
+	refreshToken?: string;
+}
+
+export interface MockTranscription {
+	authorization?: string;
+	bytes: number;
+}
+
 function requestPath(url: string | undefined) {
 	return new URL(url ?? "", "http://mock.local").pathname;
 }
@@ -15,16 +25,33 @@ function requestPath(url: string | undefined) {
 function requireBearer(
 	request: { headers: { authorization?: string } },
 	reply: FastifyReply,
+	accessToken: string,
 ) {
-	if (request.headers.authorization === "Bearer mock-access-token") return true;
+	if (request.headers.authorization === `Bearer ${accessToken}`) return true;
 	reply.code(401).send({ error: "unauthorized" });
 	return false;
 }
 
-export async function buildMockProxy() {
+async function bodySize(value: unknown) {
+	if (!value || typeof value !== "object" || !(Symbol.asyncIterator in value)) {
+		return 0;
+	}
+	let bytes = 0;
+	for await (const chunk of value as AsyncIterable<Uint8Array | string>) {
+		bytes +=
+			typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.byteLength;
+	}
+	return bytes;
+}
+
+export async function buildMockProxy({
+	accessToken = "mock-access-token",
+	refreshToken: configuredRefreshToken = "mock-refresh-token",
+}: MockProxyOptions = {}) {
 	const server = Fastify({ logger: false });
 	const mailbox: MockMailboxMessage[] = [];
 	const behaviors = new Map<string, MockProxyBehavior>();
+	const transcriptions: MockTranscription[] = [];
 	await server.register(websocket);
 	server.addContentTypeParser(
 		/^multipart\/form-data/i,
@@ -62,9 +89,9 @@ export async function buildMockProxy() {
 		if (typeof payload?.email !== "string" || payload.otp !== "123456")
 			return reply.code(401).send({ error: "invalid_otp" });
 		return {
-			accessToken: "mock-access-token",
+			accessToken,
 			accessTokenExpiresAt: Date.now() + 300_000,
-			refreshToken: "mock-refresh-token",
+			refreshToken: configuredRefreshToken,
 			user: { email: payload.email },
 		};
 	});
@@ -72,21 +99,25 @@ export async function buildMockProxy() {
 		const refreshToken = (
 			request.body as { refreshToken?: unknown } | undefined
 		)?.refreshToken;
-		if (refreshToken !== "mock-refresh-token")
+		if (refreshToken !== configuredRefreshToken)
 			return reply.code(401).send({ error: "invalid_refresh_token" });
 		return {
-			accessToken: "mock-access-token",
+			accessToken,
 			accessTokenExpiresAt: Date.now() + 300_000,
-			refreshToken: "mock-refresh-token",
+			refreshToken: configuredRefreshToken,
 		};
 	});
 	server.post("/api/v1/auth/logout", async (request, reply) => {
-		if (!requireBearer(request, reply)) return;
+		if (!requireBearer(request, reply, accessToken)) return;
 		return reply.code(204).send();
 	});
 
 	server.post("/api/v1/transcriptions", async (request, reply) => {
-		if (!requireBearer(request, reply)) return;
+		if (!requireBearer(request, reply, accessToken)) return;
+		transcriptions.push({
+			authorization: request.headers.authorization,
+			bytes: await bodySize(request.body),
+		});
 		return {
 			text: "Mock transcript",
 			tokens: [
@@ -100,12 +131,12 @@ export async function buildMockProxy() {
 		};
 	});
 	server.post("/api/v1/transcriptions/clean", async (request, reply) => {
-		if (!requireBearer(request, reply)) return;
+		if (!requireBearer(request, reply, accessToken)) return;
 		const text = (request.body as { text?: unknown } | undefined)?.text;
 		return { text: typeof text === "string" ? text : "" };
 	});
 	server.post("/api/v1/jobs", async (request, reply) => {
-		if (!requireBearer(request, reply)) return;
+		if (!requireBearer(request, reply, accessToken)) return;
 		return {
 			createdAt: new Date().toISOString(),
 			jobId: "mock-job",
@@ -113,11 +144,11 @@ export async function buildMockProxy() {
 		};
 	});
 	server.get("/api/v1/jobs/:id", async (request, reply) => {
-		if (!requireBearer(request, reply)) return;
+		if (!requireBearer(request, reply, accessToken)) return;
 		return { id: (request.params as { id: string }).id, status: "completed" };
 	});
 	server.get("/api/v1/jobs/:id/events", async (request, reply) => {
-		if (!requireBearer(request, reply)) return;
+		if (!requireBearer(request, reply, accessToken)) return;
 		return reply
 			.header("content-type", "text/event-stream")
 			.send(
@@ -129,8 +160,7 @@ export async function buildMockProxy() {
 			request.raw.url ?? "",
 			"http://mock.local",
 		).searchParams.get("token");
-		if (token !== "mock-access-token")
-			return socket.close(4001, "unauthorized");
+		if (token !== accessToken) return socket.close(4001, "unauthorized");
 		socket.send(JSON.stringify({ type: "proxy_ready" }));
 		socket.on("message", (data, isBinary) => {
 			if (isBinary) return;
@@ -148,14 +178,14 @@ export async function buildMockProxy() {
 		});
 	});
 	server.get("/api/v1/translations", async (request, reply) => {
-		if (!requireBearer(request, reply)) return;
+		if (!requireBearer(request, reply, accessToken)) return;
 		const query = request.query as { q?: unknown };
 		return {
 			sentences: [{ trans: typeof query.q === "string" ? query.q : "" }],
 		};
 	});
 	server.get("/api/v1/usage/me", async (request, reply) => {
-		if (!requireBearer(request, reply)) return;
+		if (!requireBearer(request, reply, accessToken)) return;
 		return { isWhitelisted: true, usedHours: 0, usedMs: 0 };
 	});
 	server.get("/api/v1/config", async () => ({
@@ -165,7 +195,7 @@ export async function buildMockProxy() {
 		version: "mock",
 	}));
 	server.get("/api/v1/models", async (request, reply) => {
-		if (!requireBearer(request, reply)) return;
+		if (!requireBearer(request, reply, accessToken)) return;
 		return { models: ["mock"] };
 	});
 	server.get("/api/v1/health", async (_request, reply) =>
@@ -176,6 +206,7 @@ export async function buildMockProxy() {
 	return {
 		mailbox: () => [...mailbox],
 		server,
+		transcriptions: () => [...transcriptions],
 		setBehavior(path: string, behavior: MockProxyBehavior | null) {
 			if (behavior) behaviors.set(path, behavior);
 			else behaviors.delete(path);
