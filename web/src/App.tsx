@@ -8,9 +8,9 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { AUDIO_FORMAT } from "../../src/core/constants";
+import { AUDIO_FORMAT, WEB_LATENCY_TARGET_MS } from "../../src/core/constants";
 import type { RealtimeToken } from "../../src/core/realtime-session";
-import { speechPreCheck } from "../../src/core/speech-precheck";
+import { createSpeechPreCheckAccumulator } from "../../src/core/speech-precheck";
 import { CommandPalette } from "./CommandPalette";
 import { LibraryPane } from "./LibraryPane";
 import { SettingsPane } from "./SettingsPane";
@@ -44,6 +44,12 @@ import {
 } from "./picture-in-picture";
 import { type WebRealtimeSession, startWebRealtime } from "./realtime";
 import { acquireRecordingLock } from "./recording-lock";
+import {
+	type ScratchCapture,
+	type ScratchRecording,
+	type ScratchStorage,
+	createScratchStorage,
+} from "./scratch-storage";
 import { getWorkspaceSettings } from "./settings";
 import {
 	buildTranscriptionConfig,
@@ -58,10 +64,11 @@ type WorkspaceView = "dictation" | "library" | "settings";
 
 interface ActiveCapture {
 	audioContext: AudioContext;
-	chunks: Blob[];
-	frames: Int16Array[];
+	mediaWrites: Promise<void>;
 	mediaRecorder: MediaRecorder;
 	realtime: WebRealtimeSession;
+	scratch: ScratchCapture;
+	speechPreCheck: ReturnType<typeof createSpeechPreCheckAccumulator>;
 	stats: { sampleCount: number };
 	stream: MediaStream;
 	worklet: AudioWorkletNode;
@@ -88,23 +95,30 @@ async function bffJson<T>(path: string, init?: RequestInit): Promise<T> {
 	return body as T;
 }
 
-function joinFrames(frames: readonly Int16Array[]) {
-	const output = new Int16Array(
-		frames.reduce((total, frame) => total + frame.length, 0),
-	);
-	let offset = 0;
-	for (const frame of frames) {
-		output.set(frame, offset);
-		offset += frame.length;
-	}
-	return output;
-}
-
 async function stopRecorder(recorder: MediaRecorder) {
 	if (recorder.state === "inactive") return;
 	await new Promise<void>((resolve) => {
 		recorder.addEventListener("stop", () => resolve(), { once: true });
 		recorder.stop();
+	});
+}
+
+function realtimeResultWithinBudget(result: Promise<string>) {
+	return new Promise<string | undefined>((resolve) => {
+		const timeout = window.setTimeout(
+			() => resolve(undefined),
+			WEB_LATENCY_TARGET_MS,
+		);
+		void result.then(
+			(text) => {
+				window.clearTimeout(timeout);
+				resolve(text);
+			},
+			() => {
+				window.clearTimeout(timeout);
+				resolve(undefined);
+			},
+		);
 	});
 }
 
@@ -208,6 +222,8 @@ export function App() {
 	const paletteReturnFocus = useRef<HTMLElement | null>(null);
 	const pictureInPictureWindow = useRef<Window | null>(null);
 	const recordingLockReleaseRef = useRef<(() => void) | null>(null);
+	const recoveryAttemptedRef = useRef(false);
+	const scratchStorageRef = useRef<ScratchStorage | null>(null);
 	const stopHoldWhenReadyRef = useRef(false);
 	const statusElement = useRef<HTMLParagraphElement>(null);
 	const workspaceBusRef = useRef<ReturnType<
@@ -228,6 +244,12 @@ export function App() {
 		broadcastWorkspaceChange();
 		setWorkspaceRevision((revision) => revision + 1);
 	}, [broadcastWorkspaceChange]);
+
+	const scratchStorage = useCallback(() => {
+		if (!scratchStorageRef.current)
+			scratchStorageRef.current = createScratchStorage();
+		return scratchStorageRef.current;
+	}, []);
 
 	const closeCommandPalette = useCallback(() => {
 		setIsCommandPaletteOpen(false);
@@ -276,6 +298,7 @@ export function App() {
 	useEffect(
 		() => () => {
 			pictureInPictureWindow.current?.close();
+			scratchStorageRef.current?.close();
 		},
 		[],
 	);
@@ -291,6 +314,15 @@ export function App() {
 			bus.close();
 			if (workspaceBusRef.current === bus) workspaceBusRef.current = null;
 		};
+	}, []);
+
+	useEffect(() => {
+		const flushScratch = () => {
+			const capture = captureRef.current;
+			if (capture) void capture.scratch.flush();
+		};
+		document.addEventListener("visibilitychange", flushScratch);
+		return () => document.removeEventListener("visibilitychange", flushScratch);
 	}, []);
 
 	const refreshSession = useCallback(async () => {
@@ -314,6 +346,37 @@ export function App() {
 	useEffect(() => {
 		void refreshSession();
 	}, [refreshSession]);
+
+	const recoverInterruptedCaptures = useCallback(async () => {
+		const storage = scratchStorage();
+		const recovered = await storage.recover();
+		let didRecover = false;
+		for (const recording of recovered) {
+			try {
+				await saveToLibrary({
+					audio: recording.audio,
+					durationSeconds: recording.durationSeconds,
+					status: "partiallyRecovered",
+					text: recording.text || t("recovery.untitledText"),
+				});
+				await storage.discard(recording.id);
+				didRecover = true;
+			} catch {
+				// Keep the scratch manifest for a later BFF retry.
+			}
+		}
+		if (didRecover) invalidateWorkspace();
+	}, [invalidateWorkspace, scratchStorage, t]);
+
+	useEffect(() => {
+		if (authState !== "signed-in") {
+			recoveryAttemptedRef.current = false;
+			return;
+		}
+		if (recoveryAttemptedRef.current) return;
+		recoveryAttemptedRef.current = true;
+		void recoverInterruptedCaptures();
+	}, [authState, recoverInterruptedCaptures]);
 
 	useEffect(() => {
 		void workspaceRevision;
@@ -356,6 +419,8 @@ export function App() {
 		captureRef.current = null;
 		try {
 			await stopRecorder(capture.mediaRecorder);
+			await capture.mediaWrites;
+			await capture.scratch.discard().catch(() => undefined);
 		} finally {
 			releaseCapture(capture);
 			releaseRecordingLock();
@@ -378,25 +443,42 @@ export function App() {
 		setStatus(t("status.transcribing"));
 		try {
 			await stopRecorder(capture.mediaRecorder);
-			const preCheck = speechPreCheck(joinFrames(capture.frames));
+			const completeScratch = (() => {
+				let completed: Promise<ScratchRecording> | undefined;
+				return () => {
+					completed ??= capture.mediaWrites.then(() =>
+						capture.scratch.complete(),
+					);
+					return completed;
+				};
+			})();
+			const preCheck = capture.speechPreCheck.result();
 			if (!preCheck.hasSpeech) {
+				await capture.mediaWrites;
+				await capture.scratch.discard().catch(() => undefined);
 				setStatus(t("status.noSpeech"));
 				return;
 			}
 
-			const audio = new Blob(capture.chunks, {
-				type: capture.mediaRecorder.mimeType || "audio/webm",
-			});
 			let transcriptionText: string | undefined;
 			capture.realtime.finalize();
-			try {
-				transcriptionText = await capture.realtime.result;
-			} catch {
+			transcriptionText = await realtimeResultWithinBudget(
+				capture.realtime.result,
+			);
+			if (!transcriptionText?.trim()) {
+				capture.realtime.close();
 				setStatus(t("status.realtimeFallback"));
 			}
 			if (!transcriptionText?.trim()) {
+				const recording = await completeScratch();
 				const form = new FormData();
-				form.append("audio", audio, "dictation.webm");
+				form.append(
+					"audio",
+					recording.audio,
+					recording.audio.type.includes("wav")
+						? "dictation.wav"
+						: "dictation.webm",
+				);
 				const languageHints = translationMode
 					? [translationSourceLanguage]
 					: language
@@ -439,17 +521,24 @@ export function App() {
 					? t("status.translationAdded")
 					: t("status.dictationAdded"),
 			);
-			void saveToLibrary({
-				audio,
-				durationSeconds: Math.floor(
-					capture.stats.sampleCount / AUDIO_FORMAT.sampleRate,
-				),
-				...(translationMode
-					? { status: "translated" as const, type: "translation" as const }
-					: {}),
-				text: transcriptionText,
-			})
-				.then(invalidateWorkspace)
+			void completeScratch()
+				.then((recording) =>
+					saveToLibrary({
+						audio: recording.audio,
+						durationSeconds: recording.durationSeconds,
+						...(translationMode
+							? {
+									status: "translated" as const,
+									type: "translation" as const,
+								}
+							: {}),
+						text: transcriptionText,
+					}),
+				)
+				.then(async () => {
+					await capture.scratch.discard();
+					invalidateWorkspace();
+				})
 				.catch(() => {
 					if (!captureRef.current) {
 						setStatus(t("status.librarySaveFailed"));
@@ -488,6 +577,7 @@ export function App() {
 		let stream: MediaStream | undefined;
 		let pipeline: Awaited<ReturnType<typeof createPcmCapture>> | undefined;
 		let realtime: WebRealtimeSession | undefined;
+		let scratch: ScratchCapture | undefined;
 		let fallbackDeviceName: string | undefined;
 		try {
 			const release = await acquireRecordingLock();
@@ -510,8 +600,11 @@ export function App() {
 					stream.getAudioTracks()[0]?.label || "another available microphone";
 			}
 			if (!stream) throw new Error(t("status.couldNotStartMicrophone"));
-			const frames: Int16Array[] = [];
+			const activeScratch = await scratchStorage().start();
+			scratch = activeScratch;
+			const speechPreCheck = createSpeechPreCheckAccumulator();
 			const stats = { sampleCount: 0 };
+			let recoveryText = "";
 			const languageHints = translationMode
 				? [translationSourceLanguage]
 				: language
@@ -540,8 +633,11 @@ export function App() {
 						.filter((token) => token.isFinal)
 						.map((token) => token.text)
 						.join("");
-					if (finalized)
+					if (finalized) {
+						recoveryText += finalized;
+						activeScratch.setText(recoveryText);
 						setLiveFinalText((current) => `${current}${finalized}`);
+					}
 					setLiveProvisionalText(
 						tokens
 							.filter((token) => !token.isFinal)
@@ -552,7 +648,8 @@ export function App() {
 			});
 			pipeline = await createPcmCapture({
 				onFrame(frame) {
-					frames.push(frame);
+					speechPreCheck.push(frame);
+					activeScratch.appendPcm(frame);
 					stats.sampleCount += frame.length;
 					realtime?.sendAudio(frame);
 					const nextElapsed = Math.floor(
@@ -568,24 +665,28 @@ export function App() {
 			const options = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
 				? { mimeType: "audio/webm;codecs=opus" }
 				: undefined;
+			// ponytail: stream browser WebM/Opus to OPFS; revisit WebCodecs only if profiling shows encoder CPU delaying long meetings (#030).
 			const mediaRecorder = new MediaRecorder(
 				pipeline.destination.stream,
 				options,
 			);
-			const chunks: Blob[] = [];
-			mediaRecorder.addEventListener("dataavailable", (event) => {
-				if (event.data.size) chunks.push(event.data);
-			});
 			const capture: ActiveCapture = {
 				audioContext: pipeline.audioContext,
-				chunks,
-				frames,
+				mediaWrites: Promise.resolve(),
 				mediaRecorder,
 				realtime,
+				scratch: activeScratch,
+				speechPreCheck,
 				stats,
 				stream,
 				worklet: pipeline.worklet,
 			};
+			mediaRecorder.addEventListener("dataavailable", (event) => {
+				if (!event.data.size) return;
+				capture.mediaWrites = capture.mediaWrites
+					.then(() => activeScratch.appendEncoded(event.data))
+					.catch(() => undefined);
+			});
 			captureRef.current = capture;
 			mediaRecorder.start(250);
 			setCaptureState("recording");
@@ -604,6 +705,7 @@ export function App() {
 			pipeline?.worklet.disconnect();
 			for (const track of stream?.getTracks() ?? []) track.stop();
 			void pipeline?.audioContext.close();
+			await scratch?.discard().catch(() => undefined);
 			stopHoldWhenReadyRef.current = false;
 			releaseRecordingLock();
 			setStatus(t("status.couldNotStartMicrophone"));
@@ -614,6 +716,7 @@ export function App() {
 		language,
 		microphoneDeviceId,
 		releaseRecordingLock,
+		scratchStorage,
 		translationMode,
 		translationSourceLanguage,
 		translationTargetLanguage,

@@ -45,6 +45,19 @@ test("persists audio and searchable summaries without leaking transcript text in
 	});
 });
 
+test("keeps browser Opus captures in their seekable WebM container", async () => {
+	await withStore(async ({ dataDir, store }) => {
+		const saved = await store.save(voice(), {
+			bytes: new Uint8Array([1, 2, 3]),
+			contentType: "audio/webm;codecs=opus",
+		});
+
+		expect(await readdir(join(dataDir, "recordings"))).toEqual([
+			`${saved?.id}.webm`,
+		]);
+	});
+});
+
 test("retention never writes a row or a media file", async () => {
 	await withStore(async ({ dataDir, store }) => {
 		await store.setRetentionPolicy("dictation", "never");

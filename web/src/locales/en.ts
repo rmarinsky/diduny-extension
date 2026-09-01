@@ -113,6 +113,9 @@ export const en = {
 		unavailable:
 			"Diduny could not open a floating panel. Keep the live panel in this page and try again.",
 	},
+	recovery: {
+		untitledText: "Recovered audio from an interrupted recording.",
+	},
 	commandPalette: {
 		title: "Command palette",
 		close: "Close command palette",

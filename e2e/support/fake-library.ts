@@ -47,6 +47,7 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 	const recordings = new Map(
 		initial.map((recording) => [recording.id, recording]),
 	);
+	const mediaHeaders = new Map<string, Uint8Array>();
 	let settings: Settings = DEFAULT_SETTINGS;
 	const retention: Record<RetentionCategory, RetentionPolicy> = {
 		dictation: "forever",
@@ -100,13 +101,25 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 			contentType: string,
 		) {
 			let fileSizeBytes = 0;
+			const header = new Uint8Array(44);
+			let headerBytes = 0;
 			for await (const chunk of stream) {
-				fileSizeBytes +=
+				const bytes =
 					typeof chunk === "string"
-						? Buffer.byteLength(chunk)
-						: chunk.byteLength;
+						? Buffer.from(chunk)
+						: new Uint8Array(chunk);
+				fileSizeBytes += bytes.byteLength;
+				if (headerBytes < header.byteLength) {
+					const next = Math.min(
+						bytes.byteLength,
+						header.byteLength - headerBytes,
+					);
+					header.set(bytes.subarray(0, next), headerBytes);
+					headerBytes += next;
+				}
 			}
 			const id = crypto.randomUUID();
+			mediaHeaders.set(id, header.slice(0, headerBytes));
 			const createdAt = Date.now();
 			const detail: LibraryDetail = {
 				createdAt,
@@ -157,6 +170,8 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 	};
 	return {
 		library,
+		mediaHeader: (id: string) => mediaHeaders.get(id),
+		recordings: () => [...recordings.values()],
 		savedTexts: () =>
 			[...recordings.values()].map((recording) => recording.text),
 		settings: () => settings,

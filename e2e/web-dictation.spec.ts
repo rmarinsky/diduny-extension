@@ -106,6 +106,13 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 		await expect
 			.poll(() => e2eLibrary.savedTexts())
 			.toEqual(["Hello from web dictation"]);
+		expect(e2eLibrary.recordings()).toEqual([
+			expect.objectContaining({
+				media: expect.objectContaining({
+					contentType: "audio/webm;codecs=opus",
+				}),
+			}),
+		]);
 
 		await page.evaluate(() => navigator.clipboard.writeText("Keep this text"));
 		await expect(page.getByLabel("Microphone level")).toHaveAttribute(

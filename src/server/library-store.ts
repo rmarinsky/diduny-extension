@@ -187,6 +187,7 @@ function isSafeMediaName(value: string) {
 
 function mediaExtension(contentType: string) {
 	const normalized = contentType.toLowerCase();
+	if (normalized.includes("webm")) return "webm";
 	if (normalized.includes("ogg")) return "ogg";
 	if (normalized.includes("opus")) return "opus";
 	if (normalized.includes("wav")) return "wav";
