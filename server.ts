@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { PassThrough } from "node:stream";
 import fastifyStatic from "@fastify/static";
@@ -37,6 +38,7 @@ import { type ZipEntry, writeZip } from "./src/server/zip";
 
 export interface ServerOptions {
 	auth?: BffAuthGateway;
+	extensionOrigin?: string;
 	fetch?: typeof globalThis.fetch;
 	library?: BffLibrary;
 	log?: (line: string) => void;
@@ -116,6 +118,8 @@ const workspaceSettingKeys = [
 	"uiLocale",
 ] as const satisfies readonly (keyof Settings)[];
 const localeCookieName = "diduny_locale";
+export const defaultExtensionOrigin =
+	"chrome-extension://gfkbkikhbmdnmpfjekoopknbokbhfldo";
 const securityHeaders = {
 	"content-security-policy":
 		"default-src 'self'; base-uri 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'",
@@ -134,9 +138,10 @@ function requestPath(request: FastifyRequest) {
 
 function upstreamPath(request: FastifyRequest) {
 	const path = requestPath(request);
-	return path.startsWith("/bff/api/")
-		? `/api/v1/${path.slice("/bff/api/".length)}`
-		: null;
+	for (const prefix of ["/bff/api/", "/bff/extension/api/"]) {
+		if (path.startsWith(prefix)) return `/api/v1/${path.slice(prefix.length)}`;
+	}
+	return null;
 }
 
 function responseBytes(reply: FastifyReply) {
@@ -191,10 +196,24 @@ function localeCookie(locale: Settings["uiLocale"]) {
 	return `${localeCookieName}=${locale}; Path=/; Max-Age=31536000; Secure; SameSite=Lax`;
 }
 
-function isExtensionRequest(request: FastifyRequest) {
-	if (request.headers["sec-fetch-site"] === "none") return true;
-	const origin = request.headers.origin;
-	return typeof origin === "string" && origin.startsWith("chrome-extension://");
+function isExtensionRequest(request: FastifyRequest, extensionOrigin: string) {
+	return request.headers.origin === extensionOrigin;
+}
+
+function requestSessionId(request: FastifyRequest) {
+	return sessionIdFromCookie(
+		request.headers.cookie,
+		requestPath(request).startsWith("/bff/extension/")
+			? extensionSessionCookieName
+			: sessionCookieName,
+	);
+}
+
+function sessionLogId(request: FastifyRequest) {
+	const id = requestSessionId(request);
+	return id
+		? createHash("sha256").update(id).digest("hex").slice(0, 16)
+		: null;
 }
 
 function validRecordingId(id: unknown): id is string {
@@ -485,6 +504,8 @@ function parseRetentionSettings(value: unknown): {
 export async function buildServer({
 	auth,
 	fetch = globalThis.fetch,
+	extensionOrigin =
+		process.env.DIDUNY_EXTENSION_ORIGIN ?? defaultExtensionOrigin,
 	library,
 	log: writeLog = () => undefined,
 	logLevel = (process.env.DIDUNY_LOG_LEVEL as LogLevel | undefined) ?? "info",
@@ -497,6 +518,7 @@ export async function buildServer({
 		logLevelRank[logLevel] === undefined ? "info" : logLevel;
 	const requestStartedAt = new WeakMap<FastifyRequest, number>();
 	const rateWindows = new Map<string, { count: number; resetAt: number }>();
+	const maxRateWindows = 1024;
 	const log = (
 		level: LogLevel,
 		event: string,
@@ -510,9 +532,15 @@ export async function buildServer({
 		const path = requestPath(request);
 		const limit = rateLimitFor(path);
 		if (!limit) return done();
-		const sessionId = sessionIdFromCookie(request.headers.cookie) ?? request.ip;
-		const key = `${path}:${sessionId}`;
 		const now = Date.now();
+		for (const [key, window] of rateWindows) {
+			if (window.resetAt <= now) rateWindows.delete(key);
+		}
+		if (rateWindows.size >= maxRateWindows) {
+			const oldest = rateWindows.keys().next().value;
+			if (oldest) rateWindows.delete(oldest);
+		}
+		const key = `${path}:ip:${request.ip}`;
 		const current = rateWindows.get(key);
 		const window =
 			current && current.resetAt > now
@@ -537,7 +565,7 @@ export async function buildServer({
 			bytes: responseBytes(reply),
 			durationMs: Date.now() - (requestStartedAt.get(request) ?? Date.now()),
 			method: request.method,
-			sessionId: sessionIdFromCookie(request.headers.cookie),
+			sessionId: sessionLogId(request),
 			status: reply.statusCode,
 			upstreamPath: upstreamPath(request),
 		});
@@ -547,7 +575,7 @@ export async function buildServer({
 		log("error", "http.error", {
 			error: error instanceof Error ? error.name : "unknown_error",
 			method: request.method,
-			sessionId: sessionIdFromCookie(request.headers.cookie),
+			sessionId: sessionLogId(request),
 			status: 500,
 			upstreamPath: upstreamPath(request),
 		});
@@ -660,7 +688,7 @@ export async function buildServer({
 		cookieName = sessionCookieName,
 		extensionOnly = false,
 	) => {
-		if (extensionOnly && !isExtensionRequest(request)) {
+		if (extensionOnly && !isExtensionRequest(request, extensionOrigin)) {
 			reply.code(403).send({ error: "extension_origin_required" });
 			return null;
 		}
@@ -972,19 +1000,19 @@ export async function buildServer({
 		});
 	}
 	server.get("/bff/extension/auth/session", async (request, reply) => {
-		if (!isExtensionRequest(request)) {
+		if (!isExtensionRequest(request, extensionOrigin)) {
 			return reply.code(403).send({ error: "extension_origin_required" });
 		}
 		return sessionResponse(request, extensionSessionCookieName);
 	});
 	server.post("/bff/extension/auth/logout", async (request, reply) => {
-		if (!isExtensionRequest(request)) {
+		if (!isExtensionRequest(request, extensionOrigin)) {
 			return reply.code(403).send({ error: "extension_origin_required" });
 		}
 		return logout(request, reply, extensionSessionCookieName);
 	});
 	server.all("/bff/extension/api/*", async (request, reply) => {
-		if (!isExtensionRequest(request)) {
+		if (!isExtensionRequest(request, extensionOrigin)) {
 			return reply.code(403).send({ error: "extension_origin_required" });
 		}
 		return relay(request, reply, extensionSessionCookieName);
@@ -1002,7 +1030,7 @@ export async function buildServer({
 		"/bff/extension/realtime",
 		{
 			preValidation: async (request, reply) => {
-				if (!isExtensionRequest(request)) {
+				if (!isExtensionRequest(request, extensionOrigin)) {
 					reply.code(403).send({ error: "extension_origin_required" });
 					return;
 				}

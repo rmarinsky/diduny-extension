@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildServer } from "../server";
+import { buildServer, defaultExtensionOrigin } from "../server";
 import { LibraryStore } from "../src/server/library-store";
 import { InMemorySessionStore } from "../src/server/session-store";
 
@@ -210,7 +210,7 @@ test("lets an extension session stream its capture into the local library", asyn
 	try {
 		const extensionHeaders = {
 			cookie: `diduny_extension_session=${sessionId}`,
-			"sec-fetch-site": "none",
+			origin: defaultExtensionOrigin,
 		};
 		const rejected = await server.inject({
 			headers: { cookie: extensionHeaders.cookie },

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { buildServer } from "../server";
+import { buildServer, defaultExtensionOrigin } from "../server";
 
 test("scopes the cross-site extension cookie to BFF extension routes", async () => {
 	const server = await buildServer({
@@ -38,7 +38,7 @@ test("scopes the cross-site extension cookie to BFF extension routes", async () 
 	const accepted = await server.inject({
 		headers: {
 			cookie: extensionCookie,
-			"sec-fetch-site": "none",
+			origin: defaultExtensionOrigin,
 		},
 		method: "GET",
 		url: "/bff/extension/api/usage/me",
@@ -46,7 +46,7 @@ test("scopes the cross-site extension cookie to BFF extension routes", async () 
 	const rejected = await server.inject({
 		headers: {
 			cookie: extensionCookie,
-			"sec-fetch-site": "cross-site",
+			origin: "chrome-extension://untrusted-extension-id",
 		},
 		method: "GET",
 		url: "/bff/extension/api/usage/me",
