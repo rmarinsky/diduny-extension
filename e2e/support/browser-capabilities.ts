@@ -104,3 +104,82 @@ export async function installFakeMicrophones(context: BrowserContext) {
 		});
 	});
 }
+
+export async function installFakeDictationCapture(context: BrowserContext) {
+	await context.addInitScript(() => {
+		class FakeAnalyser {
+			fftSize = 1024;
+
+			getFloatTimeDomainData(frame: Float32Array) {
+				frame.fill(0.05);
+			}
+		}
+
+		class FakeAudioContext {
+			createAnalyser() {
+				return new FakeAnalyser();
+			}
+
+			createMediaStreamDestination() {
+				return { stream: new MediaStream() };
+			}
+
+			createMediaStreamSource() {
+				return { connect() {} };
+			}
+
+			close() {
+				return Promise.resolve();
+			}
+
+			resume() {
+				return Promise.resolve();
+			}
+		}
+
+		class FakeMediaRecorder {
+			static isTypeSupported() {
+				return true;
+			}
+
+			mimeType = "audio/webm;codecs=opus";
+			state: RecordingState = "inactive";
+			private listeners = new Map<string, Array<(event: Event) => void>>();
+
+			addEventListener(type: string, callback: (event: Event) => void) {
+				const callbacks = this.listeners.get(type) ?? [];
+				callbacks.push(callback);
+				this.listeners.set(type, callbacks);
+			}
+
+			start() {
+				this.state = "recording";
+			}
+
+			stop() {
+				this.state = "inactive";
+				this.emit("dataavailable", {
+					data: new Blob(["fake-audio"], { type: this.mimeType }),
+				} as unknown as Event);
+				this.emit("stop", new Event("stop"));
+			}
+
+			private emit(type: string, event: Event) {
+				for (const callback of this.listeners.get(type) ?? []) callback(event);
+			}
+		}
+
+		Object.defineProperty(globalThis, "AudioContext", {
+			configurable: true,
+			value: FakeAudioContext,
+		});
+		Object.defineProperty(globalThis, "MediaRecorder", {
+			configurable: true,
+			value: FakeMediaRecorder,
+		});
+		Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+			configurable: true,
+			value: async () => new MediaStream(),
+		});
+	});
+}

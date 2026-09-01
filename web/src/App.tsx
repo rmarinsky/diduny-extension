@@ -1,5 +1,6 @@
 import {
 	type FormEvent,
+	type PointerEvent as ReactPointerEvent,
 	useCallback,
 	useEffect,
 	useRef,
@@ -140,7 +141,10 @@ export function App() {
 	const [view, setView] = useState<WorkspaceView>("dictation");
 	const [workspaceRevision, setWorkspaceRevision] = useState(0);
 	const captureRef = useRef<ActiveCapture | null>(null);
+	const holdCaptureRef = useRef(false);
 	const recordingLockReleaseRef = useRef<(() => void) | null>(null);
+	const suppressHoldClickRef = useRef(false);
+	const stopHoldWhenReadyRef = useRef(false);
 	const workspaceBusRef = useRef<ReturnType<
 		typeof createWorkspaceInvalidationBus
 	> | null>(null);
@@ -205,6 +209,8 @@ export function App() {
 	}, [authState, workspaceRevision]);
 
 	const cancelCapture = useCallback(async () => {
+		holdCaptureRef.current = false;
+		stopHoldWhenReadyRef.current = false;
 		const capture = captureRef.current;
 		if (!capture) {
 			releaseRecordingLock();
@@ -224,6 +230,7 @@ export function App() {
 	}, [releaseRecordingLock]);
 
 	const finishCapture = useCallback(async () => {
+		stopHoldWhenReadyRef.current = false;
 		const capture = captureRef.current;
 		if (!capture) return;
 		captureRef.current = null;
@@ -373,9 +380,14 @@ export function App() {
 					? `Saved microphone is unavailable. Recording with ${fallbackDeviceName}.`
 					: "Listening…",
 			);
+			if (stopHoldWhenReadyRef.current) {
+				stopHoldWhenReadyRef.current = false;
+				void finishCapture();
+			}
 		} catch (error) {
 			for (const track of stream?.getTracks() ?? []) track.stop();
 			void audioContext?.close();
+			stopHoldWhenReadyRef.current = false;
 			releaseRecordingLock();
 			setStatus(
 				error instanceof Error
@@ -383,10 +395,15 @@ export function App() {
 					: "Could not start the microphone.",
 			);
 		}
-	}, [captureState, microphoneDeviceId, releaseRecordingLock]);
+	}, [captureState, finishCapture, microphoneDeviceId, releaseRecordingLock]);
 
 	useEffect(() => {
 		const onShortcut = (event: KeyboardEvent) => {
+			if (event.key === "Escape" && captureRef.current) {
+				event.preventDefault();
+				void cancelCapture();
+				return;
+			}
 			if (
 				event.repeat ||
 				!matchesDictationShortcut(event) ||
@@ -399,7 +416,33 @@ export function App() {
 		};
 		window.addEventListener("keydown", onShortcut);
 		return () => window.removeEventListener("keydown", onShortcut);
-	}, [finishCapture, startCapture]);
+	}, [cancelCapture, finishCapture, startCapture]);
+
+	function toggleCapture() {
+		if (suppressHoldClickRef.current) {
+			suppressHoldClickRef.current = false;
+			return;
+		}
+		void (isRecording ? finishCapture() : startCapture());
+	}
+
+	function startHoldCapture(event: ReactPointerEvent<HTMLButtonElement>) {
+		if (event.button !== 0 || captureRef.current || captureState !== "idle")
+			return;
+		holdCaptureRef.current = true;
+		suppressHoldClickRef.current = true;
+		void startCapture();
+	}
+
+	function stopHoldCapture() {
+		if (!holdCaptureRef.current) return;
+		holdCaptureRef.current = false;
+		if (captureRef.current) {
+			void finishCapture();
+		} else {
+			stopHoldWhenReadyRef.current = true;
+		}
+	}
 
 	useEffect(
 		() => () => {
@@ -579,9 +622,11 @@ export function App() {
 					<div className="controls">
 						<button
 							disabled={captureState === "sending"}
-							onClick={() =>
-								void (isRecording ? finishCapture() : startCapture())
-							}
+							onClick={toggleCapture}
+							onPointerCancel={stopHoldCapture}
+							onPointerDown={startHoldCapture}
+							onPointerUp={stopHoldCapture}
+							onMouseUp={stopHoldCapture}
 							type="button"
 						>
 							{isRecording ? "Stop dictation" : "Start dictation"}
