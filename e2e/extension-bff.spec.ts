@@ -39,6 +39,7 @@ test("loaded extension signs in through the BFF, triggers its backend relay, and
 			user: { email: "person@example.com" },
 		}),
 	);
+	upstream.post("/api/v1/auth/send-otp", async () => ({}));
 	upstream.post("/api/v1/transcriptions", async (request) => {
 		transcriptionRequests += 1;
 		upstreamAuthorization = request.headers.authorization ?? "";
@@ -50,7 +51,10 @@ test("loaded extension signs in through the BFF, triggers its backend relay, and
 	await upstream.listen({ host: "localhost", port: 0 });
 	const upstreamUrl = serverUrl(upstream, "localhost");
 
-	const bff = await buildServer({ upstreamUrl });
+	const bff = await buildServer({
+		staticDir: resolve("web/dist"),
+		upstreamUrl,
+	});
 	await bff.listen({ host: "localhost", port: 0 });
 	const bffUrl = serverUrl(bff, "localhost");
 	const userDataDir = await mkdtemp(join(tmpdir(), "diduny-extension-e2e-"));
@@ -87,15 +91,14 @@ test("loaded extension signs in through the BFF, triggers its backend relay, and
 		await expect(options.locator("output")).toContainText("Saved");
 
 		const webLogin = await context.newPage();
-		await webLogin.goto(`${bffUrl}/bff/health`);
-		await webLogin.evaluate(async () => {
-			const response = await fetch("/bff/auth/verify-otp", {
-				body: JSON.stringify({ email: "person@example.com", otp: "123456" }),
-				headers: { "content-type": "application/json" },
-				method: "POST",
-			});
-			if (!response.ok) throw new Error("BFF sign-in failed");
-		});
+		await webLogin.goto(`${bffUrl}/`);
+		await webLogin.getByLabel("Email").fill("person@example.com");
+		await webLogin.getByRole("button", { name: "Send one-time code" }).click();
+		await webLogin.getByLabel("One-time code").fill("123456");
+		await webLogin
+			.getByRole("button", { name: "Sign in", exact: true })
+			.click();
+		await expect(webLogin.getByText("person@example.com")).toBeVisible();
 		expect((await context.cookies(bffUrl))[0]).toMatchObject({
 			httpOnly: true,
 		});
