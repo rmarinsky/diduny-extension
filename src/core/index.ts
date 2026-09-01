@@ -37,6 +37,12 @@ export {
 	textCleanupFromSettings,
 	updateSettings,
 } from "./settings";
+export {
+	DEFAULT_DICTATION_SHORTCUT,
+	isReservedShortcut,
+	matchesShortcut,
+	normalizeShortcut,
+} from "./shortcuts";
 export { SessionMachine } from "./session-machine";
 export { speechPreCheck } from "./speech-precheck";
 

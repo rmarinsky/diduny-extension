@@ -1,11 +1,17 @@
 import { INPUT_TIMING } from "./constants";
 import type { TextCleanup } from "./models";
+import {
+	DEFAULT_DICTATION_SHORTCUT,
+	isReservedShortcut,
+	normalizeShortcut,
+} from "./shortcuts";
 
 export type UiLocale = "en" | "uk";
 export type Provider = "cloud" | "local";
 
 export interface Settings {
 	announceLiveTranscript: boolean;
+	dictationShortcut: string;
 	fillerWords: readonly string[];
 	microphoneDeviceId: string | null;
 	playSoundOnCompletion: boolean;
@@ -27,6 +33,7 @@ export interface Settings {
 // Defaults ported from SettingsStorage.swift:160-179, not its stale prose docs.
 export const DEFAULT_SETTINGS: Settings = {
 	announceLiveTranscript: false,
+	dictationShortcut: DEFAULT_DICTATION_SHORTCUT,
 	fillerWords: ["um", "uh"],
 	microphoneDeviceId: null,
 	playSoundOnCompletion: true,
@@ -64,6 +71,11 @@ function language(value: unknown, fallback: string) {
 		: fallback;
 }
 
+function shortcut(value: unknown, fallback: string) {
+	const normalized = normalizeShortcut(value);
+	return normalized && !isReservedShortcut(normalized) ? normalized : fallback;
+}
+
 export function normalizeSettings(value: unknown): Settings {
 	const settings = record(value);
 	const typingSpeed = settings.typingSpeedWordsPerMinute;
@@ -72,6 +84,10 @@ export function normalizeSettings(value: unknown): Settings {
 			typeof settings.announceLiveTranscript === "boolean"
 				? settings.announceLiveTranscript
 				: DEFAULT_SETTINGS.announceLiveTranscript,
+		dictationShortcut: shortcut(
+			settings.dictationShortcut,
+			DEFAULT_SETTINGS.dictationShortcut,
+		),
 		fillerWords: stringList(settings.fillerWords, DEFAULT_SETTINGS.fillerWords),
 		microphoneDeviceId:
 			settings.microphoneDeviceId === null ||

@@ -14,6 +14,7 @@ import type {
 	RetentionPolicy,
 } from "./src/core/ports";
 import type { Settings } from "./src/core/settings";
+import { isReservedShortcut, normalizeShortcut } from "./src/core/shortcuts";
 import { type BffAuthGateway, ProxyOtpGateway } from "./src/server/auth";
 import type {
 	LibraryExportEntry,
@@ -102,6 +103,7 @@ const retentionPolicies = [
 ] as const satisfies readonly RetentionPolicy[];
 const workspaceSettingKeys = [
 	"announceLiveTranscript",
+	"dictationShortcut",
 	"fillerWords",
 	"microphoneDeviceId",
 	"protectedLexicon",
@@ -363,6 +365,10 @@ function validTerms(value: unknown): value is readonly string[] {
 function parseWorkspaceSettings(value: unknown): Partial<Settings> | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 	const settings = value as Record<string, unknown>;
+	const dictationShortcut =
+		"dictationShortcut" in settings
+			? normalizeShortcut(settings.dictationShortcut)
+			: undefined;
 	const keys = Object.keys(settings);
 	if (
 		keys.length === 0 ||
@@ -378,6 +384,8 @@ function parseWorkspaceSettings(value: unknown): Partial<Settings> | null {
 	if (
 		("announceLiveTranscript" in settings &&
 			typeof settings.announceLiveTranscript !== "boolean") ||
+		("dictationShortcut" in settings &&
+			(!dictationShortcut || isReservedShortcut(dictationShortcut))) ||
 		("textCleanupEnabled" in settings &&
 			typeof settings.textCleanupEnabled !== "boolean") ||
 		("fillerWords" in settings && !validTerms(settings.fillerWords)) ||
@@ -404,7 +412,10 @@ function parseWorkspaceSettings(value: unknown): Partial<Settings> | null {
 	) {
 		return null;
 	}
-	return settings as Partial<Settings>;
+	return {
+		...settings,
+		...(dictationShortcut ? { dictationShortcut } : {}),
+	} as Partial<Settings>;
 }
 
 function parseRetentionSettings(value: unknown): {

@@ -128,6 +128,7 @@ export function App() {
 	const [authState, setAuthState] = useState<AuthState>("checking");
 	const [captureState, setCaptureState] = useState<CaptureState>("idle");
 	const [documentText, setDocumentText] = useState("");
+	const [dictationShortcut, setDictationShortcut] = useState(DEFAULT_SHORTCUT);
 	const [email, setEmail] = useState("");
 	const [elapsed, setElapsed] = useState(0);
 	const [language, setLanguage] = useState("uk");
@@ -198,14 +199,19 @@ export function App() {
 	useEffect(() => {
 		void workspaceRevision;
 		if (authState !== "signed-in") {
+			setDictationShortcut(DEFAULT_SHORTCUT);
 			setMicrophoneDeviceId(null);
 			return;
 		}
 		void getWorkspaceSettings()
-			.then(({ settings }) =>
-				setMicrophoneDeviceId(settings.microphoneDeviceId),
-			)
-			.catch(() => setMicrophoneDeviceId(null));
+			.then(({ settings }) => {
+				setDictationShortcut(settings.dictationShortcut);
+				setMicrophoneDeviceId(settings.microphoneDeviceId);
+			})
+			.catch(() => {
+				setDictationShortcut(DEFAULT_SHORTCUT);
+				setMicrophoneDeviceId(null);
+			});
 	}, [authState, workspaceRevision]);
 
 	const cancelCapture = useCallback(async () => {
@@ -406,7 +412,7 @@ export function App() {
 			}
 			if (
 				event.repeat ||
-				!matchesDictationShortcut(event) ||
+				!matchesDictationShortcut(event, dictationShortcut) ||
 				isEditableTarget(event.target)
 			)
 				return;
@@ -416,7 +422,7 @@ export function App() {
 		};
 		window.addEventListener("keydown", onShortcut);
 		return () => window.removeEventListener("keydown", onShortcut);
-	}, [cancelCapture, finishCapture, startCapture]);
+	}, [cancelCapture, dictationShortcut, finishCapture, startCapture]);
 
 	function toggleCapture() {
 		if (suppressHoldClickRef.current) {
@@ -434,7 +440,7 @@ export function App() {
 		void startCapture();
 	}
 
-	function stopHoldCapture() {
+	const stopHoldCapture = useCallback(() => {
 		if (!holdCaptureRef.current) return;
 		holdCaptureRef.current = false;
 		if (captureRef.current) {
@@ -442,7 +448,16 @@ export function App() {
 		} else {
 			stopHoldWhenReadyRef.current = true;
 		}
-	}
+	}, [finishCapture]);
+
+	useEffect(() => {
+		window.addEventListener("pointercancel", stopHoldCapture);
+		window.addEventListener("pointerup", stopHoldCapture);
+		return () => {
+			window.removeEventListener("pointercancel", stopHoldCapture);
+			window.removeEventListener("pointerup", stopHoldCapture);
+		};
+	}, [stopHoldCapture]);
 
 	useEffect(
 		() => () => {
@@ -667,7 +682,7 @@ export function App() {
 						</output>
 					</div>
 					<p className="shortcut">
-						Shortcut: {DEFAULT_SHORTCUT} outside text fields.
+						Shortcut: {dictationShortcut} outside text fields.
 					</p>
 					<p aria-live="polite" className="status">
 						{status}

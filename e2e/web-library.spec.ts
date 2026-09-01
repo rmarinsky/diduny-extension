@@ -172,6 +172,21 @@ test("the web library searches server-side and edits, copies, plays, and deletes
 		await expect(
 			page.getByText("Microphone access is blocked. Open this site’s settings"),
 		).toBeVisible();
+		await page.getByLabel("Toggle dictation").fill("Alt+Shift+M");
+		await page.getByRole("button", { name: "Save shortcut" }).click();
+		await expect
+			.poll(() => e2eLibrary.settings().dictationShortcut)
+			.toBe("Alt+Shift+M");
+		await page.getByRole("button", { name: "Dictation" }).click();
+		await expect(
+			page.getByText("Shortcut: Alt+Shift+M outside text fields."),
+		).toBeVisible();
+		await page.getByRole("button", { name: "Settings" }).click();
+		await page.getByLabel("Toggle dictation").fill("Ctrl+R");
+		await page.getByRole("button", { name: "Save shortcut" }).click();
+		await expect(
+			page.getByText("Ctrl+R is reserved by this browser and cannot be used."),
+		).toBeVisible();
 		const secondPage = await context.newPage();
 		await secondPage.goto(`${bffUrl}/`);
 		await secondPage.getByRole("button", { name: "Settings" }).click();

@@ -60,6 +60,14 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 		await page.getByRole("button", { name: "Send one-time code" }).click();
 		await page.getByLabel("One-time code").fill("123456");
 		await page.getByRole("button", { name: "Sign in", exact: true }).click();
+		await page.getByRole("button", { name: "Settings" }).click();
+		await page.getByLabel("Toggle dictation").fill("Alt+Shift+M");
+		await page.getByRole("button", { name: "Save shortcut" }).click();
+		await expect(page.getByText("Shortcut saved: Alt+Shift+M.")).toBeVisible();
+		await page.getByRole("button", { name: "Dictation" }).click();
+		await expect(
+			page.getByText("Shortcut: Alt+Shift+M outside text fields."),
+		).toBeVisible();
 
 		const document = page.getByLabel("Dictation document");
 		await document.focus();
@@ -69,7 +77,7 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 		await document.fill("");
 
 		await page.keyboard.press("Tab");
-		await page.keyboard.press("Alt+Shift+D");
+		await page.keyboard.press("Alt+Shift+M");
 		await expect(page.getByText("Listening…")).toBeVisible();
 		await page.keyboard.press("Escape");
 		await expect(page.getByText("Dictation cancelled.")).toBeVisible();
@@ -85,13 +93,14 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 		expect(e2eLibrary.savedTexts()).toEqual([]);
 
 		await page.getByRole("button", { name: "Start dictation" }).focus();
-		await page.keyboard.press("Alt+Shift+D");
+		await page.keyboard.press("Alt+Shift+M");
 		await expect(page.getByText("Listening…")).toBeVisible();
 		await expect(page.getByLabel("Microphone level")).toHaveAttribute(
 			"aria-valuenow",
 			/[1-9]/,
 		);
-		await page.keyboard.press("Alt+Shift+D");
+		await expect(page.locator("output")).toHaveText("1s");
+		await page.keyboard.press("Enter");
 		await expect(document).toHaveValue("Hello from web dictation");
 		expect(transcriptionRequests).toBe(1);
 		await expect
@@ -99,6 +108,10 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 			.toEqual(["Hello from web dictation"]);
 
 		await page.evaluate(() => navigator.clipboard.writeText("Keep this text"));
+		await expect(page.getByLabel("Microphone level")).toHaveAttribute(
+			"aria-valuenow",
+			"0",
+		);
 		const recordButton = page.getByRole("button", { name: "Start dictation" });
 		await recordButton.hover();
 		await page.mouse.down();
@@ -107,6 +120,7 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 			"aria-valuenow",
 			/[1-9]/,
 		);
+		await expect(page.locator("output")).toHaveText("1s");
 		await page.mouse.up();
 		await expect(document).toHaveValue(
 			"Hello from web dictation Hello from web dictation",

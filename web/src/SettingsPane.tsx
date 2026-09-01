@@ -9,6 +9,10 @@ import { wordCount } from "../../src/core/models";
 import type { RetentionCategory, RetentionPolicy } from "../../src/core/ports";
 import type { Settings } from "../../src/core/settings";
 import {
+	isReservedShortcut,
+	normalizeShortcut,
+} from "../../src/core/shortcuts";
+import {
 	audioInputDevices,
 	microphonePermissionFailure,
 	resolveAudioInput,
@@ -228,6 +232,7 @@ export function SettingsPane({
 		null,
 	);
 	const [cleanupEnabled, setCleanupEnabled] = useState(false);
+	const [dictationShortcut, setDictationShortcut] = useState("");
 	const [fillerWords, setFillerWords] = useState("");
 	const [lexicon, setLexicon] = useState("");
 	const [message, setMessage] = useState("");
@@ -240,6 +245,7 @@ export function SettingsPane({
 			const next = await getWorkspaceSettings();
 			setSnapshot(next);
 			setCleanupEnabled(next.settings.textCleanupEnabled);
+			setDictationShortcut(next.settings.dictationShortcut);
 			setFillerWords(next.settings.fillerWords.join("\n"));
 			setLexicon(next.settings.protectedLexicon.join("\n"));
 		} catch (error) {
@@ -298,6 +304,30 @@ export function SettingsPane({
 		} catch (error) {
 			setMessage(errorMessage(error));
 			throw error;
+		}
+	}
+
+	async function saveShortcut(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		const shortcut = normalizeShortcut(dictationShortcut);
+		if (!shortcut) {
+			setMessage("Use one key, optionally with Ctrl, Alt, Shift, or Meta.");
+			return;
+		}
+		if (isReservedShortcut(shortcut)) {
+			setMessage(`${shortcut} is reserved by this browser and cannot be used.`);
+			return;
+		}
+		try {
+			const settings = await updateWorkspaceSettings({
+				dictationShortcut: shortcut,
+			});
+			setDictationShortcut(settings.dictationShortcut);
+			setSnapshot((current) => (current ? { ...current, settings } : current));
+			setMessage(`Shortcut saved: ${settings.dictationShortcut}.`);
+			onSettingsChanged();
+		} catch (error) {
+			setMessage(errorMessage(error));
 		}
 	}
 
@@ -379,6 +409,26 @@ export function SettingsPane({
 				onSave={saveMicrophone}
 				savedDeviceId={settings.microphoneDeviceId}
 			/>
+
+			<section aria-labelledby="shortcut-title" className="settings-section">
+				<h3 id="shortcut-title">Keyboard shortcut</h3>
+				<form onSubmit={saveShortcut}>
+					<label htmlFor="dictation-shortcut">
+						Toggle dictation
+						<input
+							aria-describedby="dictation-shortcut-help"
+							id="dictation-shortcut"
+							onChange={(event) => setDictationShortcut(event.target.value)}
+							value={dictationShortcut}
+						/>
+					</label>
+					<p id="dictation-shortcut-help">
+						Use one key, optionally with Ctrl, Alt, Shift, or Meta.
+						Browser-reserved chords are refused.
+					</p>
+					<button type="submit">Save shortcut</button>
+				</form>
+			</section>
 
 			<section aria-labelledby="retention-title" className="settings-section">
 				<h3 id="retention-title">Retention</h3>

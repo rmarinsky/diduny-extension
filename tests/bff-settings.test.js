@@ -43,6 +43,7 @@ test("persists workspace settings and reports server-side library statistics and
 			headers: { cookie },
 			method: "PATCH",
 			payload: {
+				dictationShortcut: "Alt+Shift+M",
 				fillerWords: ["um", "uh", "diduny"],
 				microphoneDeviceId: "usb-microphone",
 				protectedLexicon: ["Diduny"],
@@ -54,6 +55,7 @@ test("persists workspace settings and reports server-side library statistics and
 		expect(updated.statusCode).toBe(200);
 		expect(updated.json()).toEqual(
 			expect.objectContaining({
+				dictationShortcut: "Alt+Shift+M",
 				microphoneDeviceId: "usb-microphone",
 				protectedLexicon: ["Diduny"],
 				typingSpeedWordsPerMinute: 60,
@@ -67,6 +69,14 @@ test("persists workspace settings and reports server-side library statistics and
 			url: "/bff/settings",
 		});
 		expect(malformedDevice.statusCode).toBe(400);
+
+		const reservedShortcut = await server.inject({
+			headers: { cookie },
+			method: "PATCH",
+			payload: { dictationShortcut: "Ctrl+R" },
+			url: "/bff/settings",
+		});
+		expect(reservedShortcut.statusCode).toBe(400);
 
 		const retention = await server.inject({
 			headers: { cookie },
