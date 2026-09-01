@@ -32,6 +32,13 @@ export {
 	decodeTranscriptResult,
 } from "./proxy-api-client";
 export {
+	DidunyError,
+	isDidunyError,
+	remoteAcquisitionUnavailableOnWeb,
+	type DidunyErrorCode,
+	type DidunyErrorDetails,
+} from "./errors";
+export {
 	DEFAULT_SETTINGS,
 	normalizeSettings,
 	textCleanupFromSettings,

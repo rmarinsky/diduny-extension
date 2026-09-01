@@ -1,5 +1,6 @@
 import type { RetentionCategory, RetentionPolicy } from "../../src/core/ports";
 import type { Settings } from "../../src/core/settings";
+import { errorFromResponse, localProcessUnavailable } from "./errors";
 
 export interface WorkspaceSettingsSnapshot {
 	retention: Record<RetentionCategory, RetentionPolicy>;
@@ -17,18 +18,24 @@ export interface WorkspaceSettingsSnapshot {
 	};
 }
 
-function errorFor(response: Response, action: string) {
-	return new Error(
-		`${action} failed (${response.status}). Check the local Diduny service and try again.`,
+async function errorFor(response: Response) {
+	return errorFromResponse(
+		response.status,
+		await response.json().catch(() => null),
 	);
 }
 
-const request = (path: string, init?: RequestInit) =>
-	fetch(path, { credentials: "same-origin", ...init });
+async function request(path: string, init?: RequestInit) {
+	try {
+		return await fetch(path, { credentials: "same-origin", ...init });
+	} catch (error) {
+		throw localProcessUnavailable(error);
+	}
+}
 
 export async function getWorkspaceSettings(): Promise<WorkspaceSettingsSnapshot> {
 	const response = await request("/bff/settings");
-	if (!response.ok) throw errorFor(response, "Loading settings");
+	if (!response.ok) throw await errorFor(response);
 	return response.json() as Promise<WorkspaceSettingsSnapshot>;
 }
 
@@ -40,7 +47,7 @@ export async function updateWorkspaceSettings(
 		headers: { "content-type": "application/json" },
 		method: "PATCH",
 	});
-	if (!response.ok) throw errorFor(response, "Saving settings");
+	if (!response.ok) throw await errorFor(response);
 	return response.json() as Promise<Settings>;
 }
 
@@ -53,6 +60,6 @@ export async function updateRetentionPolicy(
 		headers: { "content-type": "application/json" },
 		method: "PUT",
 	});
-	if (!response.ok) throw errorFor(response, "Saving retention");
+	if (!response.ok) throw await errorFor(response);
 	return response.json() as Promise<Record<RetentionCategory, RetentionPolicy>>;
 }

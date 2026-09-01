@@ -16,6 +16,7 @@ function serverUrl(server: ReturnType<typeof Fastify>) {
 }
 
 test("translation dictation and pasted text use the explicit saved language pair", async () => {
+	let rejectTranslation = false;
 	let transcriptionBody = "";
 	const upstream = Fastify();
 	upstream.addContentTypeParser(
@@ -35,7 +36,9 @@ test("translation dictation and pasted text use the explicit saved language pair
 		}
 		return { text: "Hello from translation dictation", tokens: [] };
 	});
-	upstream.get("/api/v1/translations", async (request) => {
+	upstream.get("/api/v1/translations", async (request, reply) => {
+		if (rejectTranslation)
+			return reply.code(402).send({ limitHours: 2, usedHours: 2 });
 		const query = request.query as { q?: string; sl?: string; tl?: string };
 		return { sentences: [{ trans: `${query.q} (${query.sl}->${query.tl})` }] };
 	});
@@ -93,6 +96,13 @@ test("translation dictation and pasted text use the explicit saved language pair
 		await expect(page.getByLabel("Translation result")).toHaveText(
 			"Привіт (uk->en)",
 		);
+		rejectTranslation = true;
+		await page.getByRole("button", { name: "Translate pasted text" }).click();
+		await expect(
+			page.getByText(
+				"You are out of hours (2 of 2 used). Add hours or wait for your plan to renew, then try again.",
+			),
+		).toBeVisible();
 	} finally {
 		bff.server.closeAllConnections?.();
 		upstream.server.closeAllConnections?.();

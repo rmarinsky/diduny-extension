@@ -9,6 +9,7 @@ import type {
 	LibraryMetadata,
 	LibraryPage,
 } from "../../src/core/ports";
+import { errorFromResponse, localProcessUnavailable } from "./errors";
 
 export type { LibraryRequest } from "../../lib/bff/library";
 
@@ -24,16 +25,24 @@ export interface LibraryListInput {
 	type?: readonly RecordingType[];
 }
 
-function errorFor(response: Response, action: string) {
-	return new Error(`${action} failed (${response.status})`);
+async function errorFor(response: Response) {
+	return errorFromResponse(
+		response.status,
+		await response.json().catch(() => null),
+	);
 }
 
-const bffRequest: LibraryRequest = (path, init) =>
-	fetch(path, { credentials: "same-origin", ...init });
+const bffRequest: LibraryRequest = async (path, init) => {
+	try {
+		return await fetch(path, { credentials: "same-origin", ...init });
+	} catch (error) {
+		throw localProcessUnavailable(error);
+	}
+};
 
 export async function saveToLibrary(
 	input: WebLibrarySaveInput,
-	request: LibraryRequest = (path, init) => fetch(path, init),
+	request: LibraryRequest = bffRequest,
 ) {
 	return saveLibraryRecording(
 		{ ...input, type: input.type ?? "voice" },
@@ -55,7 +64,7 @@ export async function listLibraryRecordings(
 	const response = await request(
 		`/bff/library${query.size ? `?${query}` : ""}`,
 	);
-	if (!response.ok) throw errorFor(response, "Library list");
+	if (!response.ok) throw await errorFor(response);
 	return response.json() as Promise<LibraryPage>;
 }
 
@@ -64,7 +73,7 @@ export async function getLibraryRecording(
 	request: LibraryRequest = bffRequest,
 ): Promise<LibraryDetail> {
 	const response = await request(`/bff/library/${id}`);
-	if (!response.ok) throw errorFor(response, "Library detail");
+	if (!response.ok) throw await errorFor(response);
 	return response.json() as Promise<LibraryDetail>;
 }
 
@@ -78,7 +87,7 @@ export async function updateLibraryRecording(
 		headers: { "content-type": "application/json" },
 		method: "PATCH",
 	});
-	if (!response.ok) throw errorFor(response, "Library update");
+	if (!response.ok) throw await errorFor(response);
 	return response.json() as Promise<LibraryDetail>;
 }
 
@@ -87,5 +96,5 @@ export async function deleteLibraryRecording(
 	request: LibraryRequest = bffRequest,
 ) {
 	const response = await request(`/bff/library/${id}`, { method: "DELETE" });
-	if (!response.ok) throw errorFor(response, "Library delete");
+	if (!response.ok) throw await errorFor(response);
 }

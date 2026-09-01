@@ -249,6 +249,22 @@ export const en = {
 			fileTranscription: "File transcription",
 		},
 	},
+	errors: {
+		quotaExceeded:
+			"You are out of hours ({used} of {limit} used). Add hours or wait for your plan to renew, then try again.",
+		localProcessUnavailable:
+			"The local Diduny process is not reachable. Start or restart it, then try again.",
+		proxyUnavailable:
+			"The transcription proxy is not reachable. Check its connection or restart it, then try again.",
+		authenticationFailed:
+			"Your Diduny sign-in has expired. Sign in again, then retry.",
+		realtimeUnavailable:
+			"Realtime transcription stopped after reconnecting. Check the local Diduny service and try again.",
+		remoteAcquisitionUnavailableOnWeb:
+			"YouTube URLs cannot be acquired in Diduny for the web. Download the file yourself and add it when file batches are available.",
+		requestRejected:
+			"The Diduny service rejected this request. Try again; if it continues, restart the local Diduny service.",
+	},
 	fallback: {
 		englishOnly: "English fallback",
 	},

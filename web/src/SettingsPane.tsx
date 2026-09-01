@@ -18,6 +18,7 @@ import {
 	microphonePermissionFailure,
 	resolveAudioInput,
 } from "./audio-devices";
+import { userErrorMessage } from "./errors";
 import {
 	type UiLocale,
 	default as i18n,
@@ -78,8 +79,11 @@ function formatDuration(value: number) {
 		: `${seconds}s`;
 }
 
-function errorMessage(error: unknown) {
-	return error instanceof Error ? error.message : i18n.t("settings.saveFailed");
+function errorMessage(
+	error: unknown,
+	t: (key: string, options?: Record<string, unknown>) => string,
+) {
+	return userErrorMessage(error, t);
 }
 
 type MicrophoneAccess =
@@ -160,7 +164,7 @@ function MicrophoneSettings({
 			setAccess(
 				microphonePermissionFailure(error) === "denied" ? "denied" : "prompt",
 			);
-			setMessage(errorMessage(error));
+			setMessage(errorMessage(error, t));
 		}
 	}
 
@@ -169,7 +173,7 @@ function MicrophoneSettings({
 			await onSave(value || null);
 			setMessage(t("microphone.preferenceSaved"));
 		} catch (error) {
-			setMessage(errorMessage(error));
+			setMessage(errorMessage(error, t));
 		}
 	}
 
@@ -267,7 +271,7 @@ export function SettingsPane({
 			setTranslationSourceLanguage(next.settings.translationSourceLanguage);
 			setTranslationTargetLanguage(next.settings.translationTargetLanguage);
 		} catch (error) {
-			setMessage(errorMessage(error));
+			setMessage(errorMessage(error, i18n.t.bind(i18n)));
 		}
 	}, []);
 
@@ -292,7 +296,7 @@ export function SettingsPane({
 			setMessage(t("settings.cleanupSaved"));
 			onSettingsChanged();
 		} catch (error) {
-			setMessage(errorMessage(error));
+			setMessage(errorMessage(error, t));
 		}
 	}
 
@@ -306,7 +310,7 @@ export function SettingsPane({
 			setMessage(t("settings.retentionSaved"));
 			onSettingsChanged();
 		} catch (error) {
-			setMessage(errorMessage(error));
+			setMessage(errorMessage(error, t));
 		}
 	}
 
@@ -318,7 +322,7 @@ export function SettingsPane({
 			setSnapshot((current) => (current ? { ...current, settings } : current));
 			onSettingsChanged();
 		} catch (error) {
-			setMessage(errorMessage(error));
+			setMessage(errorMessage(error, t));
 			throw error;
 		}
 	}
@@ -345,7 +349,7 @@ export function SettingsPane({
 			);
 			onSettingsChanged();
 		} catch (error) {
-			setMessage(errorMessage(error));
+			setMessage(errorMessage(error, t));
 		}
 	}
 
@@ -362,7 +366,7 @@ export function SettingsPane({
 			setMessage(t("settings.translationSaved"));
 			onSettingsChanged();
 		} catch (error) {
-			setMessage(errorMessage(error));
+			setMessage(errorMessage(error, t));
 		}
 	}
 
@@ -376,7 +380,7 @@ export function SettingsPane({
 			setMessage(t("settings.interfaceLanguageSaved"));
 			onSettingsChanged();
 		} catch (error) {
-			setMessage(errorMessage(error));
+			setMessage(errorMessage(error, t));
 		}
 	}
 
@@ -391,7 +395,7 @@ export function SettingsPane({
 			setMessage(t("settings.accessibilitySaved"));
 			onSettingsChanged();
 		} catch (error) {
-			setMessage(errorMessage(error));
+			setMessage(errorMessage(error, t));
 		}
 	}
 
@@ -419,7 +423,7 @@ export function SettingsPane({
 			onSettingsChanged();
 			setMessage(t("settings.typingSaved"));
 		} catch (error) {
-			setMessage(errorMessage(error));
+			setMessage(errorMessage(error, t));
 		}
 	}
 

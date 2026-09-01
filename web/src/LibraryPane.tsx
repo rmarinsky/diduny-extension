@@ -2,6 +2,7 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ProcessingStatus, RecordingType } from "../../src/core/models";
 import type { LibraryDetail, LibraryPage } from "../../src/core/ports";
+import { userErrorMessage } from "./errors";
 import {
 	type LibraryListInput,
 	deleteLibraryRecording,
@@ -41,8 +42,11 @@ function dateTime(value: number, locale: string) {
 	}).format(value);
 }
 
-function errorMessage(error: unknown, fallback: string) {
-	return error instanceof Error ? error.message : fallback;
+function errorMessage(
+	error: unknown,
+	t: (key: string, options?: Record<string, unknown>) => string,
+) {
+	return userErrorMessage(error, t);
 }
 
 function RecordingDetail({
@@ -85,7 +89,7 @@ function RecordingDetail({
 			onUpdated(updated);
 			setMessage(t("library.detailsSaved"));
 		} catch (error) {
-			setMessage(errorMessage(error, t("library.requestFailed")));
+			setMessage(errorMessage(error, t));
 		} finally {
 			setIsSaving(false);
 		}
@@ -99,7 +103,7 @@ function RecordingDetail({
 			onDeleted();
 		} catch (error) {
 			setIsDeleting(false);
-			setMessage(errorMessage(error, t("library.requestFailed")));
+			setMessage(errorMessage(error, t));
 		}
 	}
 
@@ -252,7 +256,7 @@ export function LibraryPane({
 					append ? { ...next, items: [...current.items, ...next.items] } : next,
 				);
 			} catch (reason) {
-				setError(errorMessage(reason, t("library.requestFailed")));
+				setError(errorMessage(reason, t));
 			} finally {
 				setIsLoading(false);
 			}
@@ -278,7 +282,7 @@ export function LibraryPane({
 				if (active) setDetail(recording);
 			})
 			.catch((reason) => {
-				if (active) setError(errorMessage(reason, t("library.requestFailed")));
+				if (active) setError(errorMessage(reason, t));
 			});
 		return () => {
 			active = false;

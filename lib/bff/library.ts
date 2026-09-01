@@ -1,3 +1,4 @@
+import { DidunyError } from "../../src/core/errors";
 import type { ProcessingStatus, RecordingType } from "../../src/core/models";
 import { bffFetch } from "./client";
 
@@ -16,8 +17,14 @@ export type LibraryRequest = (
 	init?: RequestInit,
 ) => Promise<Response>;
 
-function errorFor(response: Response, action: string) {
-	return new Error(`${action} failed (${response.status})`);
+function errorFor(response: Response) {
+	if (response.status === 401)
+		return new DidunyError("authentication_failed", {
+			status: response.status,
+		});
+	if (response.status === 402)
+		return new DidunyError("quota_exhausted", { status: response.status });
+	return new DidunyError("request_rejected", { status: response.status });
 }
 
 export async function saveLibraryRecording(
@@ -42,7 +49,7 @@ export async function saveLibraryRecording(
 		headers: { "content-type": "application/json" },
 		method: "POST",
 	});
-	if (!created.ok) throw errorFor(created, "Library save");
+	if (!created.ok) throw errorFor(created);
 	const body: unknown = await created.json();
 	if (
 		!body ||
@@ -50,7 +57,7 @@ export async function saveLibraryRecording(
 		!("id" in body) ||
 		typeof body.id !== "string"
 	) {
-		throw new Error("Library save returned no upload id");
+		throw new DidunyError("request_rejected");
 	}
 	const uploaded = await request(`${path}/${body.id}/media`, {
 		body: audio,
@@ -58,7 +65,7 @@ export async function saveLibraryRecording(
 		headers: { "content-type": audio.type || "audio/webm" },
 		method: "PUT",
 	});
-	if (!uploaded.ok) throw errorFor(uploaded, "Library audio upload");
+	if (!uploaded.ok) throw errorFor(uploaded);
 	return uploaded.json() as Promise<unknown>;
 }
 

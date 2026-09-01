@@ -27,6 +27,11 @@ import {
 	isEditableTarget,
 	matchesDictationShortcut,
 } from "./dictation";
+import {
+	errorFromResponse,
+	localProcessUnavailable,
+	userErrorMessage,
+} from "./errors";
 import i18n, { setUiLocale } from "./i18n";
 import { createWorkspaceInvalidationBus } from "./invalidation";
 import { saveToLibrary } from "./library";
@@ -64,23 +69,15 @@ interface TranscriptionResponse {
 	text?: string;
 }
 
-function errorMessage(body: unknown, fallback: string) {
-	if (
-		body &&
-		typeof body === "object" &&
-		"error" in body &&
-		typeof body.error === "string"
-	) {
-		return body.error;
-	}
-	return fallback;
-}
-
 async function bffJson<T>(path: string, init?: RequestInit): Promise<T> {
-	const response = await fetch(path, { credentials: "same-origin", ...init });
+	let response: Response;
+	try {
+		response = await fetch(path, { credentials: "same-origin", ...init });
+	} catch (error) {
+		throw localProcessUnavailable(error);
+	}
 	const body: unknown = await response.json().catch(() => null);
-	if (!response.ok)
-		throw new Error(errorMessage(body, `Request failed (${response.status})`));
+	if (!response.ok) throw errorFromResponse(response.status, body);
 	return body as T;
 }
 
@@ -205,9 +202,11 @@ export function App() {
 					? i18n.t("status.ready")
 					: i18n.t("status.signIn"),
 			);
-		} catch {
+		} catch (error) {
 			setAuthState("signed-out");
-			setStatus(i18n.t("status.serviceUnavailable"));
+			setStatus(
+				userErrorMessage(localProcessUnavailable(error), i18n.t.bind(i18n)),
+			);
 		}
 	}, []);
 
@@ -355,9 +354,7 @@ export function App() {
 					}
 				});
 		} catch (error) {
-			setStatus(
-				error instanceof Error ? error.message : t("status.dictationFailed"),
-			);
+			setStatus(userErrorMessage(error, t));
 			queueMicrotask(() => statusElement.current?.focus());
 		} finally {
 			releaseCapture(capture);
@@ -505,11 +502,7 @@ export function App() {
 			void pipeline?.audioContext.close();
 			stopHoldWhenReadyRef.current = false;
 			releaseRecordingLock();
-			setStatus(
-				error instanceof Error
-					? error.message
-					: t("status.couldNotStartMicrophone"),
-			);
+			setStatus(t("status.couldNotStartMicrophone"));
 		}
 	}, [
 		captureState,
@@ -593,9 +586,7 @@ export function App() {
 			setAuthState("otp-sent");
 			setStatus(t("auth.checkInbox"));
 		} catch (error) {
-			setStatus(
-				error instanceof Error ? error.message : t("auth.couldNotSendCode"),
-			);
+			setStatus(userErrorMessage(error, t));
 		}
 	}
 
@@ -610,9 +601,7 @@ export function App() {
 			});
 			await refreshSession();
 		} catch (error) {
-			setStatus(
-				error instanceof Error ? error.message : t("auth.couldNotVerifyCode"),
-			);
+			setStatus(userErrorMessage(error, t));
 		}
 	}
 
@@ -656,9 +645,7 @@ export function App() {
 			setTranslationResult(text);
 			setStatus(t("status.pastedTranslated"));
 		} catch (error) {
-			setStatus(
-				error instanceof Error ? error.message : t("status.couldNotTranslate"),
-			);
+			setStatus(userErrorMessage(error, t));
 		}
 	}
 
