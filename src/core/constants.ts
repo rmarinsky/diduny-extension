@@ -62,3 +62,5 @@ export const INPUT_TIMING = {
 } as const;
 
 export const WEB_LATENCY_TARGET_MS = 1500;
+
+export const TIME = { millisecondsPerSecond: 1000 } as const;
