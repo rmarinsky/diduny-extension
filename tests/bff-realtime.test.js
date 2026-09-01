@@ -117,6 +117,7 @@ test("relays websocket text and binary frames while attaching the upstream token
 		(await bff.inject({ method: "GET", url: "/bff/health" })).json(),
 	).toEqual({
 		activeRealtimeSockets: 0,
+		proxy: { reachable: false, status: 404 },
 		status: "ok",
 	});
 });
@@ -166,6 +167,7 @@ test("reports quota exhaustion with a websocket close code without opening the u
 		(await bff.inject({ method: "GET", url: "/bff/health" })).json(),
 	).toEqual({
 		activeRealtimeSockets: 0,
+		proxy: { reachable: false, status: 404 },
 		status: "ok",
 	});
 });
