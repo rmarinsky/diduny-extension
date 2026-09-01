@@ -11,20 +11,28 @@ test("ships a loopback-only compose deployment with persistent local data", asyn
 	const compose = await readProjectFile("compose.yaml");
 
 	expect(compose).toContain('"127.0.0.1:3000:3000"');
+	expect(compose).toContain("mock-proxy:");
+	expect(compose).toContain('"127.0.0.1:3910:3910"');
+	expect(compose).toContain("DIDUNY_AUTH_PROVIDER: proxy");
+	expect(compose).toContain("DIDUNY_UPSTREAM_URL: http://mock-proxy:3910");
 	expect(compose).toContain("- diduny-data:/data");
 	expect(compose).toMatch(/^volumes:\n\s+diduny-data:/m);
 });
 
-test("ships a container, Apache-2.0 license, and CI quality gates", async () => {
-	const [dockerfile, license, readme, workflow] = await Promise.all([
-		readProjectFile("Dockerfile"),
-		readProjectFile("LICENSE"),
-		readProjectFile("README.md"),
-		readProjectFile(".github/workflows/ci.yml"),
-	]);
+test("ships a container, mock proxy, Apache-2.0 license, and CI quality gates", async () => {
+	const [dockerfile, license, packageJson, readme, workflow] =
+		await Promise.all([
+			readProjectFile("Dockerfile"),
+			readProjectFile("LICENSE"),
+			readProjectFile("package.json"),
+			readProjectFile("README.md"),
+			readProjectFile(".github/workflows/ci.yml"),
+		]);
 
 	expect(dockerfile).toContain('CMD ["bun", "run", "start:web"]');
 	expect(dockerfile).toContain("COPY --from=build /app/src ./src");
+	expect(dockerfile).toContain("COPY --from=build /app/mock-proxy-main.ts");
+	expect(packageJson).toContain('"start:mock-proxy"');
 	expect(license).toContain("Apache License");
 	expect(license).toContain("Version 2.0, January 2004");
 	expect(workflow).toContain("bun run lint");

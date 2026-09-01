@@ -7,6 +7,7 @@
 		"dev": "wxt",
 		"dev:web": "vite --config web/vite.config.ts",
 		"start:web": "bun server-main.ts",
+		"start:mock-proxy": "bun mock-proxy-main.ts",
 		"dev:firefox": "wxt --browser firefox",
 		"build": "bun run build:web && bun run build:extension",
 		"build:extension": "wxt build",
