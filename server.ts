@@ -4,6 +4,7 @@ import { PassThrough, Readable } from "node:stream";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import { isValidEmail, isValidOtp } from "./src/core/auth-validation";
 import { HTTP } from "./src/core/constants";
 import type { ProcessingStatus, RecordingType } from "./src/core/models";
 import type {
@@ -188,14 +189,6 @@ function rateLimitFor(path: string) {
 	if (path.includes("transcriptions") || path.includes("realtime"))
 		return { limit: 20, windowMs: 60_000 };
 	return { limit: 120, windowMs: 60_000 };
-}
-
-function validEmail(email: unknown): email is string {
-	return typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-function validOtp(otp: unknown): otp is string {
-	return typeof otp === "string" && /^\d{6}$/.test(otp);
 }
 
 function sessionCookie(
@@ -737,6 +730,7 @@ export async function buildServer({
 	) => {
 		const id = sessionIdFromCookie(request.headers.cookie, cookieName);
 		const session = id ? await sessions.get(id) : null;
+		await (id ? refreshes.get(id) : undefined)?.catch(() => undefined);
 		if (id) await sessions.delete(id);
 		reply.header("set-cookie", sessionCookies("", true));
 		if (session) await authGateway.logout(session).catch(() => undefined);
@@ -783,7 +777,7 @@ export async function buildServer({
 	});
 	server.post("/bff/auth/send-otp", async (request, reply) => {
 		const email = (request.body as { email?: unknown } | undefined)?.email;
-		if (!validEmail(email))
+		if (!isValidEmail(email))
 			return reply.code(400).send({ error: "invalid_email" });
 		try {
 			await authGateway.sendOtp(email);
@@ -796,7 +790,7 @@ export async function buildServer({
 		const payload = request.body as
 			| { email?: unknown; otp?: unknown }
 			| undefined;
-		if (!validEmail(payload?.email) || !validOtp(payload?.otp)) {
+		if (!isValidEmail(payload?.email) || !isValidOtp(payload?.otp)) {
 			return reply.code(400).send({ error: "invalid_otp_verification" });
 		}
 		try {

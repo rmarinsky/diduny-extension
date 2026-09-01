@@ -27,5 +27,6 @@ export function translationResultText(value: unknown) {
 				? sentence.trans
 				: "",
 		)
-		.join("");
+		.join("")
+		.trim();
 }

@@ -61,7 +61,9 @@ test("implements all fifteen frozen proxy paths with a local OTP mailbox", async
 		expect(mock.transcriptions()).toEqual([
 			expect.objectContaining({
 				authorization: "Bearer mock-access-token",
+				body: expect.stringContaining('name="audio"'),
 				bytes: expect.any(Number),
+				contentType: expect.stringContaining("multipart/form-data"),
 			}),
 		]);
 
@@ -140,6 +142,71 @@ test("accepts realtime config and PCM frames then emits control tokens", async (
 		expect(frames.join("\n")).toContain("proxy_ready");
 		expect(frames.join("\n")).toContain("<end>");
 		expect(frames.join("\n")).toContain("<fin>");
+	} finally {
+		for (const socket of mock.server.websocketServer?.clients ?? [])
+			socket.terminate();
+		mock.server.server.closeAllConnections?.();
+		await mock.server.close();
+	}
+});
+
+test("exposes rotating sessions and mutable frozen-contract variants", async () => {
+	const mock = await buildMockProxy();
+	await mock.server.listen({ host: "127.0.0.1", port: 0 });
+	const baseUrl = serverUrl(mock.server);
+	const auth = { authorization: "Bearer mock-access-token" };
+	try {
+		const firstRefresh = await fetch(`${baseUrl}/api/v1/auth/refresh`, {
+			body: JSON.stringify({ refreshToken: "mock-refresh-token" }),
+			headers: { "content-type": "application/json" },
+			method: "POST",
+		});
+		const firstTokens = await firstRefresh.json();
+		expect(firstTokens.refreshToken).not.toBe("mock-refresh-token");
+		expect(
+			(
+				await fetch(`${baseUrl}/api/v1/auth/refresh`, {
+					body: JSON.stringify({ refreshToken: "mock-refresh-token" }),
+					headers: { "content-type": "application/json" },
+					method: "POST",
+				})
+			).status,
+		).toBe(401);
+
+		mock.setConfig({
+			endpoints: { sttBaseURL: "mock://changed", sttModel: "changed" },
+			featureFlags: { realtime: false },
+			messages: { maintenance: "now" },
+			version: "changed",
+		});
+		expect(await (await fetch(`${baseUrl}/api/v1/config`)).json()).toEqual({
+			endpoints: { sttBaseURL: "mock://changed", sttModel: "changed" },
+			featureFlags: { realtime: false },
+			messages: { maintenance: "now" },
+			version: "changed",
+		});
+
+		const socket = new WebSocket(
+			`${baseUrl.replace("http", "ws")}/api/v1/realtime?token=mock-access-token`,
+		);
+		await new Promise((resolve, reject) => {
+			socket.on("message", (data) => {
+				if (String(data).includes("proxy_ready")) {
+					socket.send('{"audio_format":"s16le"}');
+					socket.send(Buffer.from([1, 2]));
+					socket.send('{"type":"finalize"}');
+				} else if (String(data).includes("<fin>")) {
+					socket.close();
+				}
+			});
+			socket.once("close", resolve);
+			socket.once("error", reject);
+		});
+		expect(mock.realtimeFrames()).toEqual([
+			{ data: '{"audio_format":"s16le"}', isBinary: false },
+			{ data: Buffer.from([1, 2]), isBinary: true },
+			{ data: '{"type":"finalize"}', isBinary: false },
+		]);
 	} finally {
 		for (const socket of mock.server.websocketServer?.clients ?? [])
 			socket.terminate();

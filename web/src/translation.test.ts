@@ -56,7 +56,7 @@ test("builds an explicit one-way translation request without consulting UI local
 test("joins the translated sentences returned by the proxy", () => {
 	expect(
 		translationResultText({
-			sentences: [{ trans: "Hello" }, { trans: " world" }],
+			sentences: [{ trans: " Hello" }, { trans: " world " }],
 		}),
 	).toBe("Hello world");
 	expect(translationResultText({ sentences: [] })).toBe("");

@@ -15,8 +15,35 @@ export interface MockProxyOptions {
 
 export interface MockTranscription {
 	authorization?: string;
+	body: string;
 	bytes: number;
+	contentType?: string;
 }
+
+export interface MockUpload extends MockTranscription {
+	endpoint: "jobs" | "transcriptions";
+}
+
+export interface MockProxyConfig {
+	endpoints: { sttBaseURL: string; sttModel: string };
+	featureFlags: Record<string, boolean>;
+	messages: Record<string, string>;
+	version: string;
+}
+
+export interface MockRealtimeFrame {
+	data: Buffer | string;
+	isBinary: boolean;
+}
+
+const defaultSseBody =
+	': mock keepalive\n\nevent: status\ndata: processing\n\nevent: completed\ndata: {"text":"Mock transcript","tokens":[]}\n\n';
+const defaultConfig: MockProxyConfig = {
+	endpoints: { sttBaseURL: "mock://local", sttModel: "mock" },
+	featureFlags: { realtime: true },
+	messages: {},
+	version: "mock",
+};
 
 function requestPath(url: string | undefined) {
 	return new URL(url ?? "", "http://mock.local").pathname;
@@ -32,16 +59,16 @@ function requireBearer(
 	return false;
 }
 
-async function bodySize(value: unknown) {
+async function capturedBody(value: unknown) {
 	if (!value || typeof value !== "object" || !(Symbol.asyncIterator in value)) {
-		return 0;
+		return { body: "", bytes: 0 };
 	}
-	let bytes = 0;
+	const chunks: Buffer[] = [];
 	for await (const chunk of value as AsyncIterable<Uint8Array | string>) {
-		bytes +=
-			typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.byteLength;
+		chunks.push(Buffer.from(chunk));
 	}
-	return bytes;
+	const body = Buffer.concat(chunks);
+	return { body: body.toString(), bytes: body.byteLength };
 }
 
 export async function buildMockProxy({
@@ -51,14 +78,26 @@ export async function buildMockProxy({
 	const server = Fastify({ logger: false });
 	const mailbox: MockMailboxMessage[] = [];
 	const behaviors = new Map<string, MockProxyBehavior>();
+	const behaviorSequences = new Map<string, Array<MockProxyBehavior | null>>();
+	const refreshes: string[] = [];
 	const transcriptions: MockTranscription[] = [];
+	const uploads: MockUpload[] = [];
+	const realtimeFrames: MockRealtimeFrame[] = [];
+	let currentRefreshToken = configuredRefreshToken;
+	let refreshVersion = 0;
+	let config = structuredClone(defaultConfig);
+	let omitUser = false;
+	let sseBody = defaultSseBody;
 	await server.register(websocket);
 	server.addContentTypeParser(
 		/^multipart\/form-data/i,
 		(_request, payload, done) => done(null, payload),
 	);
 	server.addHook("preHandler", (request, reply, done) => {
-		const behavior = behaviors.get(requestPath(request.raw.url));
+		const path = requestPath(request.raw.url);
+		const sequence = behaviorSequences.get(path);
+		const behavior = sequence?.length ? sequence.shift() : behaviors.get(path);
+		if (sequence?.length === 0) behaviorSequences.delete(path);
 		if (!behavior) return done();
 		if (behavior === "unauthorized") {
 			reply.code(401).send({ error: "unauthorized" });
@@ -91,20 +130,22 @@ export async function buildMockProxy({
 		return {
 			accessToken,
 			accessTokenExpiresAt: Date.now() + 300_000,
-			refreshToken: configuredRefreshToken,
-			user: { email: payload.email },
+			refreshToken: currentRefreshToken,
+			...(omitUser ? {} : { user: { email: payload.email } }),
 		};
 	});
 	server.post("/api/v1/auth/refresh", async (request, reply) => {
 		const refreshToken = (
 			request.body as { refreshToken?: unknown } | undefined
 		)?.refreshToken;
-		if (refreshToken !== configuredRefreshToken)
+		if (refreshToken !== currentRefreshToken)
 			return reply.code(401).send({ error: "invalid_refresh_token" });
+		refreshes.push(refreshToken);
+		currentRefreshToken = `${configuredRefreshToken}-${++refreshVersion}`;
 		return {
 			accessToken,
 			accessTokenExpiresAt: Date.now() + 300_000,
-			refreshToken: configuredRefreshToken,
+			refreshToken: currentRefreshToken,
 		};
 	});
 	server.post("/api/v1/auth/logout", async (request, reply) => {
@@ -114,10 +155,15 @@ export async function buildMockProxy({
 
 	server.post("/api/v1/transcriptions", async (request, reply) => {
 		if (!requireBearer(request, reply, accessToken)) return;
-		transcriptions.push({
+		const body = await capturedBody(request.body);
+		const upload = {
 			authorization: request.headers.authorization,
-			bytes: await bodySize(request.body),
-		});
+			contentType: request.headers["content-type"],
+			endpoint: "transcriptions" as const,
+			...body,
+		};
+		uploads.push(upload);
+		transcriptions.push(upload);
 		return {
 			text: "Mock transcript",
 			tokens: [
@@ -137,6 +183,12 @@ export async function buildMockProxy({
 	});
 	server.post("/api/v1/jobs", async (request, reply) => {
 		if (!requireBearer(request, reply, accessToken)) return;
+		uploads.push({
+			authorization: request.headers.authorization,
+			contentType: request.headers["content-type"],
+			endpoint: "jobs",
+			...(await capturedBody(request.body)),
+		});
 		return {
 			createdAt: new Date().toISOString(),
 			jobId: "mock-job",
@@ -149,11 +201,7 @@ export async function buildMockProxy({
 	});
 	server.get("/api/v1/jobs/:id/events", async (request, reply) => {
 		if (!requireBearer(request, reply, accessToken)) return;
-		return reply
-			.header("content-type", "text/event-stream")
-			.send(
-				': mock keepalive\n\nevent: status\ndata: processing\n\nevent: completed\ndata: {"text":"Mock transcript","tokens":[]}\n\n',
-			);
+		return reply.header("content-type", "text/event-stream").send(sseBody);
 	});
 	server.get("/api/v1/realtime", { websocket: true }, (socket, request) => {
 		const token = new URL(
@@ -163,6 +211,14 @@ export async function buildMockProxy({
 		if (token !== accessToken) return socket.close(4001, "unauthorized");
 		socket.send(JSON.stringify({ type: "proxy_ready" }));
 		socket.on("message", (data, isBinary) => {
+			realtimeFrames.push({
+				data: isBinary
+					? Array.isArray(data)
+						? Buffer.concat(data.map((part) => Buffer.from(part)))
+						: Buffer.from(data as Uint8Array)
+					: data.toString(),
+				isBinary,
+			});
 			if (isBinary) return;
 			if (String(data).includes('"finalize"')) {
 				socket.send(
@@ -188,12 +244,7 @@ export async function buildMockProxy({
 		if (!requireBearer(request, reply, accessToken)) return;
 		return { isWhitelisted: true, usedHours: 0, usedMs: 0 };
 	});
-	server.get("/api/v1/config", async () => ({
-		endpoints: { sttBaseURL: "mock://local", sttModel: "mock" },
-		featureFlags: { realtime: true },
-		messages: {},
-		version: "mock",
-	}));
+	server.get("/api/v1/config", async () => config);
 	server.get("/api/v1/models", async (request, reply) => {
 		if (!requireBearer(request, reply, accessToken)) return;
 		return { models: ["mock"] };
@@ -204,12 +255,42 @@ export async function buildMockProxy({
 	server.get("/__mock/mailbox", async () => ({ messages: mailbox }));
 
 	return {
+		authRefreshes: () => [...refreshes],
+		clearBehaviors() {
+			behaviors.clear();
+			behaviorSequences.clear();
+			omitUser = false;
+			sseBody = defaultSseBody;
+		},
 		mailbox: () => [...mailbox],
+		realtimeFrames: () =>
+			realtimeFrames.map((frame) => ({
+				...frame,
+				...(typeof frame.data === "string"
+					? {}
+					: { data: Buffer.from(frame.data) }),
+			})),
 		server,
 		transcriptions: () => [...transcriptions],
+		uploads: () => [...uploads],
 		setBehavior(path: string, behavior: MockProxyBehavior | null) {
 			if (behavior) behaviors.set(path, behavior);
 			else behaviors.delete(path);
+		},
+		setBehaviorSequence(
+			path: string,
+			sequence: readonly (MockProxyBehavior | null)[],
+		) {
+			behaviorSequences.set(path, [...sequence]);
+		},
+		setOmitUser(value: boolean) {
+			omitUser = value;
+		},
+		setConfig(value: MockProxyConfig) {
+			config = structuredClone(value);
+		},
+		setSseBody(value: string) {
+			sseBody = value;
 		},
 	};
 }

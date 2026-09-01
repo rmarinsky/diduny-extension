@@ -8,6 +8,22 @@ export interface SessionTokens {
 	refreshToken: string;
 }
 
+function completeSessionTokens(
+	value: SessionTokens | null,
+): value is SessionTokens {
+	return Boolean(
+		value &&
+			typeof value.accessToken === "string" &&
+			value.accessToken &&
+			typeof value.email === "string" &&
+			value.email &&
+			typeof value.expiresAt === "number" &&
+			Number.isFinite(value.expiresAt) &&
+			typeof value.refreshToken === "string" &&
+			value.refreshToken,
+	);
+}
+
 export interface TokenStore {
 	clear(): Promise<void>;
 	read(): Promise<SessionTokens | null>;
@@ -257,7 +273,10 @@ export class ProxyApiClient {
 
 	private async currentTokens(): Promise<SessionTokens> {
 		const tokens = await this.dependencies.tokens.read();
-		if (!tokens) throw new AuthenticationError("session");
+		if (!completeSessionTokens(tokens)) {
+			await this.dependencies.tokens.clear();
+			throw new AuthenticationError("session");
+		}
 		if (
 			tokens.expiresAt - this.dependencies.clock.now() <=
 			HTTP.proactiveRefreshLeadMs
@@ -291,7 +310,10 @@ export class ProxyApiClient {
 
 	private async performRefresh(): Promise<SessionTokens> {
 		const current = await this.dependencies.tokens.read();
-		if (!current) throw new AuthenticationError("session");
+		if (!completeSessionTokens(current)) {
+			await this.dependencies.tokens.clear();
+			throw new AuthenticationError("session");
+		}
 		const endpoint = "/api/v1/auth/refresh";
 		const response = await this.dependencies.http.send({
 			body: JSON.stringify({ refreshToken: current.refreshToken }),

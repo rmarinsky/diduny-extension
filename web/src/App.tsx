@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { isValidEmail, isValidOtp } from "../../src/core/auth-validation";
 import { AUDIO_FORMAT, WEB_LATENCY_TARGET_MS } from "../../src/core/constants";
 import type { RetentionPolicy } from "../../src/core/ports";
 import type { RealtimeToken } from "../../src/core/realtime-session";
@@ -826,6 +827,10 @@ export function App() {
 
 	async function sendOtp(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
+		if (!isValidEmail(email)) {
+			setStatus(t("errors.requestRejected"));
+			return;
+		}
 		setStatus(t("auth.sendingCode"));
 		try {
 			await bffJson("/bff/auth/send-otp", {
@@ -842,6 +847,10 @@ export function App() {
 
 	async function verifyOtp(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
+		if (!isValidEmail(email) || !isValidOtp(otp)) {
+			setStatus(t("errors.requestRejected"));
+			return;
+		}
 		setStatus(t("auth.signingIn"));
 		try {
 			await bffJson("/bff/auth/verify-otp", {

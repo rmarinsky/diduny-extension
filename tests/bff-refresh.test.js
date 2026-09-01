@@ -152,3 +152,69 @@ test("refreshes once then redirects a streamed upload so the browser re-uploads 
 		await server.close();
 	}
 });
+
+test("logout waits for an in-flight refresh before deleting the BFF session", async () => {
+	const sessions = new InMemorySessionStore();
+	const sessionId = await sessions.create({
+		accessToken: "old-token",
+		expiresAt: Date.now() + 120_000,
+		refreshToken: "old-refresh-token",
+	});
+	let startRefresh;
+	const refreshStarted = new Promise((resolve) => {
+		startRefresh = resolve;
+	});
+	let finishRefresh;
+	const refresh = new Promise((resolve) => {
+		finishRefresh = resolve;
+	});
+	const refreshedSession = {
+		accessToken: "new-token",
+		expiresAt: Date.now() + 120_000,
+		refreshToken: "new-refresh-token",
+	};
+	const server = await buildServer({
+		auth: {
+			async logout() {},
+			refresh() {
+				startRefresh();
+				return refresh;
+			},
+			async sendOtp() {},
+			async verifyOtp() {
+				throw new Error("not used");
+			},
+		},
+		fetch: async (_url, init) =>
+			init?.headers?.authorization === "Bearer new-token"
+				? Response.json({ isWhitelisted: true, usedHours: 0, usedMs: 0 })
+				: Response.json({ error: "expired" }, { status: 401 }),
+		sessions,
+		upstreamUrl: "http://upstream.test",
+	});
+	try {
+		const request = server.inject({
+			headers: { cookie: `diduny_session=${sessionId}` },
+			method: "GET",
+			url: "/bff/api/usage/me",
+		});
+		await refreshStarted;
+		const logout = server.inject({
+			headers: { cookie: `diduny_session=${sessionId}` },
+			method: "POST",
+			url: "/bff/auth/logout",
+		});
+		let logoutCompleted = false;
+		void logout.then(() => {
+			logoutCompleted = true;
+		});
+		await new Promise(setImmediate);
+		expect(logoutCompleted).toBeFalse();
+		finishRefresh(refreshedSession);
+		await Promise.all([request, logout]);
+		expect(await sessions.get(sessionId)).toBeNull();
+	} finally {
+		finishRefresh(refreshedSession);
+		await server.close();
+	}
+});

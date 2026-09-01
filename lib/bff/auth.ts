@@ -1,3 +1,4 @@
+import { isValidEmail, isValidOtp } from "../../src/core/auth-validation";
 import { bffFetch } from "./client";
 
 export interface BffAuthSession {
@@ -30,6 +31,7 @@ export async function getBffAuthSession(): Promise<BffAuthSession> {
 }
 
 export async function sendBffOtp(email: string): Promise<void> {
+	if (!isValidEmail(email)) throw new Error("Invalid email");
 	await expectOk(
 		await bffFetch("/bff/auth/send-otp", {
 			body: JSON.stringify({ email }),
@@ -43,6 +45,8 @@ export async function verifyBffOtp(
 	email: string,
 	otp: string,
 ): Promise<{ email: string }> {
+	if (!isValidEmail(email) || !isValidOtp(otp))
+		throw new Error("Invalid one-time code");
 	const response = await expectOk(
 		await bffFetch("/bff/auth/verify-otp", {
 			body: JSON.stringify({ email, otp }),

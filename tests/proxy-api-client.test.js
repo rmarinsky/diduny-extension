@@ -106,6 +106,26 @@ test("refreshes proactively before using a token inside the lead window", async 
 	expect(paths).toEqual(["/api/v1/auth/refresh", "/api/v1/usage/me"]);
 });
 
+test("clears any partial stored token set before it can authorize a request", async () => {
+	const store = new MemoryTokenStore({
+		...tokens("access-token"),
+		refreshToken: undefined,
+	});
+	const client = new ProxyApiClient({
+		clock: { now: () => 0 },
+		http: {
+			isAvailable: true,
+			async send() {
+				throw new Error("A partial session must not issue a request");
+			},
+		},
+		tokens: store,
+	});
+
+	await expect(client.usage()).rejects.toBeInstanceOf(AuthenticationError);
+	expect(await store.read()).toBeNull();
+});
+
 test("normalizes tolerant transcript variants and preserves a quota error", () => {
 	expect(
 		decodeTranscriptResult({
