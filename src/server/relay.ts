@@ -1,7 +1,8 @@
 import type { FastifyRequest } from "fastify";
+import { HTTP } from "../core/constants";
 import type { BffSession, SessionStore } from "./session-store";
 
-const cookieName = "diduny_session";
+export const sessionCookieName = "diduny_session";
 
 const fixedPaths = new Set([
 	"GET config",
@@ -27,11 +28,17 @@ function requiresSession(path: string) {
 	return path !== "config" && path !== "health";
 }
 
-function sessionIdFromCookie(cookie: string | undefined) {
+export function sessionIdFromCookie(cookie: string | undefined) {
 	if (!cookie) return null;
 	for (const part of cookie.split(";")) {
 		const [name, value] = part.trim().split("=", 2);
-		if (name === cookieName && value) return decodeURIComponent(value);
+		if (name === sessionCookieName && value) {
+			try {
+				return decodeURIComponent(value);
+			} catch {
+				return null;
+			}
+		}
 	}
 	return null;
 }
@@ -56,11 +63,13 @@ function requestHeaders(request: FastifyRequest, session: BffSession | null) {
 
 export async function relayRequest({
 	fetch,
+	refreshSession,
 	request,
 	sessions,
 	upstreamUrl,
 }: {
 	fetch: typeof globalThis.fetch;
+	refreshSession?: (id: string, session: BffSession) => Promise<BffSession>;
 	request: FastifyRequest;
 	sessions: SessionStore;
 	upstreamUrl: string;
@@ -79,22 +88,47 @@ export async function relayRequest({
 	if (!isAllowedPath(request.method, path)) return { kind: "not_found" };
 
 	let session: BffSession | null = null;
+	let sessionId: string | null = null;
 	if (requiresSession(path)) {
-		const sessionId = sessionIdFromCookie(request.headers.cookie);
+		sessionId = sessionIdFromCookie(request.headers.cookie);
 		session = sessionId ? await sessions.get(sessionId) : null;
 		if (!session) return { kind: "unauthenticated" };
 	}
 
 	const currentUrl = new URL(request.raw.url ?? "", "http://bff.local");
+	const refresh = async () => {
+		if (!sessionId || !session || !refreshSession) return false;
+		try {
+			session = await refreshSession(sessionId, session);
+			return true;
+		} catch {
+			return false;
+		}
+	};
+	if (
+		sessionId &&
+		session?.expiresAt !== undefined &&
+		session.expiresAt - Date.now() <= HTTP.proactiveRefreshLeadMs &&
+		refreshSession &&
+		!(await refresh())
+	) {
+		return { kind: "unauthenticated" };
+	}
 	try {
-		const response = await fetch(
-			`${upstreamUrl.replace(/\/$/, "")}/api/v1/${path}${currentUrl.search}`,
-			{
-				body: requestBody(request) as BodyInit | undefined,
-				headers: requestHeaders(request, session),
-				method: request.method,
-			},
-		);
+		const upstream = (activeSession: BffSession | null) =>
+			fetch(
+				`${upstreamUrl.replace(/\/$/, "")}/api/v1/${path}${currentUrl.search}`,
+				{
+					body: requestBody(request) as BodyInit | undefined,
+					headers: requestHeaders(request, activeSession),
+					method: request.method,
+				},
+			);
+		let response = await upstream(session);
+		if (response.status === 401 && session && refreshSession) {
+			if (!(await refresh())) return { kind: "unauthenticated" };
+			response = await upstream(session);
+		}
 		const contentType = response.headers.get("content-type");
 		return {
 			body: new Uint8Array(await response.arrayBuffer()),
