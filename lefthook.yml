@@ -1,0 +1,10 @@
+pre-commit:
+  commands:
+    secrets:
+      glob: "*"
+      run: ripsecrets --strict-ignore {staged_files}
+
+pre-push:
+  commands:
+    secrets:
+      run: gitleaks detect --source . --redact

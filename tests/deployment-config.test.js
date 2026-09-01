@@ -19,9 +19,10 @@ test("ships a loopback-only compose deployment with persistent local data", asyn
 });
 
 test("ships a container, mock proxy, Apache-2.0 license, and CI quality gates", async () => {
-	const [dockerfile, license, packageJson, readme, workflow] =
+	const [dockerfile, hooks, license, packageJson, readme, workflow] =
 		await Promise.all([
 			readProjectFile("Dockerfile"),
+			readProjectFile("lefthook.yml"),
 			readProjectFile("LICENSE"),
 			readProjectFile("package.json"),
 			readProjectFile("README.md"),
@@ -40,6 +41,9 @@ test("ships a container, mock proxy, Apache-2.0 license, and CI quality gates", 
 	expect(workflow).toContain("bun run check:core");
 	expect(workflow).toContain("bun test");
 	expect(workflow).toContain("bun run build");
+	expect(workflow).toContain("gitleaks/gitleaks-action@v2");
+	expect(hooks).toContain("ripsecrets --strict-ignore {staged_files}");
+	expect(hooks).toContain("gitleaks detect --source . --redact");
 	expect(packageJson).toContain('"check:build-security"');
 	expect(packageJson).toContain("bun run check:build-security");
 	expect(readme).toContain("requires a Diduny account");
