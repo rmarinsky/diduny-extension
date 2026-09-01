@@ -9,6 +9,10 @@ import { speechPreCheck } from "../../src/core/speech-precheck";
 import { LibraryPane } from "./LibraryPane";
 import { SettingsPane } from "./SettingsPane";
 import {
+	detectBrowserCapabilities,
+	missingBrowserCapabilities,
+} from "./capabilities";
+import {
 	DEFAULT_SHORTCUT,
 	appendTranscript,
 	isEditableTarget,
@@ -94,6 +98,25 @@ function releaseCapture(capture: ActiveCapture) {
 }
 
 export function App() {
+	const [capabilities] = useState(detectBrowserCapabilities);
+	const missingCapabilities = missingBrowserCapabilities(capabilities);
+	if (missingCapabilities.length) {
+		return (
+			<main className="shell capability-gate">
+				<h1>Diduny needs a supported browser</h1>
+				<p>
+					Use a current Chromium-based browser with the following capabilities:
+				</p>
+				<ul>
+					{missingCapabilities.map((capability) => (
+						<li key={capability.key}>
+							<strong>{capability.label}</strong> - {capability.reason}
+						</li>
+					))}
+				</ul>
+			</main>
+		);
+	}
 	const [authState, setAuthState] = useState<AuthState>("checking");
 	const [captureState, setCaptureState] = useState<CaptureState>("idle");
 	const [documentText, setDocumentText] = useState("");

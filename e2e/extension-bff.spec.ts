@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 import Fastify from "fastify";
 import { chromium } from "playwright";
 import { buildServer } from "../server";
+import { installSupportedBrowserCapabilities } from "./support/browser-capabilities";
 import { createE2eLibrary } from "./support/fake-library";
 
 function serverUrl(server: ReturnType<typeof Fastify>, hostname = "127.0.0.1") {
@@ -78,6 +79,7 @@ test("loaded extension signs in through the BFF, triggers its backend relay, del
 			channel: "chromium",
 			headless: true,
 		});
+		await installSupportedBrowserCapabilities(context);
 		const worker =
 			context.serviceWorkers()[0] ??
 			(await context.waitForEvent("serviceworker", { timeout: 10_000 }));
@@ -95,6 +97,37 @@ test("loaded extension signs in through the BFF, triggers its backend relay, del
 
 		const webLogin = await context.newPage();
 		await webLogin.goto(`${bffUrl}/`);
+		expect(
+			await webLogin.evaluate(() => {
+				const browser = globalThis as typeof globalThis & {
+					SpeechRecognition?: unknown;
+					webkitSpeechRecognition?: unknown;
+					FileSystemFileHandle?: {
+						prototype?: { createSyncAccessHandle?: unknown };
+					};
+				};
+				const browserNavigator = navigator as Navigator & {
+					storage?: { getDirectory?: unknown };
+				};
+				return {
+					audioWorklet: typeof browser.AudioWorkletNode === "function",
+					displayCaptureAudio:
+						typeof navigator.mediaDevices?.getDisplayMedia === "function",
+					onDeviceSpeechRecognition:
+						typeof browser.SpeechRecognition === "function" ||
+						typeof browser.webkitSpeechRecognition === "function",
+					opfsSyncAccess:
+						typeof browserNavigator.storage?.getDirectory === "function" &&
+						typeof browser.FileSystemFileHandle?.prototype
+							?.createSyncAccessHandle === "function",
+				};
+			}),
+		).toEqual({
+			audioWorklet: true,
+			displayCaptureAudio: true,
+			onDeviceSpeechRecognition: true,
+			opfsSyncAccess: true,
+		});
 		await webLogin.getByLabel("Email").fill("person@example.com");
 		await webLogin.getByRole("button", { name: "Send one-time code" }).click();
 		await webLogin.getByLabel("One-time code").fill("123456");

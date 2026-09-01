@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import { chromium } from "playwright";
 import { buildServer } from "../server";
 import type { LibraryDetail } from "../src/core/ports";
+import { installSupportedBrowserCapabilities } from "./support/browser-capabilities";
 import { createE2eLibrary } from "./support/fake-library";
 
 function serverUrl(server: ReturnType<typeof Fastify>) {
@@ -70,6 +71,7 @@ test("the web library searches server-side and edits, copies, plays, and deletes
 		headless: true,
 	});
 	const context = await browser.newContext();
+	await installSupportedBrowserCapabilities(context);
 	const page = await context.newPage();
 
 	try {
