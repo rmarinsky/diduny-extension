@@ -18,7 +18,9 @@ import {
 	isEditableTarget,
 	matchesDictationShortcut,
 } from "./dictation";
+import { createWorkspaceInvalidationBus } from "./invalidation";
 import { saveToLibrary } from "./library";
+import { acquireRecordingLock } from "./recording-lock";
 import "./style.css";
 
 type AuthState = "checking" | "otp-sent" | "signed-in" | "signed-out";
@@ -128,7 +130,40 @@ export function App() {
 	const [signedInEmail, setSignedInEmail] = useState("");
 	const [status, setStatus] = useState("Checking your session…");
 	const [view, setView] = useState<WorkspaceView>("dictation");
+	const [workspaceRevision, setWorkspaceRevision] = useState(0);
 	const captureRef = useRef<ActiveCapture | null>(null);
+	const recordingLockReleaseRef = useRef<(() => void) | null>(null);
+	const workspaceBusRef = useRef<ReturnType<
+		typeof createWorkspaceInvalidationBus
+	> | null>(null);
+
+	const releaseRecordingLock = useCallback(() => {
+		const release = recordingLockReleaseRef.current;
+		recordingLockReleaseRef.current = null;
+		release?.();
+	}, []);
+
+	const broadcastWorkspaceChange = useCallback(() => {
+		workspaceBusRef.current?.invalidate();
+	}, []);
+
+	const invalidateWorkspace = useCallback(() => {
+		broadcastWorkspaceChange();
+		setWorkspaceRevision((revision) => revision + 1);
+	}, [broadcastWorkspaceChange]);
+
+	useEffect(() => {
+		const bus = createWorkspaceInvalidationBus();
+		workspaceBusRef.current = bus;
+		const unsubscribe = bus.subscribe(() => {
+			setWorkspaceRevision((revision) => revision + 1);
+		});
+		return () => {
+			unsubscribe();
+			bus.close();
+			if (workspaceBusRef.current === bus) workspaceBusRef.current = null;
+		};
+	}, []);
 
 	const refreshSession = useCallback(async () => {
 		try {
@@ -150,18 +185,22 @@ export function App() {
 
 	const cancelCapture = useCallback(async () => {
 		const capture = captureRef.current;
-		if (!capture) return;
+		if (!capture) {
+			releaseRecordingLock();
+			return;
+		}
 		captureRef.current = null;
 		try {
 			await stopRecorder(capture.mediaRecorder);
 		} finally {
 			releaseCapture(capture);
+			releaseRecordingLock();
 			setCaptureState("idle");
 			setElapsed(0);
 			setLevel(0);
 			setStatus("Dictation cancelled.");
 		}
-	}, []);
+	}, [releaseRecordingLock]);
 
 	const finishCapture = useCallback(async () => {
 		const capture = captureRef.current;
@@ -209,22 +248,25 @@ export function App() {
 				audio,
 				durationSeconds: elapsedSeconds(capture.startedAt),
 				text: result.text,
-			}).catch(() => {
-				if (!captureRef.current) {
-					setStatus(
-						"Dictation added. The local library could not save a copy.",
-					);
-				}
-			});
+			})
+				.then(invalidateWorkspace)
+				.catch(() => {
+					if (!captureRef.current) {
+						setStatus(
+							"Dictation added. The local library could not save a copy.",
+						);
+					}
+				});
 		} catch (error) {
 			setStatus(error instanceof Error ? error.message : "Dictation failed.");
 		} finally {
 			releaseCapture(capture);
+			releaseRecordingLock();
 			setCaptureState("idle");
 			setElapsed(0);
 			setLevel(0);
 		}
-	}, [language]);
+	}, [invalidateWorkspace, language, releaseRecordingLock]);
 
 	const startCapture = useCallback(async () => {
 		if (captureRef.current || captureState === "sending") return;
@@ -235,6 +277,12 @@ export function App() {
 		let stream: MediaStream | undefined;
 		let audioContext: AudioContext | undefined;
 		try {
+			const release = await acquireRecordingLock();
+			if (!release) {
+				setStatus("Recording is active in another tab.");
+				return;
+			}
+			recordingLockReleaseRef.current = release;
 			stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 			audioContext = new AudioContext({ sampleRate: 16_000 });
 			await audioContext.resume();
@@ -290,13 +338,14 @@ export function App() {
 		} catch (error) {
 			for (const track of stream?.getTracks() ?? []) track.stop();
 			void audioContext?.close();
+			releaseRecordingLock();
 			setStatus(
 				error instanceof Error
 					? error.message
 					: "Could not start the microphone.",
 			);
 		}
-	}, [captureState]);
+	}, [captureState, releaseRecordingLock]);
 
 	useEffect(() => {
 		const onShortcut = (event: KeyboardEvent) => {
@@ -464,9 +513,15 @@ export function App() {
 				</div>
 			</header>
 			{view === "library" ? (
-				<LibraryPane />
+				<LibraryPane
+					onLibraryChanged={broadcastWorkspaceChange}
+					revision={workspaceRevision}
+				/>
 			) : view === "settings" ? (
-				<SettingsPane />
+				<SettingsPane
+					onSettingsChanged={broadcastWorkspaceChange}
+					revision={workspaceRevision}
+				/>
 			) : (
 				<>
 					<label className="language" htmlFor="language">

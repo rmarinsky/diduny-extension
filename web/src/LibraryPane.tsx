@@ -212,7 +212,13 @@ function RecordingDetail({
 	);
 }
 
-export function LibraryPane() {
+export function LibraryPane({
+	onLibraryChanged,
+	revision,
+}: {
+	onLibraryChanged(): void;
+	revision: number;
+}) {
 	const [detail, setDetail] = useState<LibraryDetail | null>(null);
 	const [error, setError] = useState("");
 	const [isLoading, setIsLoading] = useState(true);
@@ -246,16 +252,17 @@ export function LibraryPane() {
 	);
 
 	useEffect(() => {
+		void revision;
 		void loadList();
-	}, [loadList]);
+	}, [loadList, revision]);
 
 	useEffect(() => {
+		void revision;
 		if (!selectedId) {
 			setDetail(null);
 			return;
 		}
 		let active = true;
-		setDetail(null);
 		setError("");
 		void getLibraryRecording(selectedId)
 			.then((recording) => {
@@ -267,7 +274,7 @@ export function LibraryPane() {
 		return () => {
 			active = false;
 		};
-	}, [selectedId]);
+	}, [revision, selectedId]);
 
 	function applyFilters(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
@@ -295,12 +302,19 @@ export function LibraryPane() {
 				</section>
 			);
 		}
-		if (!detail) return <p aria-live="polite">Loading recording…</p>;
+		if (!detail || detail.id !== selectedId)
+			return <p aria-live="polite">Loading recording…</p>;
 		return (
 			<RecordingDetail
 				onBack={returnToList}
-				onDeleted={returnToList}
-				onUpdated={setDetail}
+				onDeleted={() => {
+					onLibraryChanged();
+					returnToList();
+				}}
+				onUpdated={(recording) => {
+					setDetail(recording);
+					onLibraryChanged();
+				}}
 				recording={detail}
 			/>
 		);

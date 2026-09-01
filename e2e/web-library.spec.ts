@@ -107,6 +107,22 @@ test("the web library searches server-side and edits, copies, plays, and deletes
 			.poll(() => page.evaluate(() => navigator.clipboard.readText()))
 			.toBe(displayText);
 
+		await page.getByLabel("Title").fill("Unsaved local title");
+		const remoteLibraryPage = await context.newPage();
+		await remoteLibraryPage.goto(`${bffUrl}/`);
+		await remoteLibraryPage.getByRole("button", { name: "Library" }).click();
+		await remoteLibraryPage
+			.getByRole("button", { name: "Board meeting" })
+			.click();
+		await remoteLibraryPage.getByLabel("Title").fill("Remote board decision");
+		await remoteLibraryPage
+			.getByRole("button", { name: "Save details" })
+			.click();
+		await expect(
+			page.getByRole("heading", { name: "Remote board decision" }),
+		).toBeVisible();
+		await expect(page.getByLabel("Title")).toHaveValue("Unsaved local title");
+
 		await page.getByLabel("Title").fill("Final board decision");
 		await page
 			.getByLabel("Description")
@@ -127,11 +143,20 @@ test("the web library searches server-side and edits, copies, plays, and deletes
 
 		await page.getByRole("button", { name: "Settings" }).click();
 		await expect(page.getByText("Storage on this device")).toBeVisible();
+		const secondPage = await context.newPage();
+		await secondPage.goto(`${bffUrl}/`);
+		await secondPage.getByRole("button", { name: "Settings" }).click();
+		await expect(
+			secondPage.getByLabel("Enable filler-word cleanup"),
+		).toBeChecked();
 		await page.getByLabel("Enable filler-word cleanup").uncheck();
 		await page.getByRole("button", { name: "Save cleanup" }).click();
 		await expect
 			.poll(() => e2eLibrary.settings().textCleanupEnabled)
 			.toBe(false);
+		await expect(
+			secondPage.getByLabel("Enable filler-word cleanup"),
+		).not.toBeChecked();
 	} finally {
 		bff.server.closeAllConnections?.();
 		upstream.server.closeAllConnections?.();

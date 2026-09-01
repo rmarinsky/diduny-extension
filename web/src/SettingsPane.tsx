@@ -63,7 +63,13 @@ function errorMessage(error: unknown) {
 		: "Could not save this setting. Check the local Diduny service and try again.";
 }
 
-export function SettingsPane() {
+export function SettingsPane({
+	onSettingsChanged,
+	revision,
+}: {
+	onSettingsChanged(): void;
+	revision: number;
+}) {
 	const [snapshot, setSnapshot] = useState<WorkspaceSettingsSnapshot | null>(
 		null,
 	);
@@ -89,8 +95,9 @@ export function SettingsPane() {
 	}, []);
 
 	useEffect(() => {
+		void revision;
 		void refresh();
-	}, [refresh]);
+	}, [refresh, revision]);
 
 	useEffect(() => {
 		if (typingStartedAt !== null) typingInput.current?.focus();
@@ -108,6 +115,7 @@ export function SettingsPane() {
 			setMessage(
 				"Cleanup settings saved. New library views and copies use this text.",
 			);
+			onSettingsChanged();
 		} catch (error) {
 			setMessage(errorMessage(error));
 		}
@@ -121,6 +129,7 @@ export function SettingsPane() {
 			const retention = await updateRetentionPolicy(category, policy);
 			setSnapshot((current) => (current ? { ...current, retention } : current));
 			setMessage("Retention policy saved.");
+			onSettingsChanged();
 		} catch (error) {
 			setMessage(errorMessage(error));
 		}
@@ -146,8 +155,9 @@ export function SettingsPane() {
 			});
 			setSnapshot((current) => (current ? { ...current, settings } : current));
 			setTypingStartedAt(null);
-			setMessage("Typing speed measured and saved.");
 			await refresh();
+			onSettingsChanged();
+			setMessage("Typing speed measured and saved.");
 		} catch (error) {
 			setMessage(errorMessage(error));
 		}
