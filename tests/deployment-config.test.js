@@ -39,10 +39,13 @@ test("ships a container, mock proxy, Apache-2.0 license, and CI quality gates", 
 	expect(workflow).toContain("bun run check:core");
 	expect(workflow).toContain("bun test");
 	expect(workflow).toContain("bun run build");
+	expect(packageJson).toContain('"check:build-security"');
+	expect(packageJson).toContain("bun run check:build-security");
 	expect(readme).toContain("requires a Diduny account");
 	expect(readme).toContain("`DATA_DIR`");
 	expect(readme).toContain("Nothing is sent to Diduny maintainers");
 	expect(readme).toContain("Never remove the `diduny-data` volume");
+	expect(readme).toContain("runaway client loop");
 	expect(readme).toContain("Browser extension");
 });
 

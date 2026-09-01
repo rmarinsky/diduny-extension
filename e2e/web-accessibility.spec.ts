@@ -47,6 +47,15 @@ test("all web views pass axe and remain usable without horizontal scrolling at 2
 	});
 	await installSupportedBrowserCapabilities(context);
 	const page = await context.newPage();
+	const cspViolations: string[] = [];
+	page.on("console", (message) => {
+		if (
+			message.type() === "error" &&
+			/content security policy|violat.*csp/i.test(message.text())
+		) {
+			cspViolations.push(message.text());
+		}
+	});
 
 	try {
 		await page.goto(`${bffUrl}/`);
@@ -82,6 +91,7 @@ test("all web views pass axe and remain usable without horizontal scrolling at 2
 				() => document.documentElement.scrollWidth <= window.innerWidth,
 			),
 		).toBe(true);
+		expect(cspViolations).toEqual([]);
 	} finally {
 		bff.server.closeAllConnections?.();
 		upstream.server.closeAllConnections?.();

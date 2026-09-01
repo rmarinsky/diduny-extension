@@ -18,6 +18,11 @@ on `127.0.0.1:3000`. `DATA_DIR`, `HOST`, `PORT`, `DIDUNY_UPSTREAM_URL`, and
 creates an owner-only data directory and a persistent session secret, then logs
 its absolute location and size.
 
+The BFF limits OTP requests to 10 per minute, transcription and realtime
+requests to 20 per minute, and other BFF requests to 120 per minute per
+session or IP. These are guardrails against a runaway client loop, not a
+throughput quota.
+
 ## Browser extension
 
 The Chrome extension is built in this same repository and release artifact:
