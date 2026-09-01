@@ -48,6 +48,9 @@ test("ships a container, mock proxy, Apache-2.0 license, and CI quality gates", 
 	expect(readme).toContain("Never remove the `diduny-data` volume");
 	expect(readme).toContain("runaway client loop");
 	expect(readme).toContain("Browser extension");
+	expect(readme).toContain("offline local verification mock");
+	expect(readme).toContain("does not authenticate a real Diduny account");
+	expect(readme).toContain("DIDUNY_EXTENSION_ORIGIN");
 });
 
 test("starts only against the configured proxy, without a hidden hosted auth fallback", async () => {
