@@ -1,42 +1,5 @@
 import { expect, test } from "bun:test";
 import { buildServer } from "../server";
-import { SupabaseOtpGateway } from "../src/server/auth";
-
-test("maps the existing Supabase OTP flow to a server-held backend session", async () => {
-	const calls = [];
-	const gateway = new SupabaseOtpGateway(
-		async (url, init) => {
-			calls.push({ init, url: String(url) });
-			if (String(url).endsWith("/verify")) {
-				return Response.json({
-					access_token: "backend-bearer-token",
-					expires_at: 120,
-					refresh_token: "server-refresh-token",
-					user: { email: "person@example.com" },
-				});
-			}
-			return new Response(null, { status: 200 });
-		},
-		"https://supabase.test",
-		"publishable-key",
-	);
-
-	await gateway.sendOtp("person@example.com");
-	const session = await gateway.verifyOtp("person@example.com", "123456");
-	await gateway.logout(session);
-
-	expect(session).toEqual({
-		accessToken: "backend-bearer-token",
-		email: "person@example.com",
-		expiresAt: 120_000,
-		refreshToken: "server-refresh-token",
-	});
-	expect(calls.map((call) => call.url)).toEqual([
-		"https://supabase.test/auth/v1/otp",
-		"https://supabase.test/auth/v1/verify",
-		"https://supabase.test/auth/v1/logout",
-	]);
-});
 
 test("owns OTP verification server-side and exposes only an opaque secure BFF session", async () => {
 	const upstreamRequests = [];

@@ -12,10 +12,11 @@ Your recordings, transcripts, settings, and encrypted BFF sessions live under `D
 docker compose up --build
 ```
 
-The container listens only on `127.0.0.1:3000`. `DATA_DIR`, `HOST`, `PORT`,
-`DIDUNY_UPSTREAM_URL`, and `DIDUNY_LOG_LEVEL` are optional environment
-variables. On first start the BFF creates an owner-only data directory and a
-persistent session secret, then logs its absolute location and size.
+The Compose stack starts the local mock proxy on port `3910` and the BFF only
+on `127.0.0.1:3000`. `DATA_DIR`, `HOST`, `PORT`, `DIDUNY_UPSTREAM_URL`, and
+`DIDUNY_LOG_LEVEL` are optional environment variables. On first start the BFF
+creates an owner-only data directory and a persistent session secret, then logs
+its absolute location and size.
 
 ## Browser extension
 

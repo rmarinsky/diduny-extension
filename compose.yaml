@@ -10,7 +10,6 @@ services:
       - mock-proxy
     environment:
       DATA_DIR: /data
-      DIDUNY_AUTH_PROVIDER: proxy
       DIDUNY_UPSTREAM_URL: http://mock-proxy:3910
       HOST: 0.0.0.0
     ports:

@@ -13,7 +13,6 @@ test("ships a loopback-only compose deployment with persistent local data", asyn
 	expect(compose).toContain('"127.0.0.1:3000:3000"');
 	expect(compose).toContain("mock-proxy:");
 	expect(compose).toContain('"127.0.0.1:3910:3910"');
-	expect(compose).toContain("DIDUNY_AUTH_PROVIDER: proxy");
 	expect(compose).toContain("DIDUNY_UPSTREAM_URL: http://mock-proxy:3910");
 	expect(compose).toContain("- diduny-data:/data");
 	expect(compose).toMatch(/^volumes:\n\s+diduny-data:/m);
@@ -45,4 +44,16 @@ test("ships a container, mock proxy, Apache-2.0 license, and CI quality gates", 
 	expect(readme).toContain("Nothing is sent to Diduny maintainers");
 	expect(readme).toContain("Never remove the `diduny-data` volume");
 	expect(readme).toContain("Browser extension");
+});
+
+test("starts only against the configured proxy, without a hidden hosted auth fallback", async () => {
+	const startup = await readProjectFile("server-main.ts");
+
+	expect(startup).toContain(
+		'process.env.DIDUNY_UPSTREAM_URL ?? "http://127.0.0.1:3910"',
+	);
+	expect(startup).toContain(
+		"new ProxyOtpGateway(globalThis.fetch, upstreamUrl)",
+	);
+	expect(startup).not.toMatch(/supabase|SUPABASE|https:\/\//i);
 });
