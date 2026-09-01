@@ -18,6 +18,13 @@ test("classifies silence and a too-short utterance as no speech without any tran
 
 test("passes sufficiently long voiced audio and fails open for unreadable input", () => {
 	expect(speechPreCheck(voicedFrames(9))).toEqual({ hasSpeech: true });
+	expect(
+		speechPreCheck(new Int16Array(VAD.frameSamples * 9).fill(655)),
+	).toEqual({ hasSpeech: true });
+	expect(speechPreCheck(new Int16Array(VAD.frameSamples * 9).fill(1))).toEqual({
+		hasSpeech: false,
+		reason: "silence",
+	});
 	expect(speechPreCheck(null)).toEqual({
 		hasSpeech: true,
 		reason: "unreadable",

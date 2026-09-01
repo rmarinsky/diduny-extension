@@ -51,6 +51,7 @@ test("persists workspace settings and reports server-side library statistics and
 				translationSourceLanguage: "uk",
 				translationTargetLanguage: "en",
 				typingSpeedWordsPerMinute: 60,
+				uiLocale: "uk",
 			},
 			url: "/bff/settings",
 		});
@@ -63,8 +64,10 @@ test("persists workspace settings and reports server-side library statistics and
 				translationSourceLanguage: "uk",
 				translationTargetLanguage: "en",
 				typingSpeedWordsPerMinute: 60,
+				uiLocale: "uk",
 			}),
 		);
+		expect(updated.headers["set-cookie"][0]).toContain("diduny_locale=uk");
 
 		const malformedDevice = await server.inject({
 			headers: { cookie },

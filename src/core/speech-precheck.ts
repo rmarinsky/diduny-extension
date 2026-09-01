@@ -4,12 +4,15 @@ export type SpeechPreCheckResult =
 	| { hasSpeech: false; reason: "silence" }
 	| { hasSpeech: true; reason?: "unreadable" };
 
-function frameHasSpeech(samples: Float32Array, offset: number) {
+type PcmSamples = Float32Array | Int16Array;
+
+function frameHasSpeech(samples: PcmSamples, offset: number) {
 	let sum = 0;
 	let peak = 0;
 	for (let index = offset; index < offset + VAD.frameSamples; index += 1) {
-		const sample = samples[index];
-		if (sample === undefined || !Number.isFinite(sample)) return null;
+		const value = samples[index];
+		if (value === undefined || !Number.isFinite(value)) return null;
+		const sample = samples instanceof Int16Array ? value / 32_768 : value;
 		const magnitude = Math.abs(sample);
 		sum += sample * sample;
 		peak = Math.max(peak, magnitude);
@@ -19,7 +22,7 @@ function frameHasSpeech(samples: Float32Array, offset: number) {
 }
 
 export function speechPreCheck(
-	samples: Float32Array | null,
+	samples: PcmSamples | null,
 ): SpeechPreCheckResult {
 	if (!samples) return { hasSpeech: true, reason: "unreadable" };
 	let voicedSamples = 0;

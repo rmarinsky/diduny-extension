@@ -43,6 +43,15 @@ export {
 	matchesShortcut,
 	normalizeShortcut,
 } from "./shortcuts";
+export {
+	RealtimeSession,
+	RealtimeSessionError,
+	type RealtimeErrorCode,
+	type RealtimeScheduler,
+	type RealtimeSocket,
+	type RealtimeSocketHandlers,
+	type RealtimeToken,
+} from "./realtime-session";
 export { SessionMachine } from "./session-machine";
 export { speechPreCheck } from "./speech-precheck";
 

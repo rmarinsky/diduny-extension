@@ -107,18 +107,8 @@ export async function installFakeMicrophones(context: BrowserContext) {
 
 export async function installFakeDictationCapture(context: BrowserContext) {
 	await context.addInitScript(() => {
-		class FakeAnalyser {
-			fftSize = 1024;
-
-			getFloatTimeDomainData(frame: Float32Array) {
-				frame.fill(0.05);
-			}
-		}
-
 		class FakeAudioContext {
-			createAnalyser() {
-				return new FakeAnalyser();
-			}
+			audioWorklet = { addModule: async () => undefined };
 
 			createMediaStreamDestination() {
 				return { stream: new MediaStream() };
@@ -134,6 +124,28 @@ export async function installFakeDictationCapture(context: BrowserContext) {
 
 			resume() {
 				return Promise.resolve();
+			}
+		}
+
+		class FakeAudioWorkletNode {
+			port: {
+				onmessage: ((event: { data: unknown }) => void) | null;
+			} = { onmessage: null };
+			private readonly timer: number;
+
+			constructor() {
+				this.timer = window.setInterval(() => {
+					const frame = new Int16Array(1_600).fill(1638);
+					this.port.onmessage?.({
+						data: { frame: frame.buffer, level: 0.4 },
+					});
+				}, 100);
+			}
+
+			connect() {}
+
+			disconnect() {
+				window.clearInterval(this.timer);
 			}
 		}
 
@@ -172,6 +184,10 @@ export async function installFakeDictationCapture(context: BrowserContext) {
 		Object.defineProperty(globalThis, "AudioContext", {
 			configurable: true,
 			value: FakeAudioContext,
+		});
+		Object.defineProperty(globalThis, "AudioWorkletNode", {
+			configurable: true,
+			value: FakeAudioWorkletNode,
 		});
 		Object.defineProperty(globalThis, "MediaRecorder", {
 			configurable: true,

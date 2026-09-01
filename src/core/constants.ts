@@ -20,6 +20,8 @@ export const REALTIME = {
 	finalizeControlToken: "<fin>",
 	maxReconnectAttempts: 3,
 	preReadyBufferBytes: 1_000_000,
+	quotaCloseCode: 4002,
+	reconnectBackoffMs: 1_000,
 	readyWatchdogMs: 10_000,
 	uiUpdatesPerSecond: 10,
 } as const;

@@ -18,6 +18,12 @@ import {
 	resolveAudioInput,
 } from "./audio-devices";
 import {
+	type UiLocale,
+	languageName,
+	setUiLocale,
+	supportedUiLocales,
+} from "./i18n";
+import {
 	type WorkspaceSettingsSnapshot,
 	getWorkspaceSettings,
 	updateRetentionPolicy,
@@ -241,6 +247,7 @@ export function SettingsPane({
 	const [fillerWords, setFillerWords] = useState("");
 	const [lexicon, setLexicon] = useState("");
 	const [message, setMessage] = useState("");
+	const [uiLocale, setUiLocaleState] = useState<UiLocale>("en");
 	const [translationSourceLanguage, setTranslationSourceLanguage] =
 		useState("uk");
 	const [translationTargetLanguage, setTranslationTargetLanguage] =
@@ -257,6 +264,7 @@ export function SettingsPane({
 			setDictationShortcut(next.settings.dictationShortcut);
 			setFillerWords(next.settings.fillerWords.join("\n"));
 			setLexicon(next.settings.protectedLexicon.join("\n"));
+			setUiLocaleState(next.settings.uiLocale);
 			setTranslationSourceLanguage(next.settings.translationSourceLanguage);
 			setTranslationTargetLanguage(next.settings.translationTargetLanguage);
 		} catch (error) {
@@ -359,6 +367,20 @@ export function SettingsPane({
 		}
 	}
 
+	async function saveUiLocale(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		try {
+			const settings = await updateWorkspaceSettings({ uiLocale });
+			setSnapshot((current) => (current ? { ...current, settings } : current));
+			setUiLocaleState(settings.uiLocale);
+			await setUiLocale(settings.uiLocale);
+			setMessage("Interface language saved.");
+			onSettingsChanged();
+		} catch (error) {
+			setMessage(errorMessage(error));
+		}
+	}
+
 	function startTypingTest() {
 		setTypingText("");
 		setTypingStartedAt(performance.now());
@@ -430,6 +452,32 @@ export function SettingsPane({
 						/>
 					</label>
 					<button type="submit">Save cleanup</button>
+				</form>
+			</section>
+
+			<section
+				aria-labelledby="interface-language-title"
+				className="settings-section"
+			>
+				<h3 id="interface-language-title">Interface language</h3>
+				<form onSubmit={saveUiLocale}>
+					<label htmlFor="ui-locale">
+						Interface language
+						<select
+							id="ui-locale"
+							onChange={(event) =>
+								setUiLocaleState(event.target.value as UiLocale)
+							}
+							value={uiLocale}
+						>
+							{supportedUiLocales.map((locale) => (
+								<option key={locale} value={locale}>
+									{languageName(locale, locale)}
+								</option>
+							))}
+						</select>
+					</label>
+					<button type="submit">Save interface language</button>
 				</form>
 			</section>
 

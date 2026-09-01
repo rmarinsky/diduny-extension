@@ -113,6 +113,7 @@ const workspaceSettingKeys = [
 	"translationTargetLanguage",
 	"uiLocale",
 ] as const satisfies readonly (keyof Settings)[];
+const localeCookieName = "diduny_locale";
 
 function validEmail(email: unknown): email is string {
 	return typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -146,6 +147,10 @@ function sessionCookies(id: string, expired = false) {
 			expired,
 		),
 	];
+}
+
+function localeCookie(locale: Settings["uiLocale"]) {
+	return `${localeCookieName}=${locale}; Path=/; Max-Age=31536000; Secure; SameSite=Lax`;
 }
 
 function isExtensionRequest(request: FastifyRequest) {
@@ -617,7 +622,10 @@ export async function buildServer({
 			const settings = parseWorkspaceSettings(request.body);
 			if (!settings)
 				return reply.code(400).send({ error: "invalid_workspace_settings" });
-			return library.updateWorkspaceSettings(settings);
+			const updated = await library.updateWorkspaceSettings(settings);
+			if (settings.uiLocale)
+				reply.header("set-cookie", localeCookie(updated.uiLocale));
+			return updated;
 		});
 		server.put("/bff/settings/retention", async (request, reply) => {
 			if (!(await requireSession(request, reply))) return;

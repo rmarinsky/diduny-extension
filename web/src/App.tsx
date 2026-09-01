@@ -6,6 +6,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { AUDIO_FORMAT } from "../../src/core/constants";
 import { speechPreCheck } from "../../src/core/speech-precheck";
 import { LibraryPane } from "./LibraryPane";
 import { SettingsPane } from "./SettingsPane";
@@ -17,12 +18,14 @@ import {
 	detectBrowserCapabilities,
 	missingBrowserCapabilities,
 } from "./capabilities";
+import { createPcmCapture } from "./capture";
 import {
 	DEFAULT_SHORTCUT,
 	appendTranscript,
 	isEditableTarget,
 	matchesDictationShortcut,
 } from "./dictation";
+import { setUiLocale } from "./i18n";
 import { createWorkspaceInvalidationBus } from "./invalidation";
 import { saveToLibrary } from "./library";
 import { acquireRecordingLock } from "./recording-lock";
@@ -40,14 +43,12 @@ type WorkspaceView = "dictation" | "library" | "settings";
 
 interface ActiveCapture {
 	audioContext: AudioContext;
-	analyser: AnalyserNode;
 	chunks: Blob[];
-	frames: Float32Array[];
+	frames: Int16Array[];
 	mediaRecorder: MediaRecorder;
-	renderFrame: number;
-	startedAt: number;
+	stats: { sampleCount: number };
 	stream: MediaStream;
-	timer: number;
+	worklet: AudioWorkletNode;
 }
 
 interface SessionResponse {
@@ -79,8 +80,8 @@ async function bffJson<T>(path: string, init?: RequestInit): Promise<T> {
 	return body as T;
 }
 
-function joinFrames(frames: readonly Float32Array[]) {
-	const output = new Float32Array(
+function joinFrames(frames: readonly Int16Array[]) {
+	const output = new Int16Array(
 		frames.reduce((total, frame) => total + frame.length, 0),
 	);
 	let offset = 0;
@@ -89,10 +90,6 @@ function joinFrames(frames: readonly Float32Array[]) {
 		offset += frame.length;
 	}
 	return output;
-}
-
-function elapsedSeconds(startedAt: number) {
-	return Math.floor((Date.now() - startedAt) / 1000);
 }
 
 async function stopRecorder(recorder: MediaRecorder) {
@@ -104,8 +101,7 @@ async function stopRecorder(recorder: MediaRecorder) {
 }
 
 function releaseCapture(capture: ActiveCapture) {
-	window.clearInterval(capture.timer);
-	window.cancelAnimationFrame(capture.renderFrame);
+	capture.worklet.disconnect();
 	for (const track of capture.stream.getTracks()) track.stop();
 	void capture.audioContext.close();
 }
@@ -214,6 +210,7 @@ export function App() {
 			setMicrophoneDeviceId(null);
 			setTranslationSourceLanguage("uk");
 			setTranslationTargetLanguage("en");
+			void setUiLocale("en");
 			return;
 		}
 		void getWorkspaceSettings()
@@ -222,12 +219,14 @@ export function App() {
 				setMicrophoneDeviceId(settings.microphoneDeviceId);
 				setTranslationSourceLanguage(settings.translationSourceLanguage);
 				setTranslationTargetLanguage(settings.translationTargetLanguage);
+				void setUiLocale(settings.uiLocale);
 			})
 			.catch(() => {
 				setDictationShortcut(DEFAULT_SHORTCUT);
 				setMicrophoneDeviceId(null);
 				setTranslationSourceLanguage("uk");
 				setTranslationTargetLanguage("en");
+				void setUiLocale("en");
 			});
 	}, [authState, workspaceRevision]);
 
@@ -312,7 +311,9 @@ export function App() {
 			);
 			void saveToLibrary({
 				audio,
-				durationSeconds: elapsedSeconds(capture.startedAt),
+				durationSeconds: Math.floor(
+					capture.stats.sampleCount / AUDIO_FORMAT.sampleRate,
+				),
 				...(translationMode
 					? { status: "translated" as const, type: "translation" as const }
 					: {}),
@@ -351,7 +352,7 @@ export function App() {
 			return;
 		}
 		let stream: MediaStream | undefined;
-		let audioContext: AudioContext | undefined;
+		let pipeline: Awaited<ReturnType<typeof createPcmCapture>> | undefined;
 		let fallbackDeviceName: string | undefined;
 		try {
 			const release = await acquireRecordingLock();
@@ -373,53 +374,44 @@ export function App() {
 				fallbackDeviceName =
 					stream.getAudioTracks()[0]?.label || "another available microphone";
 			}
-			audioContext = new AudioContext({ sampleRate: 16_000 });
-			await audioContext.resume();
-			const source = audioContext.createMediaStreamSource(stream);
-			const analyser = audioContext.createAnalyser();
-			analyser.fftSize = 1024;
-			const destination = audioContext.createMediaStreamDestination();
-			source.connect(analyser);
-			source.connect(destination);
-
+			if (!stream) throw new Error("Could not start the microphone.");
+			const frames: Int16Array[] = [];
+			const stats = { sampleCount: 0 };
+			pipeline = await createPcmCapture({
+				onFrame(frame) {
+					frames.push(frame);
+					stats.sampleCount += frame.length;
+					const nextElapsed = Math.floor(
+						stats.sampleCount / AUDIO_FORMAT.sampleRate,
+					);
+					setElapsed((current) =>
+						current === nextElapsed ? current : nextElapsed,
+					);
+				},
+				onLevel: setLevel,
+				stream,
+			});
 			const options = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
 				? { mimeType: "audio/webm;codecs=opus" }
 				: undefined;
-			const mediaRecorder = new MediaRecorder(destination.stream, options);
+			const mediaRecorder = new MediaRecorder(
+				pipeline.destination.stream,
+				options,
+			);
 			const chunks: Blob[] = [];
-			const frames: Float32Array[] = [];
 			mediaRecorder.addEventListener("dataavailable", (event) => {
 				if (event.data.size) chunks.push(event.data);
 			});
-			const startedAt = Date.now();
-			const renderLevel = () => {
-				const frame = new Float32Array(analyser.fftSize);
-				analyser.getFloatTimeDomainData(frame);
-				frames.push(frame);
-				let sum = 0;
-				for (const sample of frame) sum += sample * sample;
-				setLevel(Math.min(1, Math.sqrt(sum / frame.length) * 8));
-				const active = captureRef.current;
-				if (active)
-					active.renderFrame = window.requestAnimationFrame(renderLevel);
-			};
 			const capture: ActiveCapture = {
-				audioContext,
-				analyser,
+				audioContext: pipeline.audioContext,
 				chunks,
 				frames,
 				mediaRecorder,
-				renderFrame: 0,
-				startedAt,
+				stats,
 				stream,
-				timer: 0,
+				worklet: pipeline.worklet,
 			};
 			captureRef.current = capture;
-			capture.timer = window.setInterval(
-				() => setElapsed(elapsedSeconds(startedAt)),
-				250,
-			);
-			capture.renderFrame = window.requestAnimationFrame(renderLevel);
 			mediaRecorder.start(250);
 			setCaptureState("recording");
 			setElapsed(0);
@@ -433,8 +425,9 @@ export function App() {
 				void finishCapture();
 			}
 		} catch (error) {
+			pipeline?.worklet.disconnect();
 			for (const track of stream?.getTracks() ?? []) track.stop();
-			void audioContext?.close();
+			void pipeline?.audioContext.close();
 			stopHoldWhenReadyRef.current = false;
 			releaseRecordingLock();
 			setStatus(
