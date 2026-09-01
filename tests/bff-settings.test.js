@@ -48,6 +48,8 @@ test("persists workspace settings and reports server-side library statistics and
 				microphoneDeviceId: "usb-microphone",
 				protectedLexicon: ["Diduny"],
 				textCleanupEnabled: true,
+				translationSourceLanguage: "uk",
+				translationTargetLanguage: "en",
 				typingSpeedWordsPerMinute: 60,
 			},
 			url: "/bff/settings",
@@ -58,6 +60,8 @@ test("persists workspace settings and reports server-side library statistics and
 				dictationShortcut: "Alt+Shift+M",
 				microphoneDeviceId: "usb-microphone",
 				protectedLexicon: ["Diduny"],
+				translationSourceLanguage: "uk",
+				translationTargetLanguage: "en",
 				typingSpeedWordsPerMinute: 60,
 			}),
 		);

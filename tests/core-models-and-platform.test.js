@@ -79,6 +79,14 @@ test("resolves legacy history and keeps UI locale independent of speech settings
 		DEFAULT_SETTINGS.speechLanguageHints,
 	);
 	expect(ukrainianUi.microphoneDeviceId).toBe("built-in-mic");
+
+	const englishTranslation = updateSettings(DEFAULT_SETTINGS, {
+		translationSourceLanguage: "en",
+		translationTargetLanguage: "uk",
+	});
+	const switchedUi = updateSettings(englishTranslation, { uiLocale: "uk" });
+	expect(switchedUi.translationSourceLanguage).toBe("en");
+	expect(switchedUi.translationTargetLanguage).toBe("uk");
 });
 
 test("cleans dictation without changing protected terms and calculates measured time saved", () => {

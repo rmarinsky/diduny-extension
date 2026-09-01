@@ -37,6 +37,11 @@ const retentionOptions: ReadonlyArray<{
 ];
 
 const calibrationText = "Clear ideas deserve calm words and careful attention.";
+const translationLanguages = ["en", "uk"] as const;
+
+function ownLanguageName(code: (typeof translationLanguages)[number]) {
+	return new Intl.DisplayNames([code], { type: "language" }).of(code) ?? code;
+}
 
 function terms(value: string) {
 	return value
@@ -236,6 +241,10 @@ export function SettingsPane({
 	const [fillerWords, setFillerWords] = useState("");
 	const [lexicon, setLexicon] = useState("");
 	const [message, setMessage] = useState("");
+	const [translationSourceLanguage, setTranslationSourceLanguage] =
+		useState("uk");
+	const [translationTargetLanguage, setTranslationTargetLanguage] =
+		useState("en");
 	const [typingStartedAt, setTypingStartedAt] = useState<number | null>(null);
 	const [typingText, setTypingText] = useState("");
 	const typingInput = useRef<HTMLTextAreaElement>(null);
@@ -248,6 +257,8 @@ export function SettingsPane({
 			setDictationShortcut(next.settings.dictationShortcut);
 			setFillerWords(next.settings.fillerWords.join("\n"));
 			setLexicon(next.settings.protectedLexicon.join("\n"));
+			setTranslationSourceLanguage(next.settings.translationSourceLanguage);
+			setTranslationTargetLanguage(next.settings.translationTargetLanguage);
 		} catch (error) {
 			setMessage(errorMessage(error));
 		}
@@ -325,6 +336,23 @@ export function SettingsPane({
 			setDictationShortcut(settings.dictationShortcut);
 			setSnapshot((current) => (current ? { ...current, settings } : current));
 			setMessage(`Shortcut saved: ${settings.dictationShortcut}.`);
+			onSettingsChanged();
+		} catch (error) {
+			setMessage(errorMessage(error));
+		}
+	}
+
+	async function saveTranslationLanguages(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		try {
+			const settings = await updateWorkspaceSettings({
+				translationSourceLanguage,
+				translationTargetLanguage,
+			});
+			setSnapshot((current) => (current ? { ...current, settings } : current));
+			setTranslationSourceLanguage(settings.translationSourceLanguage);
+			setTranslationTargetLanguage(settings.translationTargetLanguage);
+			setMessage("Translation languages saved.");
 			onSettingsChanged();
 		} catch (error) {
 			setMessage(errorMessage(error));
@@ -427,6 +455,48 @@ export function SettingsPane({
 						Browser-reserved chords are refused.
 					</p>
 					<button type="submit">Save shortcut</button>
+				</form>
+			</section>
+
+			<section
+				aria-labelledby="translation-languages-title"
+				className="settings-section"
+			>
+				<h3 id="translation-languages-title">Translation languages</h3>
+				<form onSubmit={saveTranslationLanguages}>
+					<label htmlFor="translation-source-language">
+						Translation source language
+						<select
+							id="translation-source-language"
+							onChange={(event) =>
+								setTranslationSourceLanguage(event.target.value)
+							}
+							value={translationSourceLanguage}
+						>
+							{translationLanguages.map((language) => (
+								<option key={language} value={language}>
+									{ownLanguageName(language)}
+								</option>
+							))}
+						</select>
+					</label>
+					<label htmlFor="translation-target-language">
+						Translation target language
+						<select
+							id="translation-target-language"
+							onChange={(event) =>
+								setTranslationTargetLanguage(event.target.value)
+							}
+							value={translationTargetLanguage}
+						>
+							{translationLanguages.map((language) => (
+								<option key={language} value={language}>
+									{ownLanguageName(language)}
+								</option>
+							))}
+						</select>
+					</label>
+					<button type="submit">Save translation languages</button>
 				</form>
 			</section>
 

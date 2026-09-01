@@ -99,7 +99,7 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 			"aria-valuenow",
 			/[1-9]/,
 		);
-		await expect(page.locator("output")).toHaveText("1s");
+		await expect(page.locator(".meter-row output")).toHaveText("1s");
 		await page.keyboard.press("Enter");
 		await expect(document).toHaveValue("Hello from web dictation");
 		expect(transcriptionRequests).toBe(1);
@@ -112,7 +112,7 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 			"aria-valuenow",
 			"0",
 		);
-		const recordButton = page.getByRole("button", { name: "Start dictation" });
+		const recordButton = page.getByRole("button", { name: "Hold to record" });
 		await recordButton.hover();
 		await page.mouse.down();
 		await expect(page.getByText("Listening…")).toBeVisible();
@@ -120,7 +120,7 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 			"aria-valuenow",
 			/[1-9]/,
 		);
-		await expect(page.locator("output")).toHaveText("1s");
+		await expect(page.locator(".meter-row output")).toHaveText("1s");
 		await page.mouse.up();
 		await expect(document).toHaveValue(
 			"Hello from web dictation Hello from web dictation",

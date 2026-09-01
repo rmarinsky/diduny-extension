@@ -12,7 +12,9 @@ import type {
 
 export type { LibraryRequest } from "../../lib/bff/library";
 
-export type WebLibrarySaveInput = Omit<LibrarySaveInput, "type">;
+export type WebLibrarySaveInput = Omit<LibrarySaveInput, "type"> & {
+	type?: LibrarySaveInput["type"];
+};
 
 export interface LibraryListInput {
 	limit?: number;
@@ -34,7 +36,7 @@ export async function saveToLibrary(
 	request: LibraryRequest = (path, init) => fetch(path, init),
 ) {
 	return saveLibraryRecording(
-		{ ...input, type: "voice" },
+		{ ...input, type: input.type ?? "voice" },
 		"/bff/library",
 		request,
 	);

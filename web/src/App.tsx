@@ -27,6 +27,11 @@ import { createWorkspaceInvalidationBus } from "./invalidation";
 import { saveToLibrary } from "./library";
 import { acquireRecordingLock } from "./recording-lock";
 import { getWorkspaceSettings } from "./settings";
+import {
+	buildTranscriptionConfig,
+	translationResultText,
+	translationUrl,
+} from "./translation";
 import "./style.css";
 
 type AuthState = "checking" | "otp-sent" | "signed-in" | "signed-out";
@@ -139,12 +144,18 @@ export function App() {
 	const [otp, setOtp] = useState("");
 	const [signedInEmail, setSignedInEmail] = useState("");
 	const [status, setStatus] = useState("Checking your session…");
+	const [translationMode, setTranslationMode] = useState(false);
+	const [translationResult, setTranslationResult] = useState("");
+	const [translationSourceLanguage, setTranslationSourceLanguage] =
+		useState("uk");
+	const [translationTargetLanguage, setTranslationTargetLanguage] =
+		useState("en");
+	const [translationText, setTranslationText] = useState("");
 	const [view, setView] = useState<WorkspaceView>("dictation");
 	const [workspaceRevision, setWorkspaceRevision] = useState(0);
 	const captureRef = useRef<ActiveCapture | null>(null);
 	const holdCaptureRef = useRef(false);
 	const recordingLockReleaseRef = useRef<(() => void) | null>(null);
-	const suppressHoldClickRef = useRef(false);
 	const stopHoldWhenReadyRef = useRef(false);
 	const workspaceBusRef = useRef<ReturnType<
 		typeof createWorkspaceInvalidationBus
@@ -201,16 +212,22 @@ export function App() {
 		if (authState !== "signed-in") {
 			setDictationShortcut(DEFAULT_SHORTCUT);
 			setMicrophoneDeviceId(null);
+			setTranslationSourceLanguage("uk");
+			setTranslationTargetLanguage("en");
 			return;
 		}
 		void getWorkspaceSettings()
 			.then(({ settings }) => {
 				setDictationShortcut(settings.dictationShortcut);
 				setMicrophoneDeviceId(settings.microphoneDeviceId);
+				setTranslationSourceLanguage(settings.translationSourceLanguage);
+				setTranslationTargetLanguage(settings.translationTargetLanguage);
 			})
 			.catch(() => {
 				setDictationShortcut(DEFAULT_SHORTCUT);
 				setMicrophoneDeviceId(null);
+				setTranslationSourceLanguage("uk");
+				setTranslationTargetLanguage("en");
 			});
 	}, [authState, workspaceRevision]);
 
@@ -255,16 +272,27 @@ export function App() {
 			});
 			const form = new FormData();
 			form.append("audio", audio, "dictation.webm");
-			form.append(
-				"config",
-				JSON.stringify({
-					enable_speaker_diarization: false,
-					language_hints: language
+			const languageHints = translationMode
+				? [translationSourceLanguage]
+				: language
 						.split(",")
 						.map((value) => value.trim())
-						.filter(Boolean),
-					mode: "transcribe",
-				}),
+						.filter(Boolean);
+			form.append(
+				"config",
+				JSON.stringify(
+					buildTranscriptionConfig({
+						languageHints,
+						...(translationMode
+							? {
+									translation: {
+										sourceLanguage: translationSourceLanguage,
+										targetLanguage: translationTargetLanguage,
+									},
+								}
+							: {}),
+					}),
+				),
 			);
 			const result = await bffJson<TranscriptionResponse>(
 				"/bff/api/transcriptions",
@@ -277,10 +305,17 @@ export function App() {
 			setDocumentText((current) =>
 				appendTranscript(current, result.text ?? ""),
 			);
-			setStatus("Dictation added to this document.");
+			setStatus(
+				translationMode
+					? "Translation added to this document."
+					: "Dictation added to this document.",
+			);
 			void saveToLibrary({
 				audio,
 				durationSeconds: elapsedSeconds(capture.startedAt),
+				...(translationMode
+					? { status: "translated" as const, type: "translation" as const }
+					: {}),
 				text: result.text,
 			})
 				.then(invalidateWorkspace)
@@ -300,7 +335,14 @@ export function App() {
 			setElapsed(0);
 			setLevel(0);
 		}
-	}, [invalidateWorkspace, language, releaseRecordingLock]);
+	}, [
+		invalidateWorkspace,
+		language,
+		releaseRecordingLock,
+		translationMode,
+		translationSourceLanguage,
+		translationTargetLanguage,
+	]);
 
 	const startCapture = useCallback(async () => {
 		if (captureRef.current || captureState === "sending") return;
@@ -425,10 +467,6 @@ export function App() {
 	}, [cancelCapture, dictationShortcut, finishCapture, startCapture]);
 
 	function toggleCapture() {
-		if (suppressHoldClickRef.current) {
-			suppressHoldClickRef.current = false;
-			return;
-		}
 		void (isRecording ? finishCapture() : startCapture());
 	}
 
@@ -436,7 +474,6 @@ export function App() {
 		if (event.button !== 0 || captureRef.current || captureState !== "idle")
 			return;
 		holdCaptureRef.current = true;
-		suppressHoldClickRef.current = true;
 		void startCapture();
 	}
 
@@ -517,6 +554,37 @@ export function App() {
 			setStatus("Copied to clipboard.");
 		} catch {
 			setStatus("The browser did not allow clipboard access.");
+		}
+	}
+
+	async function translatePastedText() {
+		if (!translationText.trim()) {
+			setStatus("Paste text before translating it.");
+			return;
+		}
+		setStatus("Translating pasted text…");
+		try {
+			const result = await bffJson<unknown>(
+				translationUrl(translationText, {
+					sourceLanguage: translationSourceLanguage,
+					targetLanguage: translationTargetLanguage,
+				}),
+			);
+			const text = translationResultText(result);
+			if (!text) {
+				setStatus(
+					"The translation returned no text. Check the language pair and try again.",
+				);
+				return;
+			}
+			setTranslationResult(text);
+			setStatus("Pasted text translated.");
+		} catch (error) {
+			setStatus(
+				error instanceof Error
+					? error.message
+					: "Could not translate the pasted text. Check the Diduny service and try again.",
+			);
 		}
 	}
 
@@ -628,6 +696,22 @@ export function App() {
 							value={language}
 						/>
 					</label>
+					<label className="checkbox" htmlFor="translation-mode">
+						<input
+							checked={translationMode}
+							disabled={captureState !== "idle"}
+							id="translation-mode"
+							onChange={(event) => setTranslationMode(event.target.checked)}
+							type="checkbox"
+						/>
+						Translation dictation
+					</label>
+					{translationMode ? (
+						<p>
+							Translates {translationSourceLanguage} to{" "}
+							{translationTargetLanguage}.
+						</p>
+					) : null}
 					<textarea
 						aria-label="Dictation document"
 						onChange={(event) => setDocumentText(event.target.value)}
@@ -638,13 +722,18 @@ export function App() {
 						<button
 							disabled={captureState === "sending"}
 							onClick={toggleCapture}
-							onPointerCancel={stopHoldCapture}
-							onPointerDown={startHoldCapture}
-							onPointerUp={stopHoldCapture}
-							onMouseUp={stopHoldCapture}
 							type="button"
 						>
 							{isRecording ? "Stop dictation" : "Start dictation"}
+						</button>
+						<button
+							disabled={captureState !== "idle"}
+							onPointerCancel={stopHoldCapture}
+							onPointerDown={startHoldCapture}
+							onPointerUp={stopHoldCapture}
+							type="button"
+						>
+							Hold to record
 						</button>
 						<button
 							disabled={!isRecording}
@@ -684,6 +773,32 @@ export function App() {
 					<p className="shortcut">
 						Shortcut: {dictationShortcut} outside text fields.
 					</p>
+					<section
+						aria-labelledby="paste-translation-title"
+						className="settings-section"
+					>
+						<h2 id="paste-translation-title">Paste-in translation</h2>
+						<p>
+							Paste text into Diduny to translate it. Other applications are not
+							read.
+						</p>
+						<label htmlFor="translation-text">
+							Text to translate
+							<textarea
+								id="translation-text"
+								onChange={(event) => setTranslationText(event.target.value)}
+								value={translationText}
+							/>
+						</label>
+						<button
+							disabled={!translationText.trim()}
+							onClick={() => void translatePastedText()}
+							type="button"
+						>
+							Translate pasted text
+						</button>
+						<output aria-label="Translation result">{translationResult}</output>
+					</section>
 					<p aria-live="polite" className="status">
 						{status}
 					</p>

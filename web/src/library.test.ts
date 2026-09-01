@@ -40,6 +40,34 @@ test("saves dictation metadata first and streams the Blob through the BFF upload
 	});
 });
 
+test("saves translated dictation with its translation type and completed status", async () => {
+	const calls: Array<{ init?: RequestInit; path: string }> = [];
+	const request: LibraryRequest = async (path, init) => {
+		calls.push({ init, path: String(path) });
+		return calls.length === 1
+			? Response.json({ id: "translation-id" }, { status: 201 })
+			: Response.json({ id: "translation-id" }, { status: 201 });
+	};
+
+	await saveToLibrary(
+		{
+			audio: new Blob(["audio"], { type: "audio/webm" }),
+			durationSeconds: 2,
+			status: "translated",
+			text: "Translated text",
+			type: "translation",
+		},
+		request,
+	);
+
+	expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+		durationSeconds: 2,
+		status: "translated",
+		text: "Translated text",
+		type: "translation",
+	});
+});
+
 test("uses one BFF list path for search, filters, detail, update, and deletion", async () => {
 	const calls: Array<{ init?: RequestInit; path: string }> = [];
 	const summary = {

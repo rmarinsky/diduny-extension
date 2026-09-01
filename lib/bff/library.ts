@@ -1,10 +1,12 @@
+import type { ProcessingStatus, RecordingType } from "../../src/core/models";
 import { bffFetch } from "./client";
 
-export type LibraryRecordingType = "meeting" | "voice";
+export type LibraryRecordingType = RecordingType;
 
 export interface LibrarySaveInput {
 	audio: Blob;
 	durationSeconds: number;
+	status?: ProcessingStatus;
 	text: string;
 	type: LibraryRecordingType;
 }
@@ -19,14 +21,20 @@ function errorFor(response: Response, action: string) {
 }
 
 export async function saveLibraryRecording(
-	{ audio, durationSeconds, text, type }: LibrarySaveInput,
+	{
+		audio,
+		durationSeconds,
+		status = "transcribed",
+		text,
+		type,
+	}: LibrarySaveInput,
 	path: string,
 	request: LibraryRequest,
 ) {
 	const created = await request(path, {
 		body: JSON.stringify({
 			durationSeconds,
-			status: "transcribed",
+			status,
 			text,
 			type,
 		}),
