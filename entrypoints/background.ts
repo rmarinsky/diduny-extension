@@ -15,9 +15,11 @@ import { supabase } from "../lib/auth/supabaseClient";
 import type { TokenResult } from "../lib/auth/tokenBridge";
 import { crashLog, getCrashLogs, logError } from "../lib/crash-log";
 import {
-	type DeliveryPreparation,
-	installDeliveryBridge,
-} from "../lib/delivery/page-bridge";
+	type DeliverySession,
+	isDeliverySession,
+	selectDeliverySession,
+} from "../lib/delivery/delivery-session";
+import { installDeliveryBridge } from "../lib/delivery/page-bridge";
 import { onMessage, sendMessage } from "../lib/messaging/bridge";
 import type { Message } from "../lib/messaging/types";
 import type { RecordingMode, RecordingState } from "../lib/types";
@@ -27,15 +29,11 @@ interface DesktopCaptureSelection {
 	canRequestAudioTrack: boolean;
 }
 
-interface DeliverySession {
-	tabId: number;
-	ready: boolean;
-}
-
 export default defineBackground(() => {
 	let currentState: RecordingState = "idle";
 	const completedSources = new Set<string>();
 	const KEEPALIVE_ALARM = "recording-keepalive";
+	const DELIVERY_SESSION_STORAGE_KEY = "didunyDeliverySession";
 	let deliverySession: DeliverySession | undefined;
 
 	// Keepalive: prevent SW from sleeping during recording
@@ -329,8 +327,10 @@ export default defineBackground(() => {
 		const accessToken = sessionData.session.access_token;
 
 		try {
-			deliverySession =
-				mode === "voice" ? await prepareDeliveryTarget() : undefined;
+			await clearDeliveryStatus();
+			await saveDeliverySession(
+				mode === "voice" ? await prepareDeliveryTarget() : undefined,
+			);
 			await ensureMicPermission();
 			crashLog("bg:startRecording", "info", "mic permission OK");
 
@@ -381,13 +381,13 @@ export default defineBackground(() => {
 
 		try {
 			const results = await chrome.scripting.executeScript({
-				target: { tabId: tab.id },
+				// ponytail: activeTab reaches permitted frames; add optional host access for third-party iframe inputs.
+				target: { tabId: tab.id, allFrames: true },
 				func: installDeliveryBridge,
 			});
-			const preparation = results[0]?.result as DeliveryPreparation | undefined;
-			const ready = preparation?.ready === true;
-			crashLog("bg:delivery", "info", `targetReady=${ready}`);
-			return { tabId: tab.id, ready };
+			const session = selectDeliverySession(tab.id, results);
+			crashLog("bg:delivery", "info", `targetReady=${!!session}`);
+			return session;
 		} catch (err) {
 			crashLog(
 				"bg:delivery",
@@ -401,16 +401,19 @@ export default defineBackground(() => {
 	}
 
 	async function deliverTranscript(text: string) {
-		const session = deliverySession;
-		deliverySession = undefined;
+		const session = await getDeliverySession();
 		if (!session) return;
 
 		try {
-			if (session.ready && text) {
-				const result = (await chrome.tabs.sendMessage(session.tabId, {
-					type: "diduny:deliver-transcript",
-					text,
-				})) as { inserted?: boolean } | undefined;
+			if (text) {
+				const result = await chrome.tabs.sendMessage(
+					session.tabId,
+					{
+						type: "diduny:deliver-transcript",
+						text,
+					},
+					{ frameId: session.frameId },
+				);
 				crashLog(
 					"bg:delivery",
 					"info",
@@ -425,25 +428,69 @@ export default defineBackground(() => {
 			);
 		} finally {
 			await sendDeliveryStatus("clear", session);
+			await clearDeliverySession();
 		}
 	}
 
 	async function clearDeliveryStatus() {
-		const session = deliverySession;
-		deliverySession = undefined;
+		const session = await getDeliverySession();
 		if (session) {
 			await sendDeliveryStatus("clear", session);
 		}
+		await clearDeliverySession();
 	}
 
 	async function sendDeliveryStatus(
 		status: "processing" | "clear",
-		session = deliverySession,
+		session?: DeliverySession,
 	) {
-		if (!session) return;
+		const target = session ?? (await getDeliverySession());
+		if (!target) return;
 		await chrome.tabs
-			.sendMessage(session.tabId, { type: "diduny:delivery-status", status })
+			.sendMessage(
+				target.tabId,
+				{ type: "diduny:delivery-status", status },
+				{ frameId: target.frameId },
+			)
 			.catch(() => {});
+	}
+
+	async function saveDeliverySession(session: DeliverySession | undefined) {
+		deliverySession = session;
+		try {
+			if (session) {
+				await chrome.storage.session.set({
+					[DELIVERY_SESSION_STORAGE_KEY]: session,
+				});
+			} else {
+				await chrome.storage.session.remove(DELIVERY_SESSION_STORAGE_KEY);
+			}
+		} catch (err) {
+			logError("bg:delivery-session", err);
+		}
+	}
+
+	async function getDeliverySession(): Promise<DeliverySession | undefined> {
+		if (deliverySession) return deliverySession;
+
+		try {
+			const stored = await chrome.storage.session.get(
+				DELIVERY_SESSION_STORAGE_KEY,
+			);
+			const session = stored[DELIVERY_SESSION_STORAGE_KEY];
+			if (isDeliverySession(session)) {
+				deliverySession = session;
+				return session;
+			}
+		} catch (err) {
+			logError("bg:delivery-session", err);
+		}
+
+		return undefined;
+	}
+
+	async function clearDeliverySession() {
+		await saveDeliverySession(undefined);
 	}
 
 	async function setState(state: RecordingState, error?: string) {

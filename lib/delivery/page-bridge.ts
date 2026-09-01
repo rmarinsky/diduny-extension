@@ -36,7 +36,7 @@ export function installDeliveryBridge(): DeliveryPreparation {
 
 		if (control.tagName === "INPUT") {
 			const inputType = (control as HTMLInputElement).type.toLowerCase();
-			if (!["text", "search", "url", "tel"].includes(inputType)) {
+			if (!["text", "search", "url", "tel", "email"].includes(inputType)) {
 				return false;
 			}
 		}
@@ -77,8 +77,14 @@ export function installDeliveryBridge(): DeliveryPreparation {
 	}
 
 	function updateTarget(target: TextControl) {
-		const start = target.selectionStart ?? target.value.length;
-		const end = target.selectionEnd ?? start;
+		let start = target.value.length;
+		let end = start;
+		try {
+			start = target.selectionStart ?? start;
+			end = target.selectionEnd ?? start;
+		} catch {
+			// Some text-like controls, such as email inputs, have no selection API.
+		}
 		state = { target, selectionStart: start, selectionEnd: end };
 		stateHost.__didunyDeliveryBridge = state;
 	}
@@ -118,7 +124,11 @@ export function installDeliveryBridge(): DeliveryPreparation {
 		}
 
 		const cursor = selectionStart + text.length;
-		target.setSelectionRange(cursor, cursor);
+		try {
+			target.setSelectionRange(cursor, cursor);
+		} catch {
+			// The value was inserted; no cursor update is available for this control.
+		}
 		try {
 			target.dispatchEvent(
 				new InputEvent("input", {
@@ -181,7 +191,6 @@ export function installDeliveryBridge(): DeliveryPreparation {
 
 	const target = document.activeElement;
 	if (!isTextControl(target)) {
-		setStatus("Diduny: focus a text field before dictating");
 		return { ready: false, reason: "no-text-field" };
 	}
 
