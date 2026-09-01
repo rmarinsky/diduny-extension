@@ -64,6 +64,21 @@ a:focus-visible {
 	width: min(100% - 2rem, 27rem);
 }
 
+.onboarding-dialog {
+	position: fixed;
+	inset: 1rem;
+	z-index: 10;
+	width: min(100% - 2rem, 38rem);
+	height: fit-content;
+	max-height: calc(100vh - 2rem);
+	margin: auto;
+	overflow: auto;
+	border: 1px solid #222;
+	border-radius: 0.5rem;
+	background: #f6f3ee;
+	padding: 1.5rem;
+}
+
 .auth form,
 .workspace {
 	display: grid;

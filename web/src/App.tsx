@@ -9,10 +9,16 @@ import {
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { AUDIO_FORMAT, WEB_LATENCY_TARGET_MS } from "../../src/core/constants";
+import type { RetentionPolicy } from "../../src/core/ports";
 import type { RealtimeToken } from "../../src/core/realtime-session";
 import { createSpeechPreCheckAccumulator } from "../../src/core/speech-precheck";
 import { CommandPalette } from "./CommandPalette";
 import { LibraryPane } from "./LibraryPane";
+import {
+	Onboarding,
+	onboardingCompletedStorageKey,
+	pendingRetentionStorageKey,
+} from "./Onboarding";
 import { SettingsPane } from "./SettingsPane";
 import {
 	audioCaptureConstraints,
@@ -50,7 +56,7 @@ import {
 	type ScratchStorage,
 	createScratchStorage,
 } from "./scratch-storage";
-import { getWorkspaceSettings } from "./settings";
+import { getWorkspaceSettings, updateRetentionPolicy } from "./settings";
 import {
 	buildTranscriptionConfig,
 	translationResultText,
@@ -204,6 +210,9 @@ export function App() {
 	const [microphoneDeviceId, setMicrophoneDeviceId] = useState<string | null>(
 		null,
 	);
+	const [onboardingOpen, setOnboardingOpen] = useState(
+		() => localStorage.getItem(onboardingCompletedStorageKey) !== "1",
+	);
 	const [otp, setOtp] = useState("");
 	const [signedInEmail, setSignedInEmail] = useState("");
 	const [status, setStatus] = useState(() => t("app.checkingSession"));
@@ -219,6 +228,7 @@ export function App() {
 	const captureRef = useRef<ActiveCapture | null>(null);
 	const documentInput = useRef<HTMLTextAreaElement>(null);
 	const holdCaptureRef = useRef(false);
+	const onboardingReturnFocus = useRef<HTMLButtonElement>(null);
 	const paletteReturnFocus = useRef<HTMLElement | null>(null);
 	const pictureInPictureWindow = useRef<Window | null>(null);
 	const recordingLockReleaseRef = useRef<(() => void) | null>(null);
@@ -367,6 +377,20 @@ export function App() {
 		}
 		if (didRecover) invalidateWorkspace();
 	}, [invalidateWorkspace, scratchStorage, t]);
+
+	useEffect(() => {
+		if (authState !== "signed-in") return;
+		const policy = localStorage.getItem(pendingRetentionStorageKey);
+		if (policy !== "never") return;
+		void updateRetentionPolicy("dictation", "never")
+			.then(() => {
+				localStorage.removeItem(pendingRetentionStorageKey);
+				invalidateWorkspace();
+			})
+			.catch(() => {
+				// Keep the preference for the next authenticated session.
+			});
+	}, [authState, invalidateWorkspace]);
 
 	useEffect(() => {
 		if (authState !== "signed-in") {
@@ -875,8 +899,22 @@ export function App() {
 		}
 	}
 
+	function completeOnboarding(retention: RetentionPolicy) {
+		localStorage.setItem(onboardingCompletedStorageKey, "1");
+		if (retention === "never")
+			localStorage.setItem(pendingRetentionStorageKey, retention);
+		else localStorage.removeItem(pendingRetentionStorageKey);
+		setOnboardingOpen(false);
+	}
+
 	if (authState === "checking") {
 		return <main className="shell">{t("app.checkingSession")}</main>;
+	}
+
+	if (onboardingOpen && authState !== "signed-in") {
+		return (
+			<Onboarding initialStep="microphone" onComplete={completeOnboarding} />
+		);
 	}
 
 	if (authState !== "signed-in") {
@@ -956,11 +994,30 @@ export function App() {
 							{t("app.nav.settings")}
 						</button>
 					</nav>
+					<button
+						disabled={captureState !== "idle"}
+						onClick={() => setOnboardingOpen(true)}
+						ref={onboardingReturnFocus}
+						type="button"
+					>
+						{t("app.nav.aboutDelivery")}
+					</button>
 					<button onClick={() => void signOut()} type="button">
 						{t("app.nav.signOut")}
 					</button>
 				</div>
 			</header>
+			{onboardingOpen ? (
+				<Onboarding
+					asDialog
+					initialStep="delivery"
+					onClose={() => {
+						setOnboardingOpen(false);
+						queueMicrotask(() => onboardingReturnFocus.current?.focus());
+					}}
+					onComplete={completeOnboarding}
+				/>
+			) : null}
 			{isCommandPaletteOpen ? (
 				<CommandPalette onClose={closeCommandPalette} onCopied={setStatus} />
 			) : null}

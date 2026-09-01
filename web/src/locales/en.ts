@@ -7,6 +7,7 @@ export const en = {
 		checkingSession: "Checking your session…",
 		workspace: "Workspace",
 		nav: {
+			aboutDelivery: "About delivery",
 			dictation: "Dictation",
 			library: "Library",
 			settings: "Settings",
@@ -46,6 +47,40 @@ export const en = {
 		couldNotSendCode: "Could not send the code.",
 		couldNotVerifyCode: "Could not verify the code.",
 		signedOut: "Signed out.",
+	},
+	onboarding: {
+		close: "Close onboarding",
+		continue: "Continue",
+		continueToSignIn: "Continue to sign in",
+		microphone: {
+			title: "Use your microphone",
+			body: "Diduny needs microphone access before it can transcribe your words.",
+			allow: "Allow microphone",
+			granted: "Microphone access is ready.",
+			denied:
+				"Microphone access is blocked. Allow it in your browser settings, then try again.",
+			unsupported: "This browser cannot request microphone access.",
+		},
+		delivery: {
+			title: "Where your words end up",
+			body: "Diduny listens while you speak and writes what it hears into a text box on this page. When you stop, the text is there, ready to edit. Press Copy, then paste it wherever you were going - your email, your editor, a chat window. A web page can't type into other applications, so Diduny won't put text into the window you had open before. That's a limit of the browser, not a feature we skipped. What you get instead is a page you can dictate into all day: keep talking, keep appending, edit as you go, and copy when you're ready.",
+			extension:
+				"A browser extension is coming in the next release. It will let Diduny put your words straight into whatever page you're typing in - no copying, no switching tabs.",
+			clipboardNote:
+				"Diduny never writes to your clipboard on its own. Nothing is copied unless you press Copy, so whatever you copied five minutes ago is still there.",
+		},
+		provider: {
+			title: "Which engine transcribes your voice",
+			cloud:
+				"Cloud transcription is more accurate and handles accents and background noise better. Your audio is sent to a transcription service to be processed. You'll need an account with it; signing in takes a minute and uses an emailed code, no password.",
+			noSubstitution:
+				"Diduny won't quietly swap engines. If cloud transcription is unavailable, it says so instead of using another engine - you always know what produced your text.",
+		},
+		retention: {
+			neverChoice: "Never save recordings",
+			neverNote:
+				"With retention set to never, Diduny saves no recording and no transcript - nothing is written to your library at all. While you're actually speaking, audio is buffered in a temporary file so a crashed tab doesn't lose what you said. That file is deleted as soon as the recording finishes.",
+		},
 	},
 	status: {
 		ready: "Ready to dictate.",
@@ -179,7 +214,7 @@ export const en = {
 		translationSaved: "Translation languages saved.",
 		retentionTitle: "Retention",
 		neverSaveDescription:
-			"Never save writes neither a library row nor an audio file after capture.",
+			"With retention set to never, Diduny saves no recording and no transcript - nothing is written to your library at all. While you're actually speaking, audio is buffered in a temporary file so a crashed tab doesn't lose what you said. That file is deleted as soon as the recording finishes.",
 		dictationAndTranslation: "Dictation and translation",
 		meetings: "Meetings",
 		retentionSaved: "Retention policy saved.",

@@ -2,8 +2,9 @@ import type { BrowserContext } from "@playwright/test";
 
 export async function installSupportedBrowserCapabilities(
 	context: BrowserContext,
+	{ onboardingCompleted = true }: { onboardingCompleted?: boolean } = {},
 ) {
-	await context.addInitScript(() => {
+	await context.addInitScript((completeOnboarding) => {
 		const browser = globalThis as typeof globalThis & {
 			FileSystemFileHandle?: { prototype: Record<string, unknown> };
 			SpeechRecognition?: unknown;
@@ -57,7 +58,9 @@ export async function installSupportedBrowserCapabilities(
 				value: function SpeechRecognition() {},
 			});
 		}
-	});
+		if (completeOnboarding)
+			localStorage.setItem("diduny.onboarding.completed", "1");
+	}, onboardingCompleted);
 }
 
 export async function installFakeMicrophones(context: BrowserContext) {

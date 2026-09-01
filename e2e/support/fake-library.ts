@@ -172,6 +172,7 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 		library,
 		mediaHeader: (id: string) => mediaHeaders.get(id),
 		recordings: () => [...recordings.values()],
+		retention: () => ({ ...retention }),
 		savedTexts: () =>
 			[...recordings.values()].map((recording) => recording.text),
 		settings: () => settings,
