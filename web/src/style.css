@@ -20,6 +20,7 @@ textarea {
 }
 
 button {
+	min-height: 44px;
 	border: 1px solid #222;
 	border-radius: 0.4rem;
 	background: #222;
@@ -33,13 +34,24 @@ button:disabled {
 	cursor: not-allowed;
 }
 
-input,
+input:not([type="checkbox"]),
+select,
 textarea {
+	min-height: 44px;
 	width: 100%;
 	border: 1px solid #aaa;
 	border-radius: 0.4rem;
 	background: #fff;
 	padding: 0.6rem;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+	outline: 3px solid #005fcc;
+	outline-offset: 3px;
 }
 
 .shell {
@@ -156,6 +168,7 @@ textarea {
 }
 
 .settings-section label.checkbox {
+	min-height: 44px;
 	display: flex;
 	align-items: center;
 }
@@ -272,6 +285,65 @@ textarea {
 .shortcut {
 	margin: 0;
 	color: #555;
+}
+
+.command-palette-backdrop {
+	position: fixed;
+	z-index: 10;
+	inset: 0;
+	display: grid;
+	place-items: start center;
+	padding: 4rem 1rem 1rem;
+	background: rgb(0 0 0 / 45%);
+}
+
+.command-palette {
+	display: grid;
+	margin: 0;
+	width: min(100%, 36rem);
+	max-height: calc(100vh - 5rem);
+	overflow: auto;
+	gap: 0.8rem;
+	padding: 1rem;
+	border: 1px solid #222;
+	border-radius: 0.5rem;
+	background: #f6f3ee;
+}
+
+.command-palette header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+}
+
+.command-palette h2,
+.command-palette p {
+	margin: 0;
+}
+
+.command-palette label {
+	display: grid;
+	gap: 0.35rem;
+	font-weight: 600;
+}
+
+.command-palette ul {
+	display: grid;
+	gap: 0.5rem;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.command-palette li button {
+	width: 100%;
+	text-align: left;
+}
+
+.command-palette li button[aria-current="true"] {
+	outline: 3px solid #005fcc;
+	outline-offset: 1px;
 }
 
 @media (prefers-reduced-motion: reduce) {

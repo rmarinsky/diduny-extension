@@ -5,6 +5,7 @@ import {
 } from "../../src/core/shortcuts";
 
 export const DEFAULT_SHORTCUT = DEFAULT_DICTATION_SHORTCUT;
+export const COMMAND_PALETTE_SHORTCUT = "Alt+Shift+P";
 export { isReservedShortcut };
 
 export function appendTranscript(existing: string, incoming: string) {
@@ -23,4 +24,8 @@ export function matchesDictationShortcut(
 	shortcut = DEFAULT_SHORTCUT,
 ) {
 	return matchesShortcut(event, shortcut);
+}
+
+export function matchesCommandPaletteShortcut(event: KeyboardEvent) {
+	return matchesShortcut(event, COMMAND_PALETTE_SHORTCUT);
 }

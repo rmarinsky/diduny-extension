@@ -107,6 +107,14 @@ export const en = {
 		final: "Final",
 		provisional: "Provisional",
 	},
+	commandPalette: {
+		title: "Command palette",
+		close: "Close command palette",
+		search: "Search recent transcripts",
+		loading: "Loading recent transcripts…",
+		empty: "No recent transcripts match your search.",
+		results: "Recent transcripts",
+	},
 	microphone: {
 		title: "Microphone",
 		checking: "Checking microphone permission…",

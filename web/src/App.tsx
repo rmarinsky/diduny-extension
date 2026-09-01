@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import { AUDIO_FORMAT } from "../../src/core/constants";
 import type { RealtimeToken } from "../../src/core/realtime-session";
 import { speechPreCheck } from "../../src/core/speech-precheck";
+import { CommandPalette } from "./CommandPalette";
 import { LibraryPane } from "./LibraryPane";
 import { SettingsPane } from "./SettingsPane";
 import {
@@ -25,6 +26,7 @@ import {
 	DEFAULT_SHORTCUT,
 	appendTranscript,
 	isEditableTarget,
+	matchesCommandPaletteShortcut,
 	matchesDictationShortcut,
 } from "./dictation";
 import {
@@ -139,6 +141,7 @@ export function App() {
 	const [level, setLevel] = useState(0);
 	const [liveFinalText, setLiveFinalText] = useState("");
 	const [liveProvisionalText, setLiveProvisionalText] = useState("");
+	const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 	const [microphoneDeviceId, setMicrophoneDeviceId] = useState<string | null>(
 		null,
 	);
@@ -157,6 +160,7 @@ export function App() {
 	const captureRef = useRef<ActiveCapture | null>(null);
 	const documentInput = useRef<HTMLTextAreaElement>(null);
 	const holdCaptureRef = useRef(false);
+	const paletteReturnFocus = useRef<HTMLElement | null>(null);
 	const recordingLockReleaseRef = useRef<(() => void) | null>(null);
 	const stopHoldWhenReadyRef = useRef(false);
 	const statusElement = useRef<HTMLParagraphElement>(null);
@@ -178,6 +182,19 @@ export function App() {
 		broadcastWorkspaceChange();
 		setWorkspaceRevision((revision) => revision + 1);
 	}, [broadcastWorkspaceChange]);
+
+	const closeCommandPalette = useCallback(() => {
+		setIsCommandPaletteOpen(false);
+		queueMicrotask(() => paletteReturnFocus.current?.focus());
+	}, []);
+
+	const openCommandPalette = useCallback(() => {
+		paletteReturnFocus.current =
+			document.activeElement instanceof HTMLElement
+				? document.activeElement
+				: null;
+		setIsCommandPaletteOpen(true);
+	}, []);
 
 	useEffect(() => {
 		const bus = createWorkspaceInvalidationBus();
@@ -518,6 +535,17 @@ export function App() {
 
 	useEffect(() => {
 		const onShortcut = (event: KeyboardEvent) => {
+			if (event.key === "Escape" && isCommandPaletteOpen) {
+				event.preventDefault();
+				closeCommandPalette();
+				return;
+			}
+			if (matchesCommandPaletteShortcut(event)) {
+				event.preventDefault();
+				if (!isCommandPaletteOpen) openCommandPalette();
+				return;
+			}
+			if (isCommandPaletteOpen) return;
 			if (event.key === "Escape" && captureRef.current) {
 				event.preventDefault();
 				void cancelCapture();
@@ -535,7 +563,15 @@ export function App() {
 		};
 		window.addEventListener("keydown", onShortcut);
 		return () => window.removeEventListener("keydown", onShortcut);
-	}, [cancelCapture, dictationShortcut, finishCapture, startCapture]);
+	}, [
+		cancelCapture,
+		closeCommandPalette,
+		dictationShortcut,
+		finishCapture,
+		isCommandPaletteOpen,
+		openCommandPalette,
+		startCapture,
+	]);
 
 	function toggleCapture() {
 		void (isRecording ? finishCapture() : startCapture());
@@ -735,6 +771,9 @@ export function App() {
 					</button>
 				</div>
 			</header>
+			{isCommandPaletteOpen ? (
+				<CommandPalette onClose={closeCommandPalette} onCopied={setStatus} />
+			) : null}
 			{view === "library" ? (
 				<LibraryPane
 					onLibraryChanged={broadcastWorkspaceChange}
