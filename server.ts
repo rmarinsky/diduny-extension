@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { PassThrough } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
@@ -134,6 +134,35 @@ type LogLevel = keyof typeof logLevelRank;
 
 function requestPath(request: FastifyRequest) {
 	return new URL(request.raw.url ?? "", "http://bff.local").pathname;
+}
+
+function retriesStreamUpload(request: FastifyRequest) {
+	return (
+		new URL(request.raw.url ?? "", "http://bff.local").searchParams.get(
+			"__diduny_retry",
+		) === "1"
+	);
+}
+
+function streamUploadRetryLocation(request: FastifyRequest) {
+	const url = new URL(request.raw.url ?? "", "http://bff.local");
+	url.searchParams.set("__diduny_retry", "1");
+	return `${url.pathname}${url.search}`;
+}
+
+function sseWithHeartbeat(source: Readable) {
+	const output = new PassThrough();
+	const heartbeat = setInterval(() => {
+		if (!output.destroyed) output.write(":\n\n");
+	}, 15_000);
+	const stop = () => clearInterval(heartbeat);
+	source.once("error", (error) => output.destroy(error));
+	source.once("close", stop);
+	output.once("close", () => {
+		stop();
+		source.destroy();
+	});
+	return source.pipe(output);
 }
 
 function upstreamPath(request: FastifyRequest) {
@@ -639,6 +668,7 @@ export async function buildServer({
 			fetch,
 			refreshSession,
 			request,
+			retryStreamOn401: !retriesStreamUpload(request),
 			sessions,
 			upstreamUrl,
 		});
@@ -647,6 +677,27 @@ export async function buildServer({
 		}
 		if (result.kind === "unauthenticated") {
 			return reply.code(401).send({ error: "unauthenticated" });
+		}
+		if (result.kind === "retry_stream") {
+			return reply
+				.header("cache-control", "no-store")
+				.redirect(streamUploadRetryLocation(request), 307);
+		}
+		if (result.kind === "stream") {
+			for (const [name, value] of Object.entries(result.headers))
+				reply.header(name, value);
+			const stream = sseWithHeartbeat(
+				Readable.fromWeb(
+					result.body as unknown as import("node:stream/web").ReadableStream,
+				),
+			);
+			const abort = () => {
+				result.abort();
+				stream.destroy();
+			};
+			request.raw.once("close", abort);
+			stream.once("close", () => request.raw.off("close", abort));
+			return reply.code(result.status).send(stream);
 		}
 		if (result.kind === "unreachable") {
 			return reply.code(502).send({ error: "upstream_unreachable" });

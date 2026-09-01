@@ -75,3 +75,77 @@ test("maps a failed server-side refresh to unauthenticated instead of an upstrea
 
 	await server.close();
 });
+
+test("refreshes once then redirects a streamed upload so the browser re-uploads its source", async () => {
+	const sessions = new InMemorySessionStore();
+	const sessionId = await sessions.create({
+		accessToken: "old-token",
+		expiresAt: Date.now() + 120_000,
+		refreshToken: "old-refresh-token",
+	});
+	let refreshCalls = 0;
+	const transcriptionTokens = [];
+	const server = await buildServer({
+		fetch: async (url, init) => {
+			if (String(url).endsWith("/auth/refresh")) {
+				refreshCalls += 1;
+				return Response.json({
+					accessToken: "new-token",
+					accessTokenExpiresAt: Date.now() + 120_000,
+					refreshToken: "new-refresh-token",
+				});
+			}
+			if (new URL(String(url)).pathname.endsWith("/transcriptions")) {
+				transcriptionTokens.push(init?.headers?.authorization);
+				return init?.headers?.authorization === "Bearer new-token"
+					? Response.json({ text: "retried upload", tokens: [] })
+					: Response.json({ error: "expired" }, { status: 401 });
+			}
+			throw new Error(`Unexpected upstream request: ${url}`);
+		},
+		sessions,
+		upstreamUrl: "http://upstream.test",
+	});
+	try {
+		const boundary = "diduny-retry-boundary";
+		const payload = [
+			`--${boundary}`,
+			'Content-Disposition: form-data; name="audio"; filename="source.webm"',
+			"Content-Type: audio/webm",
+			"",
+			"source-file-audio",
+			`--${boundary}--`,
+			"",
+		].join("\r\n");
+		const first = await server.inject({
+			headers: {
+				"content-type": `multipart/form-data; boundary=${boundary}`,
+				cookie: `diduny_session=${sessionId}`,
+			},
+			method: "POST",
+			payload,
+			url: "/bff/api/transcriptions?source=extension",
+		});
+
+		expect(first.statusCode).toBe(307);
+		expect(first.headers.location).toBe(
+			"/bff/api/transcriptions?source=extension&__diduny_retry=1",
+		);
+		const retry = await server.inject({
+			headers: {
+				"content-type": `multipart/form-data; boundary=${boundary}`,
+				cookie: `diduny_session=${sessionId}`,
+			},
+			method: "POST",
+			payload,
+			url: first.headers.location,
+		});
+
+		expect(retry.statusCode).toBe(200);
+		expect(retry.json()).toEqual({ text: "retried upload", tokens: [] });
+		expect(refreshCalls).toBe(1);
+		expect(transcriptionTokens).toEqual(["Bearer old-token", "Bearer new-token"]);
+	} finally {
+		await server.close();
+	}
+});

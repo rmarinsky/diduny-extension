@@ -29,6 +29,10 @@ function requiresSession(path: string) {
 	return path !== "config" && path !== "health";
 }
 
+function isSsePath(path: string) {
+	return /^jobs\/[^/]+\/events$/.test(path);
+}
+
 export function sessionIdFromCookie(
 	cookie: string | undefined,
 	cookieName = sessionCookieName,
@@ -91,19 +95,29 @@ export async function relayRequest({
 	fetch,
 	refreshSession,
 	request,
+	retryStreamOn401 = false,
 	sessions,
 	upstreamUrl,
 }: {
 	fetch: typeof globalThis.fetch;
 	refreshSession?: (id: string, session: BffSession) => Promise<BffSession>;
 	request: FastifyRequest;
+	retryStreamOn401?: boolean;
 	sessions: SessionStore;
 	upstreamUrl: string;
 	cookieName?: string;
 }): Promise<
 	| { kind: "not_found" }
+	| { kind: "retry_stream" }
 	| { kind: "unauthenticated" }
 	| { kind: "unreachable" }
+	| {
+			abort: () => void;
+			body: ReadableStream<Uint8Array>;
+			headers: Record<string, string>;
+			kind: "stream";
+			status: number;
+	  }
 	| {
 			body: Uint8Array;
 			headers: Record<string, string>;
@@ -123,6 +137,7 @@ export async function relayRequest({
 	}
 
 	const currentUrl = new URL(request.raw.url ?? "", "http://bff.local");
+	currentUrl.searchParams.delete("__diduny_retry");
 	const refresh = async () => {
 		if (!sessionId || !session || !refreshSession) return false;
 		try {
@@ -143,22 +158,46 @@ export async function relayRequest({
 	}
 	try {
 		const body = requestBody(request);
+		const upstreamAbort = isSsePath(path) ? new AbortController() : null;
 		const upstream = (activeSession: BffSession | null) =>
-			fetch(
-				`${upstreamUrl.replace(/\/$/, "")}/api/v1/${path}${currentUrl.search}`,
-				upstreamRequestInit(request, activeSession, body),
-			);
+			fetch(`${upstreamUrl.replace(/\/$/, "")}/api/v1/${path}${currentUrl.search}`, {
+				...upstreamRequestInit(request, activeSession, body),
+				...(upstreamAbort ? { signal: upstreamAbort.signal } : {}),
+			});
 		let response = await upstream(session);
-		if (
-			response.status === 401 &&
-			session &&
-			refreshSession &&
-			!isReadableStream(body)
-		) {
-			if (!(await refresh())) return { kind: "unauthenticated" };
-			response = await upstream(session);
+		if (response.status === 401 && session && refreshSession) {
+			if (isReadableStream(body)) {
+				if (!retryStreamOn401) {
+					// The retry request has already consumed its source once.
+				} else if (!(await refresh())) {
+					return { kind: "unauthenticated" };
+				} else {
+					return { kind: "retry_stream" };
+				}
+			} else {
+				if (!(await refresh())) return { kind: "unauthenticated" };
+				response = await upstream(session);
+			}
 		}
 		const contentType = response.headers.get("content-type");
+		if (
+			upstreamAbort &&
+			response.body &&
+			contentType?.startsWith("text/event-stream")
+		) {
+			return {
+				abort: () => upstreamAbort.abort(),
+				body: response.body,
+				headers: {
+					"cache-control": "no-cache, no-transform",
+					connection: "keep-alive",
+					"content-type": contentType,
+					"x-accel-buffering": "no",
+				},
+				kind: "stream",
+				status: response.status,
+			};
+		}
 		return {
 			body: new Uint8Array(await response.arrayBuffer()),
 			headers: contentType ? { "content-type": contentType } : {},
