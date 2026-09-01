@@ -13,9 +13,12 @@ export {
 } from "./constants";
 export { createFakePlatform } from "./fake-platform";
 export {
+	cleanDictationText,
 	copyRecordingText,
 	displayRecordingText,
 	resolveTranscriptHistory,
+	timeSavedSeconds,
+	wordCount,
 } from "./models";
 export type { Platform } from "./ports";
 export {

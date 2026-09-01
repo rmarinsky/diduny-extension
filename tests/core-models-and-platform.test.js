@@ -5,11 +5,13 @@ import {
 	FINALIZE_PROFILES,
 	REALTIME,
 	VAD,
+	cleanDictationText,
 	copyRecordingText,
 	createDiduny,
 	createFakePlatform,
 	displayRecordingText,
 	resolveTranscriptHistory,
+	timeSavedSeconds,
 	updateSettings,
 } from "../src/core";
 
@@ -73,6 +75,34 @@ test("resolves legacy history and keeps UI locale independent of speech settings
 	expect(ukrainianUi.speechLanguageHints).toEqual(
 		DEFAULT_SETTINGS.speechLanguageHints,
 	);
+});
+
+test("cleans dictation without changing protected terms and calculates measured time saved", () => {
+	const recording = {
+		id: "dictation-1",
+		createdAt: 0,
+		status: "transcribed",
+		text: "Um, Diduny, uh writes notes.",
+		type: "voice",
+	};
+	const cleanup = {
+		enabled: true,
+		fillerWords: ["um", "uh", "diduny"],
+		protectedLexicon: ["Diduny"],
+	};
+
+	expect(cleanDictationText(recording.text, cleanup)).toBe(
+		"Diduny, writes notes.",
+	);
+	expect(displayRecordingText(recording, cleanup)).toBe(
+		"Diduny, writes notes.",
+	);
+	expect(copyRecordingText(recording, cleanup)).toBe("Diduny, writes notes.");
+	expect(
+		cleanDictationText(recording.text, { ...cleanup, enabled: false }),
+	).toBe(recording.text);
+	expect(timeSavedSeconds("one two three four", 2, 60)).toBe(2);
+	expect(timeSavedSeconds("one two", 1, null)).toBeNull();
 });
 
 test("constructs the core from a complete platform fake without browser or network access", () => {
