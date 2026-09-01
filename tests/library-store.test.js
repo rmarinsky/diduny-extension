@@ -58,6 +58,35 @@ test("keeps browser Opus captures in their seekable WebM container", async () =>
 	});
 });
 
+test("keeps library recordings available after a local store restart", async () => {
+	const dataDir = await mkdtemp(join(tmpdir(), "diduny-library-restart-"));
+	let firstStore = await LibraryStore.open({ dataDir });
+	let reopenedStore;
+	try {
+		const saved = await firstStore.save(voice("Survives restart"), {
+			bytes: new Uint8Array([1, 2, 3]),
+			contentType: "audio/webm",
+		});
+		const id = saved?.id ?? "";
+		await firstStore.close();
+		firstStore = undefined;
+
+		reopenedStore = await LibraryStore.open({ dataDir });
+		expect(await reopenedStore.open(id)).toMatchObject({
+			displayText: "Survives restart",
+			id,
+			media: { contentType: "audio/webm", fileSizeBytes: 3 },
+		});
+		expect(await reopenedStore.media(id)).toEqual(
+			expect.objectContaining({ fileSizeBytes: 3 }),
+		);
+	} finally {
+		await reopenedStore?.close();
+		await firstStore?.close();
+		await rm(dataDir, { force: true, recursive: true });
+	}
+});
+
 test("retention never writes a row or a media file", async () => {
 	await withStore(async ({ dataDir, store }) => {
 		await store.setRetentionPolicy("dictation", "never");
