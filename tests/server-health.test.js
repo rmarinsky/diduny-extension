@@ -4,13 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildServer } from "../server";
 
-test("reports BFF process health without reaching the upstream backend", async () => {
-	const server = await buildServer();
+test("reports BFF process and proxy reachability separately", async () => {
+	const server = await buildServer({
+		fetch: async (url) => {
+			expect(String(url)).toBe("http://127.0.0.1:3910/api/v1/health");
+			return new Response(null, { status: 204 });
+		},
+	});
 	const response = await server.inject({ method: "GET", url: "/bff/health" });
 
 	expect(response.statusCode).toBe(200);
 	expect(response.json()).toEqual({
 		activeRealtimeSockets: 0,
+		proxy: { reachable: true, status: 204 },
 		status: "ok",
 	});
 

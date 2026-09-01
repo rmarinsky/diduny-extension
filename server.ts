@@ -39,6 +39,8 @@ export interface ServerOptions {
 	auth?: BffAuthGateway;
 	fetch?: typeof globalThis.fetch;
 	library?: BffLibrary;
+	log?: (line: string) => void;
+	logLevel?: "debug" | "error" | "info";
 	sessions?: SessionStore;
 	staticDir?: string;
 	upstreamUrl?: string;
@@ -114,6 +116,42 @@ const workspaceSettingKeys = [
 	"uiLocale",
 ] as const satisfies readonly (keyof Settings)[];
 const localeCookieName = "diduny_locale";
+const securityHeaders = {
+	"content-security-policy":
+		"default-src 'self'; base-uri 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'",
+	"permissions-policy": "camera=(), geolocation=(), payment=()",
+	"referrer-policy": "no-referrer",
+	"x-content-type-options": "nosniff",
+	"x-frame-options": "DENY",
+} as const;
+const logLevelRank = { debug: 0, error: 2, info: 1 } as const;
+
+type LogLevel = keyof typeof logLevelRank;
+
+function requestPath(request: FastifyRequest) {
+	return new URL(request.raw.url ?? "", "http://bff.local").pathname;
+}
+
+function upstreamPath(request: FastifyRequest) {
+	const path = requestPath(request);
+	return path.startsWith("/bff/api/")
+		? `/api/v1/${path.slice("/bff/api/".length)}`
+		: null;
+}
+
+function responseBytes(reply: FastifyReply) {
+	const value = reply.getHeader("content-length");
+	const bytes = typeof value === "number" ? value : Number(value ?? 0);
+	return Number.isFinite(bytes) ? bytes : 0;
+}
+
+function rateLimitFor(path: string) {
+	if (path === "/bff/health" || !path.startsWith("/bff/")) return null;
+	if (path.startsWith("/bff/auth/")) return { limit: 10, windowMs: 60_000 };
+	if (path.includes("transcriptions") || path.includes("realtime"))
+		return { limit: 20, windowMs: 60_000 };
+	return { limit: 120, windowMs: 60_000 };
+}
 
 function validEmail(email: unknown): email is string {
 	return typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -448,11 +486,73 @@ export async function buildServer({
 	auth,
 	fetch = globalThis.fetch,
 	library,
+	log: writeLog = () => undefined,
+	logLevel = (process.env.DIDUNY_LOG_LEVEL as LogLevel | undefined) ?? "info",
 	sessions = new InMemorySessionStore(),
 	staticDir,
 	upstreamUrl = process.env.DIDUNY_UPSTREAM_URL ?? "http://127.0.0.1:3910",
 }: ServerOptions = {}) {
 	const server = Fastify({ logger: false });
+	const configuredLogLevel =
+		logLevelRank[logLevel] === undefined ? "info" : logLevel;
+	const requestStartedAt = new WeakMap<FastifyRequest, number>();
+	const rateWindows = new Map<string, { count: number; resetAt: number }>();
+	const log = (
+		level: LogLevel,
+		event: string,
+		fields: Record<string, boolean | number | string | null>,
+	) => {
+		if (logLevelRank[level] < logLevelRank[configuredLogLevel]) return;
+		writeLog(JSON.stringify({ event, level, ...fields }));
+	};
+	server.addHook("onRequest", (request, reply, done) => {
+		requestStartedAt.set(request, Date.now());
+		const path = requestPath(request);
+		const limit = rateLimitFor(path);
+		if (!limit) return done();
+		const sessionId = sessionIdFromCookie(request.headers.cookie) ?? request.ip;
+		const key = `${path}:${sessionId}`;
+		const now = Date.now();
+		const current = rateWindows.get(key);
+		const window =
+			current && current.resetAt > now
+				? current
+				: { count: 0, resetAt: now + limit.windowMs };
+		if (window.count >= limit.limit) {
+			reply.header("retry-after", Math.ceil((window.resetAt - now) / 1_000));
+			reply.code(429).send({ error: "rate_limited" });
+			return;
+		}
+		window.count += 1;
+		rateWindows.set(key, window);
+		done();
+	});
+	server.addHook("onSend", (_request, reply, payload, done) => {
+		for (const [name, value] of Object.entries(securityHeaders))
+			reply.header(name, value);
+		done(null, payload);
+	});
+	server.addHook("onResponse", (request, reply, done) => {
+		log("info", "http.request", {
+			bytes: responseBytes(reply),
+			durationMs: Date.now() - (requestStartedAt.get(request) ?? Date.now()),
+			method: request.method,
+			sessionId: sessionIdFromCookie(request.headers.cookie),
+			status: reply.statusCode,
+			upstreamPath: upstreamPath(request),
+		});
+		done();
+	});
+	server.setErrorHandler((error, request, reply) => {
+		log("error", "http.error", {
+			error: error instanceof Error ? error.name : "unknown_error",
+			method: request.method,
+			sessionId: sessionIdFromCookie(request.headers.cookie),
+			status: 500,
+			upstreamPath: upstreamPath(request),
+		});
+		reply.code(500).send({ error: "internal_error" });
+	});
 	const authGateway = auth ?? new ProxyOtpGateway(fetch, upstreamUrl);
 	const realtimeRelay = new RealtimeRelay(fetch, sessions, upstreamUrl);
 	const refreshes = new Map<string, Promise<BffSession>>();
@@ -572,10 +672,24 @@ export async function buildServer({
 		return id;
 	};
 
-	server.get("/bff/health", async () => ({
-		activeRealtimeSockets: realtimeRelay.activeUpstreamSockets,
-		status: "ok",
-	}));
+	server.get("/bff/health", async () => {
+		try {
+			const response = await fetch(
+				`${upstreamUrl.replace(/\/$/, "")}/api/v1/health`,
+			);
+			return {
+				activeRealtimeSockets: realtimeRelay.activeUpstreamSockets,
+				proxy: { reachable: response.ok, status: response.status },
+				status: "ok",
+			};
+		} catch {
+			return {
+				activeRealtimeSockets: realtimeRelay.activeUpstreamSockets,
+				proxy: { reachable: false },
+				status: "ok",
+			};
+		}
+	});
 	server.post("/bff/auth/send-otp", async (request, reply) => {
 		const email = (request.body as { email?: unknown } | undefined)?.email;
 		if (!validEmail(email))

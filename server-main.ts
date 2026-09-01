@@ -25,6 +25,12 @@ const server = await buildServer({
 		supabasePublishableKey,
 	),
 	library,
+	log: (line) => console.info(line),
+	logLevel: process.env.DIDUNY_LOG_LEVEL as
+		| "debug"
+		| "error"
+		| "info"
+		| undefined,
 	sessions: new SqliteSessionStore(
 		join(startup.dataDir, "diduny.db"),
 		await readFile(startup.sessionSecretPath, "utf8"),
