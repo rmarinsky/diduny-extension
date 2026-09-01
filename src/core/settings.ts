@@ -7,6 +7,7 @@ export type Provider = "cloud" | "local";
 export interface Settings {
 	announceLiveTranscript: boolean;
 	fillerWords: readonly string[];
+	microphoneDeviceId: string | null;
 	playSoundOnCompletion: boolean;
 	protectedLexicon: readonly string[];
 	pushToTalkHoldEnabled: boolean;
@@ -27,6 +28,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
 	announceLiveTranscript: false,
 	fillerWords: ["um", "uh"],
+	microphoneDeviceId: null,
 	playSoundOnCompletion: true,
 	protectedLexicon: [],
 	pushToTalkHoldEnabled: false,
@@ -71,6 +73,13 @@ export function normalizeSettings(value: unknown): Settings {
 				? settings.announceLiveTranscript
 				: DEFAULT_SETTINGS.announceLiveTranscript,
 		fillerWords: stringList(settings.fillerWords, DEFAULT_SETTINGS.fillerWords),
+		microphoneDeviceId:
+			settings.microphoneDeviceId === null ||
+			(typeof settings.microphoneDeviceId === "string" &&
+				settings.microphoneDeviceId.length > 0 &&
+				settings.microphoneDeviceId.length <= 512)
+				? settings.microphoneDeviceId
+				: DEFAULT_SETTINGS.microphoneDeviceId,
 		playSoundOnCompletion:
 			typeof settings.playSoundOnCompletion === "boolean"
 				? settings.playSoundOnCompletion

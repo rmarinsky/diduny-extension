@@ -9,6 +9,11 @@ import { wordCount } from "../../src/core/models";
 import type { RetentionCategory, RetentionPolicy } from "../../src/core/ports";
 import type { Settings } from "../../src/core/settings";
 import {
+	audioInputDevices,
+	microphonePermissionFailure,
+	resolveAudioInput,
+} from "./audio-devices";
+import {
 	type WorkspaceSettingsSnapshot,
 	getWorkspaceSettings,
 	updateRetentionPolicy,
@@ -63,6 +68,155 @@ function errorMessage(error: unknown) {
 		: "Could not save this setting. Check the local Diduny service and try again.";
 }
 
+type MicrophoneAccess =
+	| "checking"
+	| "denied"
+	| "granted"
+	| "prompt"
+	| "unsupported";
+
+function MicrophoneSettings({
+	onSave,
+	savedDeviceId,
+}: {
+	onSave(deviceId: string | null): Promise<void>;
+	savedDeviceId: string | null;
+}) {
+	const [access, setAccess] = useState<MicrophoneAccess>("checking");
+	const [devices, setDevices] = useState<ReturnType<typeof audioInputDevices>>(
+		[],
+	);
+	const [message, setMessage] = useState("");
+	const { device, savedDeviceMissing } = resolveAudioInput(
+		devices,
+		savedDeviceId,
+	);
+
+	const inspect = useCallback(async () => {
+		if (!navigator.mediaDevices?.enumerateDevices) {
+			setAccess("unsupported");
+			return;
+		}
+		try {
+			const permission = navigator.permissions?.query
+				? await navigator.permissions.query({
+						name: "microphone" as PermissionName,
+					})
+				: null;
+			if (permission?.state === "denied") {
+				setAccess("denied");
+				setDevices([]);
+				return;
+			}
+			if (permission?.state !== "granted") {
+				setAccess("prompt");
+				setDevices([]);
+				return;
+			}
+			setAccess("granted");
+			setDevices(
+				audioInputDevices(await navigator.mediaDevices.enumerateDevices()),
+			);
+		} catch {
+			setAccess("prompt");
+			setDevices([]);
+		}
+	}, []);
+
+	useEffect(() => {
+		void inspect();
+	}, [inspect]);
+
+	async function requestPermission() {
+		if (!navigator.mediaDevices?.getUserMedia) {
+			setAccess("unsupported");
+			return;
+		}
+		setMessage("Requesting microphone permission…");
+		try {
+			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			for (const track of stream.getTracks()) track.stop();
+			setAccess("granted");
+			setDevices(
+				audioInputDevices(await navigator.mediaDevices.enumerateDevices()),
+			);
+			setMessage("Microphone permission granted.");
+		} catch (error) {
+			setAccess(
+				microphonePermissionFailure(error) === "denied" ? "denied" : "prompt",
+			);
+			setMessage(errorMessage(error));
+		}
+	}
+
+	async function saveDevice(value: string) {
+		try {
+			await onSave(value || null);
+			setMessage("Microphone preference saved.");
+		} catch (error) {
+			setMessage(errorMessage(error));
+		}
+	}
+
+	return (
+		<section aria-labelledby="microphone-title" className="settings-section">
+			<h3 id="microphone-title">Microphone</h3>
+			{access === "checking" ? <p>Checking microphone permission…</p> : null}
+			{access === "prompt" ? (
+				<>
+					<p>Microphone permission is required before devices can be named.</p>
+					<button onClick={() => void requestPermission()} type="button">
+						Allow microphone
+					</button>
+				</>
+			) : null}
+			{access === "denied" ? (
+				<p role="alert">
+					Microphone access is blocked. Open this site’s settings in your
+					browser, allow Microphone, then return here and refresh.
+				</p>
+			) : null}
+			{access === "unsupported" ? (
+				<p role="alert">This browser cannot enumerate microphone devices.</p>
+			) : null}
+			{access === "granted" && devices.length === 0 ? (
+				<p role="alert">No microphone is available to this browser.</p>
+			) : null}
+			{access === "granted" && devices.length ? (
+				<>
+					<label htmlFor="microphone-device">
+						Recording microphone
+						<select
+							id="microphone-device"
+							onChange={(event) => void saveDevice(event.target.value)}
+							value={device?.deviceId ?? ""}
+						>
+							<option value="">Browser default microphone</option>
+							{devices.map((input) => (
+								<option key={input.deviceId} value={input.deviceId}>
+									{input.label}
+								</option>
+							))}
+						</select>
+					</label>
+					{savedDeviceMissing ? (
+						<p role="alert">
+							Saved microphone is unavailable. The browser will use{" "}
+							{device?.label}.
+						</p>
+					) : null}
+				</>
+			) : null}
+			<button onClick={() => void inspect()} type="button">
+				Refresh microphone devices
+			</button>
+			<p aria-live="polite" className="status">
+				{message}
+			</p>
+		</section>
+	);
+}
+
 export function SettingsPane({
 	onSettingsChanged,
 	revision,
@@ -88,7 +242,6 @@ export function SettingsPane({
 			setCleanupEnabled(next.settings.textCleanupEnabled);
 			setFillerWords(next.settings.fillerWords.join("\n"));
 			setLexicon(next.settings.protectedLexicon.join("\n"));
-			setMessage("");
 		} catch (error) {
 			setMessage(errorMessage(error));
 		}
@@ -132,6 +285,19 @@ export function SettingsPane({
 			onSettingsChanged();
 		} catch (error) {
 			setMessage(errorMessage(error));
+		}
+	}
+
+	async function saveMicrophone(deviceId: string | null) {
+		try {
+			const settings = await updateWorkspaceSettings({
+				microphoneDeviceId: deviceId,
+			});
+			setSnapshot((current) => (current ? { ...current, settings } : current));
+			onSettingsChanged();
+		} catch (error) {
+			setMessage(errorMessage(error));
+			throw error;
 		}
 	}
 
@@ -208,6 +374,11 @@ export function SettingsPane({
 					<button type="submit">Save cleanup</button>
 				</form>
 			</section>
+
+			<MicrophoneSettings
+				onSave={saveMicrophone}
+				savedDeviceId={settings.microphoneDeviceId}
+			/>
 
 			<section aria-labelledby="retention-title" className="settings-section">
 				<h3 id="retention-title">Retention</h3>

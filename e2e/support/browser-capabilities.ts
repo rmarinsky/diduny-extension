@@ -59,3 +59,48 @@ export async function installSupportedBrowserCapabilities(
 		}
 	});
 }
+
+export async function installFakeMicrophones(context: BrowserContext) {
+	await context.addInitScript(() => {
+		let permission: "denied" | "granted" | "prompt" = "prompt";
+		Object.defineProperty(globalThis, "setDidunyMicrophonePermission", {
+			configurable: true,
+			value(next: "denied" | "granted" | "prompt") {
+				permission = next;
+			},
+		});
+		Object.defineProperty(navigator, "permissions", {
+			configurable: true,
+			value: {
+				query: async () => ({ state: permission }),
+			},
+		});
+		Object.defineProperty(navigator.mediaDevices, "enumerateDevices", {
+			configurable: true,
+			value: async () =>
+				permission === "granted"
+					? [
+							{
+								deviceId: "built-in",
+								kind: "audioinput",
+								label: "Built-in Microphone",
+							},
+							{
+								deviceId: "usb",
+								kind: "audioinput",
+								label: "USB Microphone",
+							},
+						]
+					: [],
+		});
+		Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+			configurable: true,
+			value: async () => {
+				if (permission === "denied")
+					throw new DOMException("Microphone denied", "NotAllowedError");
+				permission = "granted";
+				return new MediaStream();
+			},
+		});
+	});
+}

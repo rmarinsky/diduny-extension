@@ -3,7 +3,10 @@ import Fastify from "fastify";
 import { chromium } from "playwright";
 import { buildServer } from "../server";
 import type { LibraryDetail } from "../src/core/ports";
-import { installSupportedBrowserCapabilities } from "./support/browser-capabilities";
+import {
+	installFakeMicrophones,
+	installSupportedBrowserCapabilities,
+} from "./support/browser-capabilities";
 import { createE2eLibrary } from "./support/fake-library";
 
 function serverUrl(server: ReturnType<typeof Fastify>) {
@@ -72,6 +75,7 @@ test("the web library searches server-side and edits, copies, plays, and deletes
 	});
 	const context = await browser.newContext();
 	await installSupportedBrowserCapabilities(context);
+	await installFakeMicrophones(context);
 	const page = await context.newPage();
 
 	try {
@@ -143,6 +147,31 @@ test("the web library searches server-side and edits, copies, plays, and deletes
 
 		await page.getByRole("button", { name: "Settings" }).click();
 		await expect(page.getByText("Storage on this device")).toBeVisible();
+		await expect(
+			page.getByText(
+				"Microphone permission is required before devices can be named.",
+			),
+		).toBeVisible();
+		await page.getByRole("button", { name: "Allow microphone" }).click();
+		await page.getByLabel("Recording microphone").selectOption("usb");
+		await expect
+			.poll(() => e2eLibrary.settings().microphoneDeviceId)
+			.toBe("usb");
+		await page.evaluate(() => {
+			(
+				globalThis as typeof globalThis & {
+					setDidunyMicrophonePermission(
+						value: "denied" | "granted" | "prompt",
+					): void;
+				}
+			).setDidunyMicrophonePermission("denied");
+		});
+		await page
+			.getByRole("button", { name: "Refresh microphone devices" })
+			.click();
+		await expect(
+			page.getByText("Microphone access is blocked. Open this site’s settings"),
+		).toBeVisible();
 		const secondPage = await context.newPage();
 		await secondPage.goto(`${bffUrl}/`);
 		await secondPage.getByRole("button", { name: "Settings" }).click();

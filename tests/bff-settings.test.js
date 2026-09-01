@@ -44,6 +44,7 @@ test("persists workspace settings and reports server-side library statistics and
 			method: "PATCH",
 			payload: {
 				fillerWords: ["um", "uh", "diduny"],
+				microphoneDeviceId: "usb-microphone",
 				protectedLexicon: ["Diduny"],
 				textCleanupEnabled: true,
 				typingSpeedWordsPerMinute: 60,
@@ -53,10 +54,19 @@ test("persists workspace settings and reports server-side library statistics and
 		expect(updated.statusCode).toBe(200);
 		expect(updated.json()).toEqual(
 			expect.objectContaining({
+				microphoneDeviceId: "usb-microphone",
 				protectedLexicon: ["Diduny"],
 				typingSpeedWordsPerMinute: 60,
 			}),
 		);
+
+		const malformedDevice = await server.inject({
+			headers: { cookie },
+			method: "PATCH",
+			payload: { microphoneDeviceId: "" },
+			url: "/bff/settings",
+		});
+		expect(malformedDevice.statusCode).toBe(400);
 
 		const retention = await server.inject({
 			headers: { cookie },

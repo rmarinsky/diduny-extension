@@ -9,6 +9,10 @@ import { speechPreCheck } from "../../src/core/speech-precheck";
 import { LibraryPane } from "./LibraryPane";
 import { SettingsPane } from "./SettingsPane";
 import {
+	audioCaptureConstraints,
+	savedMicrophoneUnavailable,
+} from "./audio-devices";
+import {
 	detectBrowserCapabilities,
 	missingBrowserCapabilities,
 } from "./capabilities";
@@ -21,6 +25,7 @@ import {
 import { createWorkspaceInvalidationBus } from "./invalidation";
 import { saveToLibrary } from "./library";
 import { acquireRecordingLock } from "./recording-lock";
+import { getWorkspaceSettings } from "./settings";
 import "./style.css";
 
 type AuthState = "checking" | "otp-sent" | "signed-in" | "signed-out";
@@ -126,6 +131,9 @@ export function App() {
 	const [elapsed, setElapsed] = useState(0);
 	const [language, setLanguage] = useState("uk");
 	const [level, setLevel] = useState(0);
+	const [microphoneDeviceId, setMicrophoneDeviceId] = useState<string | null>(
+		null,
+	);
 	const [otp, setOtp] = useState("");
 	const [signedInEmail, setSignedInEmail] = useState("");
 	const [status, setStatus] = useState("Checking your session…");
@@ -182,6 +190,19 @@ export function App() {
 	useEffect(() => {
 		void refreshSession();
 	}, [refreshSession]);
+
+	useEffect(() => {
+		void workspaceRevision;
+		if (authState !== "signed-in") {
+			setMicrophoneDeviceId(null);
+			return;
+		}
+		void getWorkspaceSettings()
+			.then(({ settings }) =>
+				setMicrophoneDeviceId(settings.microphoneDeviceId),
+			)
+			.catch(() => setMicrophoneDeviceId(null));
+	}, [authState, workspaceRevision]);
 
 	const cancelCapture = useCallback(async () => {
 		const capture = captureRef.current;
@@ -276,6 +297,7 @@ export function App() {
 		}
 		let stream: MediaStream | undefined;
 		let audioContext: AudioContext | undefined;
+		let fallbackDeviceName: string | undefined;
 		try {
 			const release = await acquireRecordingLock();
 			if (!release) {
@@ -283,7 +305,19 @@ export function App() {
 				return;
 			}
 			recordingLockReleaseRef.current = release;
-			stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			try {
+				stream = await navigator.mediaDevices.getUserMedia({
+					audio: audioCaptureConstraints(microphoneDeviceId),
+				});
+			} catch (error) {
+				if (!microphoneDeviceId || !savedMicrophoneUnavailable(error))
+					throw error;
+				stream = await navigator.mediaDevices.getUserMedia({
+					audio: audioCaptureConstraints(null),
+				});
+				fallbackDeviceName =
+					stream.getAudioTracks()[0]?.label || "another available microphone";
+			}
 			audioContext = new AudioContext({ sampleRate: 16_000 });
 			await audioContext.resume();
 			const source = audioContext.createMediaStreamSource(stream);
@@ -334,7 +368,11 @@ export function App() {
 			mediaRecorder.start(250);
 			setCaptureState("recording");
 			setElapsed(0);
-			setStatus("Listening…");
+			setStatus(
+				fallbackDeviceName
+					? `Saved microphone is unavailable. Recording with ${fallbackDeviceName}.`
+					: "Listening…",
+			);
 		} catch (error) {
 			for (const track of stream?.getTracks() ?? []) track.stop();
 			void audioContext?.close();
@@ -345,7 +383,7 @@ export function App() {
 					: "Could not start the microphone.",
 			);
 		}
-	}, [captureState, releaseRecordingLock]);
+	}, [captureState, microphoneDeviceId, releaseRecordingLock]);
 
 	useEffect(() => {
 		const onShortcut = (event: KeyboardEvent) => {
@@ -519,7 +557,7 @@ export function App() {
 				/>
 			) : view === "settings" ? (
 				<SettingsPane
-					onSettingsChanged={broadcastWorkspaceChange}
+					onSettingsChanged={invalidateWorkspace}
 					revision={workspaceRevision}
 				/>
 			) : (

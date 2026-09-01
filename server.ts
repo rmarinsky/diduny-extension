@@ -103,6 +103,7 @@ const retentionPolicies = [
 const workspaceSettingKeys = [
 	"announceLiveTranscript",
 	"fillerWords",
+	"microphoneDeviceId",
 	"protectedLexicon",
 	"textCleanupEnabled",
 	"typingSpeedWordsPerMinute",
@@ -380,6 +381,11 @@ function parseWorkspaceSettings(value: unknown): Partial<Settings> | null {
 		("textCleanupEnabled" in settings &&
 			typeof settings.textCleanupEnabled !== "boolean") ||
 		("fillerWords" in settings && !validTerms(settings.fillerWords)) ||
+		("microphoneDeviceId" in settings &&
+			settings.microphoneDeviceId !== null &&
+			(typeof settings.microphoneDeviceId !== "string" ||
+				settings.microphoneDeviceId.length === 0 ||
+				settings.microphoneDeviceId.length > 512)) ||
 		("protectedLexicon" in settings &&
 			!validTerms(settings.protectedLexicon)) ||
 		("typingSpeedWordsPerMinute" in settings &&
