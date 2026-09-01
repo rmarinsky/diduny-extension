@@ -49,7 +49,9 @@ test("relays SSE events as they arrive instead of buffering the stream", async (
 		if (!reader) throw new Error("Expected an SSE response body");
 
 		expect(response.headers.get("content-type")).toContain("text/event-stream");
-		expect(response.headers.get("cache-control")).toBe("no-cache, no-transform");
+		expect(response.headers.get("cache-control")).toBe(
+			"no-cache, no-transform",
+		);
 		expect(response.headers.get("x-accel-buffering")).toBe("no");
 		expect(new TextDecoder().decode((await reader.read()).value)).toContain(
 			"event: status",

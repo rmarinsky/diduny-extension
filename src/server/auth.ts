@@ -1,3 +1,5 @@
+import { HTTP } from "../core/constants";
+import { proxyFetch } from "./proxy-fetch";
 import type { BffSession } from "./session-store";
 
 type JsonRecord = Record<string, unknown>;
@@ -23,6 +25,7 @@ export class ProxyOtpGateway implements BffAuthGateway {
 	constructor(
 		private readonly fetch: typeof globalThis.fetch,
 		private readonly upstreamUrl: string,
+		private readonly timeoutMs: number = HTTP.logoutTimeoutMs,
 	) {}
 
 	async logout(session: BffSession) {
@@ -60,9 +63,11 @@ export class ProxyOtpGateway implements BffAuthGateway {
 	}
 
 	private async request(path: string, init: RequestInit) {
-		const response = await this.fetch(
+		const response = await proxyFetch(
+			this.fetch,
 			`${this.upstreamUrl.replace(/\/$/, "")}/api/v1/auth/${path}`,
 			init,
+			this.timeoutMs,
 		);
 		if (response.status < 200 || response.status >= 300) {
 			throw new Error(`Upstream auth failed with ${response.status}`);

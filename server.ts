@@ -4,6 +4,7 @@ import { PassThrough, Readable } from "node:stream";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import { HTTP } from "./src/core/constants";
 import type { ProcessingStatus, RecordingType } from "./src/core/models";
 import type {
 	LibraryDetail,
@@ -22,6 +23,7 @@ import type {
 	LibraryStorageStats,
 	LibraryUsageStats,
 } from "./src/server/library-store";
+import { proxyFetch } from "./src/server/proxy-fetch";
 import { RealtimeRelay } from "./src/server/realtime-relay";
 import {
 	extensionSessionCookieName,
@@ -43,6 +45,7 @@ export interface ServerOptions {
 	library?: BffLibrary;
 	log?: (line: string) => void;
 	logLevel?: "debug" | "error" | "info";
+	proxyTimeoutMs?: number;
 	sessions?: SessionStore;
 	staticDir?: string;
 	upstreamUrl?: string;
@@ -240,9 +243,7 @@ function requestSessionId(request: FastifyRequest) {
 
 function sessionLogId(request: FastifyRequest) {
 	const id = requestSessionId(request);
-	return id
-		? createHash("sha256").update(id).digest("hex").slice(0, 16)
-		: null;
+	return id ? createHash("sha256").update(id).digest("hex").slice(0, 16) : null;
 }
 
 function validRecordingId(id: unknown): id is string {
@@ -533,11 +534,12 @@ function parseRetentionSettings(value: unknown): {
 export async function buildServer({
 	auth,
 	fetch = globalThis.fetch,
-	extensionOrigin =
-		process.env.DIDUNY_EXTENSION_ORIGIN ?? defaultExtensionOrigin,
+	extensionOrigin = process.env.DIDUNY_EXTENSION_ORIGIN ??
+		defaultExtensionOrigin,
 	library,
 	log: writeLog = () => undefined,
 	logLevel = (process.env.DIDUNY_LOG_LEVEL as LogLevel | undefined) ?? "info",
+	proxyTimeoutMs = HTTP.logoutTimeoutMs,
 	sessions = new InMemorySessionStore(),
 	staticDir,
 	upstreamUrl = process.env.DIDUNY_UPSTREAM_URL ?? "http://127.0.0.1:3910",
@@ -610,8 +612,14 @@ export async function buildServer({
 		});
 		reply.code(500).send({ error: "internal_error" });
 	});
-	const authGateway = auth ?? new ProxyOtpGateway(fetch, upstreamUrl);
-	const realtimeRelay = new RealtimeRelay(fetch, sessions, upstreamUrl);
+	const authGateway =
+		auth ?? new ProxyOtpGateway(fetch, upstreamUrl, proxyTimeoutMs);
+	const realtimeRelay = new RealtimeRelay(
+		fetch,
+		sessions,
+		upstreamUrl,
+		proxyTimeoutMs,
+	);
 	const refreshes = new Map<string, Promise<BffSession>>();
 	const maxPendingLibrarySavesPerSession = 8;
 	const pendingLibrarySaves = new Map<
@@ -670,6 +678,7 @@ export async function buildServer({
 			request,
 			retryStreamOn401: !retriesStreamUpload(request),
 			sessions,
+			timeoutMs: proxyTimeoutMs,
 			upstreamUrl,
 		});
 		if (result.kind === "not_found") {
@@ -753,8 +762,11 @@ export async function buildServer({
 
 	server.get("/bff/health", async () => {
 		try {
-			const response = await fetch(
+			const response = await proxyFetch(
+				fetch,
 				`${upstreamUrl.replace(/\/$/, "")}/api/v1/health`,
+				{},
+				proxyTimeoutMs,
 			);
 			return {
 				activeRealtimeSockets: realtimeRelay.activeUpstreamSockets,

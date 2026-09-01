@@ -144,7 +144,10 @@ test("refreshes once then redirects a streamed upload so the browser re-uploads 
 		expect(retry.statusCode).toBe(200);
 		expect(retry.json()).toEqual({ text: "retried upload", tokens: [] });
 		expect(refreshCalls).toBe(1);
-		expect(transcriptionTokens).toEqual(["Bearer old-token", "Bearer new-token"]);
+		expect(transcriptionTokens).toEqual([
+			"Bearer old-token",
+			"Bearer new-token",
+		]);
 	} finally {
 		await server.close();
 	}

@@ -1,5 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { HTTP } from "../core/constants";
+import { proxyFetch } from "./proxy-fetch";
 import type { BffSession, SessionStore } from "./session-store";
 
 export const sessionCookieName = "diduny_session";
@@ -97,6 +98,7 @@ export async function relayRequest({
 	request,
 	retryStreamOn401 = false,
 	sessions,
+	timeoutMs = HTTP.logoutTimeoutMs,
 	upstreamUrl,
 }: {
 	fetch: typeof globalThis.fetch;
@@ -104,6 +106,7 @@ export async function relayRequest({
 	request: FastifyRequest;
 	retryStreamOn401?: boolean;
 	sessions: SessionStore;
+	timeoutMs?: number;
 	upstreamUrl: string;
 	cookieName?: string;
 }): Promise<
@@ -159,11 +162,21 @@ export async function relayRequest({
 	try {
 		const body = requestBody(request);
 		const upstreamAbort = isSsePath(path) ? new AbortController() : null;
+		const requestTimeoutMs = upstreamAbort
+			? HTTP.maxJobWaitMs
+			: isReadableStream(body)
+				? HTTP.longUploadTimeoutMs
+				: timeoutMs;
 		const upstream = (activeSession: BffSession | null) =>
-			fetch(`${upstreamUrl.replace(/\/$/, "")}/api/v1/${path}${currentUrl.search}`, {
-				...upstreamRequestInit(request, activeSession, body),
-				...(upstreamAbort ? { signal: upstreamAbort.signal } : {}),
-			});
+			proxyFetch(
+				fetch,
+				`${upstreamUrl.replace(/\/$/, "")}/api/v1/${path}${currentUrl.search}`,
+				{
+					...upstreamRequestInit(request, activeSession, body),
+					...(upstreamAbort ? { signal: upstreamAbort.signal } : {}),
+				},
+				requestTimeoutMs,
+			);
 		let response = await upstream(session);
 		if (response.status === 401 && session && refreshSession) {
 			if (isReadableStream(body)) {

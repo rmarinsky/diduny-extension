@@ -1,5 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { WebSocket as DownstreamSocket, RawData } from "ws";
+import { HTTP } from "../core/constants";
+import { proxyFetch } from "./proxy-fetch";
 import { sessionCookieName, sessionIdFromCookie } from "./relay";
 import type { BffSession, SessionStore } from "./session-store";
 
@@ -53,6 +55,7 @@ export class RealtimeRelay {
 		private readonly fetch: typeof globalThis.fetch,
 		private readonly sessions: SessionStore,
 		private readonly upstreamUrl: string,
+		private readonly timeoutMs: number = HTTP.logoutTimeoutMs,
 	) {}
 
 	get activeUpstreamSockets() {
@@ -201,9 +204,11 @@ export class RealtimeRelay {
 	}
 
 	private async checkUsage(session: BffSession) {
-		const response = await this.fetch(
+		const response = await proxyFetch(
+			this.fetch,
 			`${this.upstreamUrl.replace(/\/$/, "")}/api/v1/usage/me`,
 			{ headers: { authorization: `Bearer ${session.accessToken}` } },
+			this.timeoutMs,
 		);
 		if (response.status === 402) throw new UsageExceededError();
 		if (!response.ok) throw new Error("usage check failed");
