@@ -1,4 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ProcessingStatus, RecordingType } from "../../src/core/models";
 import type { LibraryDetail, LibraryPage } from "../../src/core/ports";
 import {
@@ -11,21 +12,21 @@ import {
 
 const pageSize = 50;
 
-const statuses: ReadonlyArray<{ label: string; value: ProcessingStatus }> = [
-	{ label: "Failed", value: "failed" },
-	{ label: "Recovered", value: "partiallyRecovered" },
-	{ label: "Processing", value: "processing" },
-	{ label: "Transcribed", value: "transcribed" },
-	{ label: "Translated", value: "translated" },
-	{ label: "Unprocessed", value: "unprocessed" },
+const statuses: readonly ProcessingStatus[] = [
+	"failed",
+	"partiallyRecovered",
+	"processing",
+	"transcribed",
+	"translated",
+	"unprocessed",
 ];
 
-const types: ReadonlyArray<{ label: string; value: RecordingType }> = [
-	{ label: "Dictation", value: "voice" },
-	{ label: "Meeting", value: "meeting" },
-	{ label: "Meeting translation", value: "meetingTranslation" },
-	{ label: "Translation", value: "translation" },
-	{ label: "File transcription", value: "fileTranscription" },
+const types: readonly RecordingType[] = [
+	"voice",
+	"meeting",
+	"meetingTranslation",
+	"translation",
+	"fileTranscription",
 ];
 
 function duration(seconds: number) {
@@ -33,15 +34,15 @@ function duration(seconds: number) {
 	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-function dateTime(value: number) {
-	return new Intl.DateTimeFormat(undefined, {
+function dateTime(value: number, locale: string) {
+	return new Intl.DateTimeFormat(locale, {
 		dateStyle: "medium",
 		timeStyle: "short",
 	}).format(value);
 }
 
-function errorMessage(error: unknown) {
-	return error instanceof Error ? error.message : "The library request failed.";
+function errorMessage(error: unknown, fallback: string) {
+	return error instanceof Error ? error.message : fallback;
 }
 
 function RecordingDetail({
@@ -55,6 +56,7 @@ function RecordingDetail({
 	onUpdated(recording: LibraryDetail): void;
 	recording: LibraryDetail;
 }) {
+	const { i18n, t } = useTranslation();
 	const [confirmingDelete, setConfirmingDelete] = useState(false);
 	const [description, setDescription] = useState(recording.description ?? "");
 	const [isDeleting, setIsDeleting] = useState(false);
@@ -65,9 +67,9 @@ function RecordingDetail({
 	async function copyTranscript() {
 		try {
 			await navigator.clipboard.writeText(recording.displayText);
-			setMessage("Transcript copied.");
+			setMessage(t("library.transcriptCopied"));
 		} catch {
-			setMessage("The browser did not allow clipboard access.");
+			setMessage(t("status.clipboardDenied"));
 		}
 	}
 
@@ -81,9 +83,9 @@ function RecordingDetail({
 				title: title.trim() || null,
 			});
 			onUpdated(updated);
-			setMessage("Details saved.");
+			setMessage(t("library.detailsSaved"));
 		} catch (error) {
-			setMessage(errorMessage(error));
+			setMessage(errorMessage(error, t("library.requestFailed")));
 		} finally {
 			setIsSaving(false);
 		}
@@ -97,31 +99,31 @@ function RecordingDetail({
 			onDeleted();
 		} catch (error) {
 			setIsDeleting(false);
-			setMessage(errorMessage(error));
+			setMessage(errorMessage(error, t("library.requestFailed")));
 		}
 	}
 
 	return (
 		<section aria-labelledby="recording-title" className="recording-detail">
 			<button onClick={onBack} type="button">
-				Back to library
+				{t("library.back")}
 			</button>
 			<header>
 				<div>
 					<h2 id="recording-title">
-						{recording.title?.trim() || "Untitled recording"}
+						{recording.title?.trim() || t("library.untitled")}
 					</h2>
 					<p>
-						{dateTime(recording.createdAt)} ·{" "}
+						{dateTime(recording.createdAt, i18n.language)} ·{" "}
 						{duration(recording.durationSeconds)}
 					</p>
 				</div>
 				{recording.status === "partiallyRecovered" ? (
-					<p className="recovered">Recovered recording</p>
+					<p className="recovered">{t("library.recovered")}</p>
 				) : null}
 			</header>
 			<audio
-				aria-label="Recording playback"
+				aria-label={t("library.playback")}
 				controls
 				preload="metadata"
 				src={`/bff/library/${recording.id}/media`}
@@ -129,29 +131,32 @@ function RecordingDetail({
 				<track
 					default
 					kind="captions"
-					label="Transcript"
+					label={t("library.transcript")}
 					src={`/bff/library/${recording.id}/captions.vtt`}
 					srcLang="und"
 				/>
 			</audio>
 			<div className="controls">
 				<button onClick={() => void copyTranscript()} type="button">
-					Copy transcript
+					{t("library.copyTranscript")}
 				</button>
 			</div>
-			<pre aria-label="Transcript" className="transcript">
+			<pre aria-label={t("library.transcript")} className="transcript">
 				{recording.displayText}
 			</pre>
 			<section aria-labelledby="history-title">
-				<h3 id="history-title">Transcript history</h3>
+				<h3 id="history-title">{t("library.history")}</h3>
 				<ol className="history">
 					{recording.history.map((version, index) => (
 						<li key={version.id}>
 							<strong>
-								{index === 0 ? "Current version" : "Previous version"}
+								{index === 0
+									? t("library.currentVersion")
+									: t("library.previousVersion")}
 							</strong>
 							<span>
-								{version.provider} · {dateTime(version.createdAt)}
+								{version.provider} ·{" "}
+								{dateTime(version.createdAt, i18n.language)}
 							</span>
 							<pre>{version.text}</pre>
 						</li>
@@ -159,9 +164,9 @@ function RecordingDetail({
 				</ol>
 			</section>
 			<form className="metadata-form" onSubmit={saveDetails}>
-				<h3>Details</h3>
+				<h3>{t("library.details")}</h3>
 				<label htmlFor="recording-title-input">
-					Title
+					{t("library.recordingTitle")}
 					<input
 						id="recording-title-input"
 						onChange={(event) => setTitle(event.target.value)}
@@ -169,7 +174,7 @@ function RecordingDetail({
 					/>
 				</label>
 				<label htmlFor="recording-description-input">
-					Description
+					{t("library.descriptionLabel")}
 					<textarea
 						id="recording-description-input"
 						onChange={(event) => setDescription(event.target.value)}
@@ -177,31 +182,34 @@ function RecordingDetail({
 					/>
 				</label>
 				<button disabled={isSaving} type="submit">
-					Save details
+					{t("library.saveDetails")}
 				</button>
 			</form>
-			<section aria-label="Delete recording" className="delete-recording">
+			<section
+				aria-label={t("library.deleteLabel")}
+				className="delete-recording"
+			>
 				{confirmingDelete ? (
 					<>
-						<p>This permanently removes the recording and its audio file.</p>
+						<p>{t("library.deleteWarning")}</p>
 						<button
 							disabled={isDeleting}
 							onClick={() => void deleteRecording()}
 							type="button"
 						>
-							Delete permanently
+							{t("library.deletePermanently")}
 						</button>
 						<button
 							disabled={isDeleting}
 							onClick={() => setConfirmingDelete(false)}
 							type="button"
 						>
-							Cancel delete
+							{t("library.cancelDelete")}
 						</button>
 					</>
 				) : (
 					<button onClick={() => setConfirmingDelete(true)} type="button">
-						Delete recording
+						{t("library.delete")}
 					</button>
 				)}
 			</section>
@@ -219,6 +227,7 @@ export function LibraryPane({
 	onLibraryChanged(): void;
 	revision: number;
 }) {
+	const { t } = useTranslation();
 	const [detail, setDetail] = useState<LibraryDetail | null>(null);
 	const [error, setError] = useState("");
 	const [isLoading, setIsLoading] = useState(true);
@@ -243,12 +252,12 @@ export function LibraryPane({
 					append ? { ...next, items: [...current.items, ...next.items] } : next,
 				);
 			} catch (reason) {
-				setError(errorMessage(reason));
+				setError(errorMessage(reason, t("library.requestFailed")));
 			} finally {
 				setIsLoading(false);
 			}
 		},
-		[query],
+		[query, t],
 	);
 
 	useEffect(() => {
@@ -269,12 +278,12 @@ export function LibraryPane({
 				if (active) setDetail(recording);
 			})
 			.catch((reason) => {
-				if (active) setError(errorMessage(reason));
+				if (active) setError(errorMessage(reason, t("library.requestFailed")));
 			});
 		return () => {
 			active = false;
 		};
-	}, [revision, selectedId]);
+	}, [revision, selectedId, t]);
 
 	function applyFilters(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
@@ -296,14 +305,14 @@ export function LibraryPane({
 			return (
 				<section className="recording-detail">
 					<button onClick={returnToList} type="button">
-						Back to library
+						{t("library.back")}
 					</button>
 					<p role="alert">{error}</p>
 				</section>
 			);
 		}
 		if (!detail || detail.id !== selectedId)
-			return <p aria-live="polite">Loading recording…</p>;
+			return <p aria-live="polite">{t("library.loadingRecording")}</p>;
 		return (
 			<RecordingDetail
 				onBack={returnToList}
@@ -323,12 +332,12 @@ export function LibraryPane({
 	return (
 		<section aria-labelledby="library-title" className="library">
 			<header>
-				<h2 id="library-title">Library</h2>
-				<p>Searches run on your local library server.</p>
+				<h2 id="library-title">{t("library.title")}</h2>
+				<p>{t("library.description")}</p>
 			</header>
 			<form className="library-filters" onSubmit={applyFilters}>
 				<label htmlFor="library-search">
-					Search library
+					{t("library.search")}
 					<input
 						id="library-search"
 						onChange={(event) => setSearch(event.target.value)}
@@ -336,50 +345,51 @@ export function LibraryPane({
 					/>
 				</label>
 				<label htmlFor="library-type">
-					Recording type
+					{t("library.recordingType")}
 					<select
 						id="library-type"
 						onChange={(event) => setType(event.target.value)}
 						value={type}
 					>
-						<option value="">All types</option>
+						<option value="">{t("library.allTypes")}</option>
 						{types.map((item) => (
-							<option key={item.value} value={item.value}>
-								{item.label}
+							<option key={item} value={item}>
+								{t(`library.typeLabel.${item}`)}
 							</option>
 						))}
 					</select>
 				</label>
 				<label htmlFor="library-status">
-					Status
+					{t("library.status")}
 					<select
 						id="library-status"
 						onChange={(event) => setStatus(event.target.value)}
 						value={status}
 					>
-						<option value="">All statuses</option>
+						<option value="">{t("library.allStatuses")}</option>
 						{statuses.map((item) => (
-							<option key={item.value} value={item.value}>
-								{item.label}
+							<option key={item} value={item}>
+								{t(`library.statusLabel.${item}`)}
 							</option>
 						))}
 					</select>
 				</label>
-				<button type="submit">Search</button>
+				<button type="submit">{t("library.searchButton")}</button>
 			</form>
 			{error ? <p role="alert">{error}</p> : null}
-			{isLoading ? <p aria-live="polite">Loading library…</p> : null}
+			{isLoading ? <p aria-live="polite">{t("library.loading")}</p> : null}
 			{!isLoading && !error && page.items.length === 0 ? (
-				<p>No recordings match your search.</p>
+				<p>{t("library.empty")}</p>
 			) : null}
-			<ul aria-label="Library recordings" className="recording-list">
+			<ul aria-label={t("library.listLabel")} className="recording-list">
 				{page.items.map((recording) => (
 					<li key={recording.id}>
 						<button onClick={() => setSelectedId(recording.id)} type="button">
 							<span>{recording.displayTitle}</span>
 							<small>
-								{duration(recording.durationSeconds)} · {recording.type} ·{" "}
-								{recording.status}
+								{duration(recording.durationSeconds)} ·{" "}
+								{t(`library.typeLabel.${recording.type}`)} ·{" "}
+								{t(`library.statusLabel.${recording.status}`)}
 							</small>
 						</button>
 					</li>
@@ -391,7 +401,7 @@ export function LibraryPane({
 					onClick={() => void loadList(page.nextOffset, true)}
 					type="button"
 				>
-					Load more
+					{t("library.loadMore")}
 				</button>
 			) : null}
 		</section>

@@ -50,6 +50,16 @@ export function formatLocaleNumber(value: number, locale: UiLocale) {
 	return new Intl.NumberFormat(resolvedLocale(locale)).format(value);
 }
 
+export function formatRelativeTime(
+	value: number,
+	unit: Intl.RelativeTimeFormatUnit,
+	locale: UiLocale,
+) {
+	return new Intl.RelativeTimeFormat(resolvedLocale(locale), {
+		numeric: "auto",
+	}).format(value, unit);
+}
+
 export function currentLocale(instance: I18n = i18n): UiLocale {
 	return instance.resolvedLanguage === "uk" ? "uk" : "en";
 }

@@ -6,6 +6,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { AUDIO_FORMAT } from "../../src/core/constants";
 import type { RealtimeToken } from "../../src/core/realtime-session";
 import { speechPreCheck } from "../../src/core/speech-precheck";
@@ -26,7 +27,7 @@ import {
 	isEditableTarget,
 	matchesDictationShortcut,
 } from "./dictation";
-import { setUiLocale } from "./i18n";
+import i18n, { setUiLocale } from "./i18n";
 import { createWorkspaceInvalidationBus } from "./invalidation";
 import { saveToLibrary } from "./library";
 import { type WebRealtimeSession, startWebRealtime } from "./realtime";
@@ -112,18 +113,18 @@ function releaseCapture(capture: ActiveCapture) {
 
 export function App() {
 	const [capabilities] = useState(detectBrowserCapabilities);
+	const { t } = useTranslation();
 	const missingCapabilities = missingBrowserCapabilities(capabilities);
 	if (missingCapabilities.length) {
 		return (
 			<main className="shell capability-gate">
-				<h1>Diduny needs a supported browser</h1>
-				<p>
-					Use a current Chromium-based browser with the following capabilities:
-				</p>
+				<h1>{t("app.unsupportedBrowser")}</h1>
+				<p>{t("app.unsupportedBrowserIntro")}</p>
 				<ul>
 					{missingCapabilities.map((capability) => (
 						<li key={capability.key}>
-							<strong>{capability.label}</strong> - {capability.reason}
+							<strong>{t(`capability.${capability.key}.label`)}</strong> -{" "}
+							{t(`capability.${capability.key}.reason`)}
 						</li>
 					))}
 				</ul>
@@ -146,7 +147,7 @@ export function App() {
 	);
 	const [otp, setOtp] = useState("");
 	const [signedInEmail, setSignedInEmail] = useState("");
-	const [status, setStatus] = useState("Checking your session…");
+	const [status, setStatus] = useState(() => t("app.checkingSession"));
 	const [translationMode, setTranslationMode] = useState(false);
 	const [translationResult, setTranslationResult] = useState("");
 	const [translationSourceLanguage, setTranslationSourceLanguage] =
@@ -200,11 +201,13 @@ export function App() {
 			setAuthState(session.authenticated ? "signed-in" : "signed-out");
 			setSignedInEmail(session.email ?? "");
 			setStatus(
-				session.authenticated ? "Ready to dictate." : "Sign in to dictate.",
+				session.authenticated
+					? i18n.t("status.ready")
+					: i18n.t("status.signIn"),
 			);
 		} catch {
 			setAuthState("signed-out");
-			setStatus("Could not reach the Diduny service.");
+			setStatus(i18n.t("status.serviceUnavailable"));
 		}
 	}, []);
 
@@ -261,9 +264,9 @@ export function App() {
 			setLevel(0);
 			setLiveFinalText("");
 			setLiveProvisionalText("");
-			setStatus("Dictation cancelled.");
+			setStatus(t("status.cancelled"));
 		}
-	}, [releaseRecordingLock]);
+	}, [releaseRecordingLock, t]);
 
 	const finishCapture = useCallback(async () => {
 		stopHoldWhenReadyRef.current = false;
@@ -271,12 +274,12 @@ export function App() {
 		if (!capture) return;
 		captureRef.current = null;
 		setCaptureState("sending");
-		setStatus("Transcribing…");
+		setStatus(t("status.transcribing"));
 		try {
 			await stopRecorder(capture.mediaRecorder);
 			const preCheck = speechPreCheck(joinFrames(capture.frames));
 			if (!preCheck.hasSpeech) {
-				setStatus("No speech detected. Nothing was sent.");
+				setStatus(t("status.noSpeech"));
 				return;
 			}
 
@@ -288,9 +291,7 @@ export function App() {
 			try {
 				transcriptionText = await capture.realtime.result;
 			} catch {
-				setStatus(
-					"Realtime is unavailable. Transcribing the completed recording…",
-				);
+				setStatus(t("status.realtimeFallback"));
 			}
 			if (!transcriptionText?.trim()) {
 				const form = new FormData();
@@ -324,7 +325,7 @@ export function App() {
 				transcriptionText = result.text;
 			}
 			if (!transcriptionText?.trim()) {
-				setStatus("The transcription returned no text.");
+				setStatus(t("status.noText"));
 				queueMicrotask(() => statusElement.current?.focus());
 				return;
 			}
@@ -334,8 +335,8 @@ export function App() {
 			queueMicrotask(() => documentInput.current?.focus());
 			setStatus(
 				translationMode
-					? "Translation added to this document."
-					: "Dictation added to this document.",
+					? t("status.translationAdded")
+					: t("status.dictationAdded"),
 			);
 			void saveToLibrary({
 				audio,
@@ -350,13 +351,13 @@ export function App() {
 				.then(invalidateWorkspace)
 				.catch(() => {
 					if (!captureRef.current) {
-						setStatus(
-							"Dictation added. The local library could not save a copy.",
-						);
+						setStatus(t("status.librarySaveFailed"));
 					}
 				});
 		} catch (error) {
-			setStatus(error instanceof Error ? error.message : "Dictation failed.");
+			setStatus(
+				error instanceof Error ? error.message : t("status.dictationFailed"),
+			);
 			queueMicrotask(() => statusElement.current?.focus());
 		} finally {
 			releaseCapture(capture);
@@ -374,12 +375,13 @@ export function App() {
 		translationMode,
 		translationSourceLanguage,
 		translationTargetLanguage,
+		t,
 	]);
 
 	const startCapture = useCallback(async () => {
 		if (captureRef.current || captureState === "sending") return;
 		if (!navigator.mediaDevices?.getUserMedia || !("MediaRecorder" in window)) {
-			setStatus("This browser cannot record audio.");
+			setStatus(t("status.browserCannotRecord"));
 			return;
 		}
 		let stream: MediaStream | undefined;
@@ -389,7 +391,7 @@ export function App() {
 		try {
 			const release = await acquireRecordingLock();
 			if (!release) {
-				setStatus("Recording is active in another tab.");
+				setStatus(t("status.anotherTab"));
 				return;
 			}
 			recordingLockReleaseRef.current = release;
@@ -406,7 +408,7 @@ export function App() {
 				fallbackDeviceName =
 					stream.getAudioTracks()[0]?.label || "another available microphone";
 			}
-			if (!stream) throw new Error("Could not start the microphone.");
+			if (!stream) throw new Error(t("status.couldNotStartMicrophone"));
 			const frames: Int16Array[] = [];
 			const stats = { sampleCount: 0 };
 			const languageHints = translationMode
@@ -489,8 +491,8 @@ export function App() {
 			setElapsed(0);
 			setStatus(
 				fallbackDeviceName
-					? `Saved microphone is unavailable. Recording with ${fallbackDeviceName}.`
-					: "Listening…",
+					? t("status.microphoneFallback", { device: fallbackDeviceName })
+					: t("status.listening"),
 			);
 			if (stopHoldWhenReadyRef.current) {
 				stopHoldWhenReadyRef.current = false;
@@ -506,7 +508,7 @@ export function App() {
 			setStatus(
 				error instanceof Error
 					? error.message
-					: "Could not start the microphone.",
+					: t("status.couldNotStartMicrophone"),
 			);
 		}
 	}, [
@@ -518,6 +520,7 @@ export function App() {
 		translationMode,
 		translationSourceLanguage,
 		translationTargetLanguage,
+		t,
 	]);
 
 	useEffect(() => {
@@ -580,7 +583,7 @@ export function App() {
 
 	async function sendOtp(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		setStatus("Sending a one-time code…");
+		setStatus(t("auth.sendingCode"));
 		try {
 			await bffJson("/bff/auth/send-otp", {
 				body: JSON.stringify({ email }),
@@ -588,17 +591,17 @@ export function App() {
 				method: "POST",
 			});
 			setAuthState("otp-sent");
-			setStatus("Check your inbox for the six-digit code.");
+			setStatus(t("auth.checkInbox"));
 		} catch (error) {
 			setStatus(
-				error instanceof Error ? error.message : "Could not send the code.",
+				error instanceof Error ? error.message : t("auth.couldNotSendCode"),
 			);
 		}
 	}
 
 	async function verifyOtp(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		setStatus("Signing in…");
+		setStatus(t("auth.signingIn"));
 		try {
 			await bffJson("/bff/auth/verify-otp", {
 				body: JSON.stringify({ email, otp }),
@@ -608,7 +611,7 @@ export function App() {
 			await refreshSession();
 		} catch (error) {
 			setStatus(
-				error instanceof Error ? error.message : "Could not verify the code.",
+				error instanceof Error ? error.message : t("auth.couldNotVerifyCode"),
 			);
 		}
 	}
@@ -620,24 +623,24 @@ export function App() {
 		});
 		setAuthState("signed-out");
 		setSignedInEmail("");
-		setStatus("Signed out.");
+		setStatus(t("auth.signedOut"));
 	}
 
 	async function copyDocument() {
 		try {
 			await navigator.clipboard.writeText(documentText);
-			setStatus("Copied to clipboard.");
+			setStatus(t("status.copied"));
 		} catch {
-			setStatus("The browser did not allow clipboard access.");
+			setStatus(t("status.clipboardDenied"));
 		}
 	}
 
 	async function translatePastedText() {
 		if (!translationText.trim()) {
-			setStatus("Paste text before translating it.");
+			setStatus(t("status.pasteBeforeTranslate"));
 			return;
 		}
-		setStatus("Translating pasted text…");
+		setStatus(t("status.translatingPasted"));
 		try {
 			const result = await bffJson<unknown>(
 				translationUrl(translationText, {
@@ -647,36 +650,30 @@ export function App() {
 			);
 			const text = translationResultText(result);
 			if (!text) {
-				setStatus(
-					"The translation returned no text. Check the language pair and try again.",
-				);
+				setStatus(t("status.translationNoText"));
 				return;
 			}
 			setTranslationResult(text);
-			setStatus("Pasted text translated.");
+			setStatus(t("status.pastedTranslated"));
 		} catch (error) {
 			setStatus(
-				error instanceof Error
-					? error.message
-					: "Could not translate the pasted text. Check the Diduny service and try again.",
+				error instanceof Error ? error.message : t("status.couldNotTranslate"),
 			);
 		}
 	}
 
 	if (authState === "checking") {
-		return <main className="shell">Checking your session…</main>;
+		return <main className="shell">{t("app.checkingSession")}</main>;
 	}
 
 	if (authState !== "signed-in") {
 		return (
 			<main className="shell auth">
-				<h1>Diduny</h1>
-				<p>
-					Sign in here once to make this browser available to the extension.
-				</p>
+				<h1>{t("app.title")}</h1>
+				<p>{t("auth.description")}</p>
 				{authState === "otp-sent" ? (
 					<form onSubmit={verifyOtp}>
-						<label htmlFor="otp">One-time code</label>
+						<label htmlFor="otp">{t("auth.oneTimeCode")}</label>
 						<input
 							autoComplete="one-time-code"
 							id="otp"
@@ -686,14 +683,14 @@ export function App() {
 							required
 							value={otp}
 						/>
-						<button type="submit">Sign in</button>
+						<button type="submit">{t("auth.signIn")}</button>
 						<button onClick={() => setAuthState("signed-out")} type="button">
-							Use another email
+							{t("auth.useAnotherEmail")}
 						</button>
 					</form>
 				) : (
 					<form onSubmit={sendOtp}>
-						<label htmlFor="email">Email</label>
+						<label htmlFor="email">{t("auth.email")}</label>
 						<input
 							autoComplete="email"
 							id="email"
@@ -702,7 +699,7 @@ export function App() {
 							type="email"
 							value={email}
 						/>
-						<button type="submit">Send one-time code</button>
+						<button type="submit">{t("auth.sendCode")}</button>
 					</form>
 				)}
 				<p aria-live="polite" className="status">
@@ -717,17 +714,17 @@ export function App() {
 		<main className="shell workspace">
 			<header>
 				<div>
-					<h1>Diduny</h1>
+					<h1>{t("app.title")}</h1>
 					<p>{signedInEmail}</p>
 				</div>
 				<div className="workspace-actions">
-					<nav aria-label="Workspace">
+					<nav aria-label={t("app.workspace")}>
 						<button
 							aria-current={view === "dictation" ? "page" : undefined}
 							onClick={() => setView("dictation")}
 							type="button"
 						>
-							Dictation
+							{t("app.nav.dictation")}
 						</button>
 						<button
 							aria-current={view === "library" ? "page" : undefined}
@@ -735,7 +732,7 @@ export function App() {
 							onClick={() => setView("library")}
 							type="button"
 						>
-							Library
+							{t("app.nav.library")}
 						</button>
 						<button
 							aria-current={view === "settings" ? "page" : undefined}
@@ -743,11 +740,11 @@ export function App() {
 							onClick={() => setView("settings")}
 							type="button"
 						>
-							Settings
+							{t("app.nav.settings")}
 						</button>
 					</nav>
 					<button onClick={() => void signOut()} type="button">
-						Sign out
+						{t("app.nav.signOut")}
 					</button>
 				</div>
 			</header>
@@ -764,7 +761,7 @@ export function App() {
 			) : (
 				<>
 					<label className="language" htmlFor="language">
-						Language hints
+						{t("dictation.languageHints")}
 						<input
 							id="language"
 							onChange={(event) => setLanguage(event.target.value)}
@@ -779,34 +776,38 @@ export function App() {
 							onChange={(event) => setTranslationMode(event.target.checked)}
 							type="checkbox"
 						/>
-						Translation dictation
+						{t("dictation.translationMode")}
 					</label>
 					{translationMode ? (
 						<p>
-							Translates {translationSourceLanguage} to{" "}
-							{translationTargetLanguage}.
+							{t("dictation.translates", {
+								source: translationSourceLanguage,
+								target: translationTargetLanguage,
+							})}
 						</p>
 					) : null}
 					<textarea
-						aria-label="Dictation document"
+						aria-label={t("dictation.document")}
 						ref={documentInput}
 						onChange={(event) => setDocumentText(event.target.value)}
-						placeholder="Your dictation appears here. You can edit it while you work."
+						placeholder={t("dictation.documentPlaceholder")}
 						value={documentText}
 					/>
 					{captureState !== "idle" ? (
 						<section
 							aria-hidden={announceLiveTranscript ? undefined : true}
-							aria-label="Live transcript"
+							aria-label={t("liveTranscript.title")}
 							className="live-transcript"
 						>
-							<h2>Live transcript</h2>
+							<h2>{t("liveTranscript.title")}</h2>
 							<p aria-live={announceLiveTranscript ? "polite" : undefined}>
-								<span className="token-state">Final</span>
+								<span className="token-state">{t("liveTranscript.final")}</span>
 								<span data-testid="live-final-text">{liveFinalText}</span>
 							</p>
 							<p aria-hidden="true" className="provisional-token">
-								<span className="token-state">Provisional</span>
+								<span className="token-state">
+									{t("liveTranscript.provisional")}
+								</span>
 								<span data-testid="live-provisional-text">
 									{liveProvisionalText}
 								</span>
@@ -819,7 +820,7 @@ export function App() {
 							onClick={toggleCapture}
 							type="button"
 						>
-							{isRecording ? "Stop dictation" : "Start dictation"}
+							{isRecording ? t("dictation.stop") : t("dictation.start")}
 						</button>
 						<button
 							disabled={captureState !== "idle"}
@@ -828,26 +829,26 @@ export function App() {
 							onPointerUp={stopHoldCapture}
 							type="button"
 						>
-							Hold to record
+							{t("dictation.hold")}
 						</button>
 						<button
 							disabled={!isRecording}
 							onClick={() => void cancelCapture()}
 							type="button"
 						>
-							Cancel
+							{t("dictation.cancel")}
 						</button>
 						<button
 							disabled={!documentText}
 							onClick={() => void copyDocument()}
 							type="button"
 						>
-							Copy
+							{t("dictation.copy")}
 						</button>
 					</div>
 					<div className="meter-row">
 						<div
-							aria-label="Microphone level"
+							aria-label={t("dictation.microphoneLevel")}
 							aria-valuemax={100}
 							aria-valuemin={0}
 							aria-valuenow={Math.round(level * 100)}
@@ -859,26 +860,23 @@ export function App() {
 						</div>
 						<output>
 							{isRecording
-								? `${elapsed}s`
+								? t("dictation.meterElapsed", { seconds: elapsed })
 								: captureState === "sending"
-									? "Sending"
-									: "Idle"}
+									? t("dictation.meterSending")
+									: t("dictation.meterIdle")}
 						</output>
 					</div>
 					<p className="shortcut">
-						Shortcut: {dictationShortcut} outside text fields.
+						{t("dictation.shortcut", { shortcut: dictationShortcut })}
 					</p>
 					<section
 						aria-labelledby="paste-translation-title"
 						className="settings-section"
 					>
-						<h2 id="paste-translation-title">Paste-in translation</h2>
-						<p>
-							Paste text into Diduny to translate it. Other applications are not
-							read.
-						</p>
+						<h2 id="paste-translation-title">{t("dictation.pasteTitle")}</h2>
+						<p>{t("dictation.pasteDescription")}</p>
 						<label htmlFor="translation-text">
-							Text to translate
+							{t("dictation.textToTranslate")}
 							<textarea
 								id="translation-text"
 								onChange={(event) => setTranslationText(event.target.value)}
@@ -890,9 +888,11 @@ export function App() {
 							onClick={() => void translatePastedText()}
 							type="button"
 						>
-							Translate pasted text
+							{t("dictation.translatePasted")}
 						</button>
-						<output aria-label="Translation result">{translationResult}</output>
+						<output aria-label={t("dictation.translationResult")}>
+							{translationResult}
+						</output>
 					</section>
 					<p
 						aria-live="polite"

@@ -5,6 +5,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { wordCount } from "../../src/core/models";
 import type { RetentionCategory, RetentionPolicy } from "../../src/core/ports";
 import type { Settings } from "../../src/core/settings";
@@ -19,6 +20,7 @@ import {
 } from "./audio-devices";
 import {
 	type UiLocale,
+	default as i18n,
 	languageName,
 	setUiLocale,
 	supportedUiLocales,
@@ -31,18 +33,17 @@ import {
 } from "./settings";
 
 const retentionOptions: ReadonlyArray<{
-	label: string;
+	labelKey: string;
 	value: RetentionPolicy;
 }> = [
-	{ label: "Never save", value: "never" },
-	{ label: "7 days", value: "days7" },
-	{ label: "30 days", value: "days30" },
-	{ label: "90 days", value: "days90" },
-	{ label: "1 year", value: "year1" },
-	{ label: "Keep forever", value: "forever" },
+	{ labelKey: "settings.retention.never", value: "never" },
+	{ labelKey: "settings.retention.days7", value: "days7" },
+	{ labelKey: "settings.retention.days30", value: "days30" },
+	{ labelKey: "settings.retention.days90", value: "days90" },
+	{ labelKey: "settings.retention.year1", value: "year1" },
+	{ labelKey: "settings.retention.forever", value: "forever" },
 ];
 
-const calibrationText = "Clear ideas deserve calm words and careful attention.";
 const translationLanguages = ["en", "uk"] as const;
 
 function ownLanguageName(code: (typeof translationLanguages)[number]) {
@@ -78,9 +79,7 @@ function formatDuration(value: number) {
 }
 
 function errorMessage(error: unknown) {
-	return error instanceof Error
-		? error.message
-		: "Could not save this setting. Check the local Diduny service and try again.";
+	return error instanceof Error ? error.message : i18n.t("settings.saveFailed");
 }
 
 type MicrophoneAccess =
@@ -97,6 +96,7 @@ function MicrophoneSettings({
 	onSave(deviceId: string | null): Promise<void>;
 	savedDeviceId: string | null;
 }) {
+	const { t } = useTranslation();
 	const [access, setAccess] = useState<MicrophoneAccess>("checking");
 	const [devices, setDevices] = useState<ReturnType<typeof audioInputDevices>>(
 		[],
@@ -147,7 +147,7 @@ function MicrophoneSettings({
 			setAccess("unsupported");
 			return;
 		}
-		setMessage("Requesting microphone permission…");
+		setMessage(t("microphone.requesting"));
 		try {
 			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 			for (const track of stream.getTracks()) track.stop();
@@ -155,7 +155,7 @@ function MicrophoneSettings({
 			setDevices(
 				audioInputDevices(await navigator.mediaDevices.enumerateDevices()),
 			);
-			setMessage("Microphone permission granted.");
+			setMessage(t("microphone.granted"));
 		} catch (error) {
 			setAccess(
 				microphonePermissionFailure(error) === "denied" ? "denied" : "prompt",
@@ -167,7 +167,7 @@ function MicrophoneSettings({
 	async function saveDevice(value: string) {
 		try {
 			await onSave(value || null);
-			setMessage("Microphone preference saved.");
+			setMessage(t("microphone.preferenceSaved"));
 		} catch (error) {
 			setMessage(errorMessage(error));
 		}
@@ -175,38 +175,35 @@ function MicrophoneSettings({
 
 	return (
 		<section aria-labelledby="microphone-title" className="settings-section">
-			<h3 id="microphone-title">Microphone</h3>
-			{access === "checking" ? <p>Checking microphone permission…</p> : null}
+			<h3 id="microphone-title">{t("microphone.title")}</h3>
+			{access === "checking" ? <p>{t("microphone.checking")}</p> : null}
 			{access === "prompt" ? (
 				<>
-					<p>Microphone permission is required before devices can be named.</p>
+					<p>{t("microphone.permissionRequired")}</p>
 					<button onClick={() => void requestPermission()} type="button">
-						Allow microphone
+						{t("microphone.allow")}
 					</button>
 				</>
 			) : null}
 			{access === "denied" ? (
-				<p role="alert">
-					Microphone access is blocked. Open this site’s settings in your
-					browser, allow Microphone, then return here and refresh.
-				</p>
+				<p role="alert">{t("microphone.blocked")}</p>
 			) : null}
 			{access === "unsupported" ? (
-				<p role="alert">This browser cannot enumerate microphone devices.</p>
+				<p role="alert">{t("microphone.unsupported")}</p>
 			) : null}
 			{access === "granted" && devices.length === 0 ? (
-				<p role="alert">No microphone is available to this browser.</p>
+				<p role="alert">{t("microphone.noneAvailable")}</p>
 			) : null}
 			{access === "granted" && devices.length ? (
 				<>
 					<label htmlFor="microphone-device">
-						Recording microphone
+						{t("microphone.recordingMicrophone")}
 						<select
 							id="microphone-device"
 							onChange={(event) => void saveDevice(event.target.value)}
 							value={device?.deviceId ?? ""}
 						>
-							<option value="">Browser default microphone</option>
+							<option value="">{t("microphone.browserDefault")}</option>
 							{devices.map((input) => (
 								<option key={input.deviceId} value={input.deviceId}>
 									{input.label}
@@ -216,14 +213,13 @@ function MicrophoneSettings({
 					</label>
 					{savedDeviceMissing ? (
 						<p role="alert">
-							Saved microphone is unavailable. The browser will use{" "}
-							{device?.label}.
+							{t("microphone.savedUnavailable", { device: device?.label })}
 						</p>
 					) : null}
 				</>
 			) : null}
 			<button onClick={() => void inspect()} type="button">
-				Refresh microphone devices
+				{t("microphone.refresh")}
 			</button>
 			<p aria-live="polite" className="status">
 				{message}
@@ -239,6 +235,7 @@ export function SettingsPane({
 	onSettingsChanged(): void;
 	revision: number;
 }) {
+	const { t } = useTranslation();
 	const [snapshot, setSnapshot] = useState<WorkspaceSettingsSnapshot | null>(
 		null,
 	);
@@ -292,9 +289,7 @@ export function SettingsPane({
 				textCleanupEnabled: cleanupEnabled,
 			});
 			setSnapshot((current) => (current ? { ...current, settings } : current));
-			setMessage(
-				"Cleanup settings saved. New library views and copies use this text.",
-			);
+			setMessage(t("settings.cleanupSaved"));
 			onSettingsChanged();
 		} catch (error) {
 			setMessage(errorMessage(error));
@@ -308,7 +303,7 @@ export function SettingsPane({
 		try {
 			const retention = await updateRetentionPolicy(category, policy);
 			setSnapshot((current) => (current ? { ...current, retention } : current));
-			setMessage("Retention policy saved.");
+			setMessage(t("settings.retentionSaved"));
 			onSettingsChanged();
 		} catch (error) {
 			setMessage(errorMessage(error));
@@ -332,11 +327,11 @@ export function SettingsPane({
 		event.preventDefault();
 		const shortcut = normalizeShortcut(dictationShortcut);
 		if (!shortcut) {
-			setMessage("Use one key, optionally with Ctrl, Alt, Shift, or Meta.");
+			setMessage(t("settings.invalidShortcut"));
 			return;
 		}
 		if (isReservedShortcut(shortcut)) {
-			setMessage(`${shortcut} is reserved by this browser and cannot be used.`);
+			setMessage(t("settings.reservedShortcut", { shortcut }));
 			return;
 		}
 		try {
@@ -345,7 +340,9 @@ export function SettingsPane({
 			});
 			setDictationShortcut(settings.dictationShortcut);
 			setSnapshot((current) => (current ? { ...current, settings } : current));
-			setMessage(`Shortcut saved: ${settings.dictationShortcut}.`);
+			setMessage(
+				t("settings.shortcutSaved", { shortcut: settings.dictationShortcut }),
+			);
 			onSettingsChanged();
 		} catch (error) {
 			setMessage(errorMessage(error));
@@ -362,7 +359,7 @@ export function SettingsPane({
 			setSnapshot((current) => (current ? { ...current, settings } : current));
 			setTranslationSourceLanguage(settings.translationSourceLanguage);
 			setTranslationTargetLanguage(settings.translationTargetLanguage);
-			setMessage("Translation languages saved.");
+			setMessage(t("settings.translationSaved"));
 			onSettingsChanged();
 		} catch (error) {
 			setMessage(errorMessage(error));
@@ -376,7 +373,7 @@ export function SettingsPane({
 			setSnapshot((current) => (current ? { ...current, settings } : current));
 			setUiLocaleState(settings.uiLocale);
 			await setUiLocale(settings.uiLocale);
-			setMessage("Interface language saved.");
+			setMessage(t("settings.interfaceLanguageSaved"));
 			onSettingsChanged();
 		} catch (error) {
 			setMessage(errorMessage(error));
@@ -391,7 +388,7 @@ export function SettingsPane({
 			});
 			setSnapshot((current) => (current ? { ...current, settings } : current));
 			setAnnounceLiveTranscript(settings.announceLiveTranscript);
-			setMessage("Accessibility setting saved.");
+			setMessage(t("settings.accessibilitySaved"));
 			onSettingsChanged();
 		} catch (error) {
 			setMessage(errorMessage(error));
@@ -401,7 +398,7 @@ export function SettingsPane({
 	function startTypingTest() {
 		setTypingText("");
 		setTypingStartedAt(performance.now());
-		setMessage("Type the sentence, then save your measured speed.");
+		setMessage(t("settings.typingStart"));
 	}
 
 	async function finishTypingTest() {
@@ -409,7 +406,7 @@ export function SettingsPane({
 		const words = wordCount(typingText);
 		const elapsedSeconds = (performance.now() - typingStartedAt) / 1_000;
 		if (!words || elapsedSeconds <= 0) {
-			setMessage("Type at least one word before saving your measured speed.");
+			setMessage(t("settings.typingNeedsWords"));
 			return;
 		}
 		try {
@@ -420,28 +417,28 @@ export function SettingsPane({
 			setTypingStartedAt(null);
 			await refresh();
 			onSettingsChanged();
-			setMessage("Typing speed measured and saved.");
+			setMessage(t("settings.typingSaved"));
 		} catch (error) {
 			setMessage(errorMessage(error));
 		}
 	}
 
 	if (!snapshot) {
-		return <p aria-live="polite">Loading settings…</p>;
+		return <p aria-live="polite">{t("settings.loading")}</p>;
 	}
 
 	const { settings, stats, storage } = snapshot;
 	return (
 		<section aria-labelledby="settings-title" className="settings">
 			<header>
-				<h2 id="settings-title">Settings</h2>
+				<h2 id="settings-title">{t("settings.title")}</h2>
 				<button onClick={() => void refresh()} type="button">
-					Refresh data
+					{t("settings.refresh")}
 				</button>
 			</header>
 
 			<section aria-labelledby="cleanup-title" className="settings-section">
-				<h3 id="cleanup-title">Transcript cleanup</h3>
+				<h3 id="cleanup-title">{t("settings.cleanupTitle")}</h3>
 				<form onSubmit={saveCleanup}>
 					<label className="checkbox" htmlFor="cleanup-enabled">
 						<input
@@ -450,10 +447,10 @@ export function SettingsPane({
 							onChange={(event) => setCleanupEnabled(event.target.checked)}
 							type="checkbox"
 						/>
-						Enable filler-word cleanup
+						{t("settings.enableCleanup")}
 					</label>
 					<label htmlFor="filler-words">
-						Filler words, one per line
+						{t("settings.fillerWords")}
 						<textarea
 							id="filler-words"
 							onChange={(event) => setFillerWords(event.target.value)}
@@ -461,14 +458,14 @@ export function SettingsPane({
 						/>
 					</label>
 					<label htmlFor="protected-lexicon">
-						Protected terms, one per line
+						{t("settings.protectedLexicon")}
 						<textarea
 							id="protected-lexicon"
 							onChange={(event) => setLexicon(event.target.value)}
 							value={lexicon}
 						/>
 					</label>
-					<button type="submit">Save cleanup</button>
+					<button type="submit">{t("settings.saveCleanup")}</button>
 				</form>
 			</section>
 
@@ -476,10 +473,10 @@ export function SettingsPane({
 				aria-labelledby="interface-language-title"
 				className="settings-section"
 			>
-				<h3 id="interface-language-title">Interface language</h3>
+				<h3 id="interface-language-title">{t("settings.interfaceLanguage")}</h3>
 				<form onSubmit={saveUiLocale}>
 					<label htmlFor="ui-locale">
-						Interface language
+						{t("settings.interfaceLanguage")}
 						<select
 							id="ui-locale"
 							onChange={(event) =>
@@ -494,7 +491,7 @@ export function SettingsPane({
 							))}
 						</select>
 					</label>
-					<button type="submit">Save interface language</button>
+					<button type="submit">{t("settings.saveInterfaceLanguage")}</button>
 				</form>
 			</section>
 
@@ -502,7 +499,7 @@ export function SettingsPane({
 				aria-labelledby="accessibility-title"
 				className="settings-section"
 			>
-				<h3 id="accessibility-title">Accessibility</h3>
+				<h3 id="accessibility-title">{t("settings.accessibilityTitle")}</h3>
 				<form onSubmit={saveAccessibility}>
 					<label className="checkbox" htmlFor="announce-live-transcript">
 						<input
@@ -513,13 +510,10 @@ export function SettingsPane({
 							}
 							type="checkbox"
 						/>
-						Announce final live transcript
+						{t("settings.announceLive")}
 					</label>
-					<p>
-						Live transcript is hidden from screen readers unless you enable
-						this.
-					</p>
-					<button type="submit">Save accessibility settings</button>
+					<p>{t("settings.announceLiveDescription")}</p>
+					<button type="submit">{t("settings.saveAccessibility")}</button>
 				</form>
 			</section>
 
@@ -529,10 +523,10 @@ export function SettingsPane({
 			/>
 
 			<section aria-labelledby="shortcut-title" className="settings-section">
-				<h3 id="shortcut-title">Keyboard shortcut</h3>
+				<h3 id="shortcut-title">{t("settings.shortcutTitle")}</h3>
 				<form onSubmit={saveShortcut}>
 					<label htmlFor="dictation-shortcut">
-						Toggle dictation
+						{t("settings.toggleDictation")}
 						<input
 							aria-describedby="dictation-shortcut-help"
 							id="dictation-shortcut"
@@ -540,11 +534,8 @@ export function SettingsPane({
 							value={dictationShortcut}
 						/>
 					</label>
-					<p id="dictation-shortcut-help">
-						Use one key, optionally with Ctrl, Alt, Shift, or Meta.
-						Browser-reserved chords are refused.
-					</p>
-					<button type="submit">Save shortcut</button>
+					<p id="dictation-shortcut-help">{t("settings.shortcutHelp")}</p>
+					<button type="submit">{t("settings.saveShortcut")}</button>
 				</form>
 			</section>
 
@@ -552,10 +543,12 @@ export function SettingsPane({
 				aria-labelledby="translation-languages-title"
 				className="settings-section"
 			>
-				<h3 id="translation-languages-title">Translation languages</h3>
+				<h3 id="translation-languages-title">
+					{t("settings.translationLanguages")}
+				</h3>
 				<form onSubmit={saveTranslationLanguages}>
 					<label htmlFor="translation-source-language">
-						Translation source language
+						{t("settings.translationSource")}
 						<select
 							id="translation-source-language"
 							onChange={(event) =>
@@ -571,7 +564,7 @@ export function SettingsPane({
 						</select>
 					</label>
 					<label htmlFor="translation-target-language">
-						Translation target language
+						{t("settings.translationTarget")}
 						<select
 							id="translation-target-language"
 							onChange={(event) =>
@@ -586,21 +579,18 @@ export function SettingsPane({
 							))}
 						</select>
 					</label>
-					<button type="submit">Save translation languages</button>
+					<button type="submit">{t("settings.saveTranslation")}</button>
 				</form>
 			</section>
 
 			<section aria-labelledby="retention-title" className="settings-section">
-				<h3 id="retention-title">Retention</h3>
-				<p>
-					“Never save” writes neither a library row nor an audio file after
-					capture.
-				</p>
+				<h3 id="retention-title">{t("settings.retentionTitle")}</h3>
+				<p>{t("settings.neverSaveDescription")}</p>
 				{(["dictation", "meeting"] as const).map((category) => (
 					<label key={category} htmlFor={`retention-${category}`}>
 						{category === "dictation"
-							? "Dictation and translation"
-							: "Meetings"}
+							? t("settings.dictationAndTranslation")
+							: t("settings.meetings")}
 						<select
 							id={`retention-${category}`}
 							onChange={(event) =>
@@ -613,7 +603,7 @@ export function SettingsPane({
 						>
 							{retentionOptions.map((option) => (
 								<option key={option.value} value={option.value}>
-									{option.label}
+									{t(option.labelKey)}
 								</option>
 							))}
 						</select>
@@ -622,33 +612,42 @@ export function SettingsPane({
 			</section>
 
 			<section aria-labelledby="statistics-title" className="settings-section">
-				<h3 id="statistics-title">Dictation statistics</h3>
-				<p>{stats.recordingCount} recordings in this library.</p>
-				<p>{stats.wordCount} visible dictation words.</p>
-				<p>{formatDuration(stats.dictationDurationSeconds)} dictated.</p>
+				<h3 id="statistics-title">{t("settings.statisticsTitle")}</h3>
+				<p>{t("statistics.recordings", { count: stats.recordingCount })}</p>
+				<p>{t("settings.visibleWords", { count: stats.wordCount })}</p>
+				<p>
+					{t("settings.dictated", {
+						duration: formatDuration(stats.dictationDurationSeconds),
+					})}
+				</p>
 				<p>
 					{stats.timeSavedSeconds === null
-						? "Time saved needs your measured typing speed."
-						: `${formatDuration(Math.abs(stats.timeSavedSeconds))} ${
-								stats.timeSavedSeconds >= 0 ? "saved" : "slower than typing"
-							}`}
+						? t("settings.timeSavedNeedsSpeed")
+						: stats.timeSavedSeconds >= 0
+							? t("settings.timeSaved", {
+									duration: formatDuration(Math.abs(stats.timeSavedSeconds)),
+								})
+							: t("settings.slowerThanTyping", {
+									duration: formatDuration(Math.abs(stats.timeSavedSeconds)),
+								})}
 				</p>
 				{settings.typingSpeedWordsPerMinute === null ? null : (
 					<p>
-						Measured speed: {Math.round(settings.typingSpeedWordsPerMinute)}{" "}
-						words per minute.
+						{t("settings.measuredSpeed", {
+							speed: Math.round(settings.typingSpeedWordsPerMinute),
+						})}
 					</p>
 				)}
-				<p>Type this sentence at your normal pace:</p>
-				<blockquote>{calibrationText}</blockquote>
+				<p>{t("settings.typingPrompt")}</p>
+				<blockquote>{t("settings.calibrationText")}</blockquote>
 				{typingStartedAt === null ? (
 					<button onClick={startTypingTest} type="button">
-						Start typing test
+						{t("settings.startTypingTest")}
 					</button>
 				) : (
 					<>
 						<label htmlFor="typing-test-text">
-							Typing test text
+							{t("settings.typingTestText")}
 							<textarea
 								id="typing-test-text"
 								onChange={(event) => setTypingText(event.target.value)}
@@ -657,18 +656,22 @@ export function SettingsPane({
 							/>
 						</label>
 						<button onClick={() => void finishTypingTest()} type="button">
-							Save measured speed
+							{t("settings.saveMeasuredSpeed")}
 						</button>
 					</>
 				)}
 			</section>
 
 			<section aria-labelledby="storage-title" className="settings-section">
-				<h3 id="storage-title">Storage on this device</h3>
-				<p>Data directory: {storage.dataDir}</p>
-				<p>Diduny uses {formatBytes(storage.usedBytes)} on disk.</p>
-				<p>{formatBytes(storage.freeBytes)} free on this filesystem.</p>
-				<a href="/bff/library/export">Download library export</a>
+				<h3 id="storage-title">{t("settings.storageTitle")}</h3>
+				<p>{t("settings.dataDirectory", { path: storage.dataDir })}</p>
+				<p>
+					{t("settings.usesDisk", { size: formatBytes(storage.usedBytes) })}
+				</p>
+				<p>
+					{t("settings.freeDisk", { size: formatBytes(storage.freeBytes) })}
+				</p>
+				<a href="/bff/library/export">{t("settings.downloadExport")}</a>
 			</section>
 
 			<p aria-live="polite" className="status">

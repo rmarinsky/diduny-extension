@@ -26,29 +26,17 @@ function prototypeProperty(value: unknown, property: string) {
 export const capabilityRequirements = [
 	{
 		key: "audioWorklet",
-		label: "AudioWorklet",
-		reason: "it keeps microphone capture responsive while dictating.",
 	},
 	{
 		key: "opfsSyncAccess",
-		label: "OPFS synchronous access",
-		reason: "it keeps in-progress audio recoverable after an interrupted tab.",
 	},
 	{
 		key: "displayCaptureAudio",
-		label: "Display-capture audio",
-		reason: "it is required for meeting recording.",
 	},
 	{
 		key: "onDeviceSpeechRecognition",
-		label: "On-device speech recognition",
-		reason: "it enables the local trial path without sending audio away.",
 	},
-] as const satisfies ReadonlyArray<{
-	key: keyof BrowserCapabilities;
-	label: string;
-	reason: string;
-}>;
+] as const satisfies ReadonlyArray<{ key: keyof BrowserCapabilities }>;
 
 export function detectBrowserCapabilities(
 	environment: BrowserEnvironment = globalThis,

@@ -154,6 +154,17 @@ test("the web library searches server-side and edits, copies, plays, and deletes
 		await expect.poll(() => e2eLibrary.settings().uiLocale).toBe("uk");
 		await expect(page.locator("html")).toHaveAttribute("lang", "uk");
 		await expect(
+			page.getByRole("button", { name: "Диктування" }),
+		).toBeVisible();
+		await page
+			.getByRole("combobox", { name: "Мова інтерфейсу" })
+			.selectOption("en");
+		await page
+			.getByRole("button", { name: "Зберегти мову інтерфейсу" })
+			.click();
+		await expect.poll(() => e2eLibrary.settings().uiLocale).toBe("en");
+		await expect(page.locator("html")).toHaveAttribute("lang", "en");
+		await expect(
 			page.getByText(
 				"Microphone permission is required before devices can be named.",
 			),
