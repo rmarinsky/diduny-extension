@@ -1,8 +1,17 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { buildServer } from "./server";
+import { SqliteSessionStore } from "./src/server/session-store";
+import { prepareBffStartup } from "./src/server/startup";
 
-const server = await buildServer({ staticDir: resolve("web/dist") });
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 3000);
+const startup = await prepareBffStartup({
+	dataDir: process.env.DATA_DIR,
+	host,
+});
+const server = await buildServer({
+	sessions: new SqliteSessionStore(join(startup.dataDir, "diduny.db")),
+	staticDir: resolve("web/dist"),
+});
 
 await server.listen({ host, port });
