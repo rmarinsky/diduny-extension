@@ -6,6 +6,7 @@ export default defineConfig({
 		name: "Diduny",
 		description: "Voice dictation & meeting recording",
 		minimum_chrome_version: "116",
+		host_permissions: ["http://localhost/*"],
 		permissions: [
 			"activeTab",
 			"sidePanel",
@@ -18,6 +19,10 @@ export default defineConfig({
 		],
 		side_panel: {
 			default_path: "sidepanel/index.html",
+		},
+		options_ui: {
+			open_in_tab: true,
+			page: "options/index.html",
 		},
 		commands: {
 			"toggle-recording": {

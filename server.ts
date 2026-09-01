@@ -1,7 +1,10 @@
 import fastifyStatic from "@fastify/static";
-import Fastify from "fastify";
+import websocket from "@fastify/websocket";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { type BffAuthGateway, ProxyOtpGateway } from "./src/server/auth";
+import { RealtimeRelay } from "./src/server/realtime-relay";
 import {
+	extensionSessionCookieName,
 	relayRequest,
 	sessionCookieName,
 	sessionIdFromCookie,
@@ -28,9 +31,36 @@ function validOtp(otp: unknown): otp is string {
 	return typeof otp === "string" && /^\d{6}$/.test(otp);
 }
 
-function sessionCookie(id: string, expired = false) {
+function sessionCookie(
+	name: string,
+	id: string,
+	path: string,
+	sameSite: "Lax" | "None",
+	expired = false,
+) {
 	const expires = expired ? "; Max-Age=0" : "";
-	return `${sessionCookieName}=${encodeURIComponent(id)}; Path=/; HttpOnly; Secure; SameSite=Lax${expires}`;
+	return `${name}=${encodeURIComponent(id)}; Path=${path}; HttpOnly; Secure; SameSite=${sameSite}${expires}`;
+}
+
+function sessionCookies(id: string, expired = false) {
+	return [
+		sessionCookie(sessionCookieName, id, "/", "Lax", expired),
+		// Scope the cross-site cookie to extension-only routes. The normal web
+		// session stays Lax, while the extension never receives a bearer token.
+		sessionCookie(
+			extensionSessionCookieName,
+			id,
+			"/bff/extension/",
+			"None",
+			expired,
+		),
+	];
+}
+
+function isExtensionRequest(request: FastifyRequest) {
+	if (request.headers["sec-fetch-site"] === "none") return true;
+	const origin = request.headers.origin;
+	return typeof origin === "string" && origin.startsWith("chrome-extension://");
 }
 
 export async function buildServer({
@@ -42,7 +72,15 @@ export async function buildServer({
 }: ServerOptions = {}) {
 	const server = Fastify({ logger: false });
 	const authGateway = auth ?? new ProxyOtpGateway(fetch, upstreamUrl);
+	const realtimeRelay = new RealtimeRelay(fetch, sessions, upstreamUrl);
 	const refreshes = new Map<string, Promise<BffSession>>();
+	await server.register(websocket);
+	server.addContentTypeParser(
+		/^multipart\/form-data/i,
+		(_request, payload, done) => {
+			done(null, payload);
+		},
+	);
 	const refreshSession = async (id: string, stale: BffSession) => {
 		const current = await sessions.get(id);
 		if (!current) throw new Error("session no longer exists");
@@ -67,7 +105,64 @@ export async function buildServer({
 		}
 	};
 
-	server.get("/bff/health", async () => ({ status: "ok" }));
+	const relay = async (
+		request: FastifyRequest,
+		reply: FastifyReply,
+		cookieName = sessionCookieName,
+	) => {
+		const result = await relayRequest({
+			cookieName,
+			fetch,
+			refreshSession,
+			request,
+			sessions,
+			upstreamUrl,
+		});
+		if (result.kind === "not_found") {
+			return reply.code(404).send({ error: "not_found" });
+		}
+		if (result.kind === "unauthenticated") {
+			return reply.code(401).send({ error: "unauthenticated" });
+		}
+		if (result.kind === "unreachable") {
+			return reply.code(502).send({ error: "upstream_unreachable" });
+		}
+		for (const [name, value] of Object.entries(result.headers))
+			reply.header(name, value);
+		return reply.code(result.status).send(result.body);
+	};
+
+	const sessionResponse = async (
+		request: FastifyRequest,
+		cookieName = sessionCookieName,
+	) => {
+		const id = sessionIdFromCookie(request.headers.cookie, cookieName);
+		const session = id ? await sessions.get(id) : null;
+		return session
+			? {
+					authenticated: true,
+					...(session.email ? { email: session.email } : {}),
+				}
+			: { authenticated: false };
+	};
+
+	const logout = async (
+		request: FastifyRequest,
+		reply: FastifyReply,
+		cookieName = sessionCookieName,
+	) => {
+		const id = sessionIdFromCookie(request.headers.cookie, cookieName);
+		const session = id ? await sessions.get(id) : null;
+		if (id) await sessions.delete(id);
+		reply.header("set-cookie", sessionCookies("", true));
+		if (session) await authGateway.logout(session).catch(() => undefined);
+		return reply.code(204).send();
+	};
+
+	server.get("/bff/health", async () => ({
+		activeRealtimeSockets: realtimeRelay.activeUpstreamSockets,
+		status: "ok",
+	}));
 	server.post("/bff/auth/send-otp", async (request, reply) => {
 		const email = (request.body as { email?: unknown } | undefined)?.email;
 		if (!validEmail(email))
@@ -89,51 +184,60 @@ export async function buildServer({
 		try {
 			const session = await authGateway.verifyOtp(payload.email, payload.otp);
 			const id = await sessions.create(session);
-			reply.header("set-cookie", sessionCookie(id));
+			reply.header("set-cookie", sessionCookies(id));
 			return { email: session.email };
 		} catch {
 			return reply.code(401).send({ error: "otp_verification_failed" });
 		}
 	});
-	server.get("/bff/auth/session", async (request) => {
-		const id = sessionIdFromCookie(request.headers.cookie);
-		const session = id ? await sessions.get(id) : null;
-		return session
-			? {
-					authenticated: true,
-					...(session.email ? { email: session.email } : {}),
+	server.get("/bff/auth/session", (request) => sessionResponse(request));
+	server.post("/bff/auth/logout", (request, reply) => logout(request, reply));
+	server.all("/bff/api/*", (request, reply) => relay(request, reply));
+	server.get("/bff/extension/auth/session", async (request, reply) => {
+		if (!isExtensionRequest(request)) {
+			return reply.code(403).send({ error: "extension_origin_required" });
+		}
+		return sessionResponse(request, extensionSessionCookieName);
+	});
+	server.post("/bff/extension/auth/logout", async (request, reply) => {
+		if (!isExtensionRequest(request)) {
+			return reply.code(403).send({ error: "extension_origin_required" });
+		}
+		return logout(request, reply, extensionSessionCookieName);
+	});
+	server.all("/bff/extension/api/*", async (request, reply) => {
+		if (!isExtensionRequest(request)) {
+			return reply.code(403).send({ error: "extension_origin_required" });
+		}
+		return relay(request, reply, extensionSessionCookieName);
+	});
+	server.get(
+		"/bff/realtime",
+		{
+			preValidation: (request, reply) =>
+				realtimeRelay.authorizeUpgrade(request, reply),
+			websocket: true,
+		},
+		(socket, request) => realtimeRelay.connect(socket, request),
+	);
+	server.get(
+		"/bff/extension/realtime",
+		{
+			preValidation: async (request, reply) => {
+				if (!isExtensionRequest(request)) {
+					reply.code(403).send({ error: "extension_origin_required" });
+					return;
 				}
-			: { authenticated: false };
-	});
-	server.post("/bff/auth/logout", async (request, reply) => {
-		const id = sessionIdFromCookie(request.headers.cookie);
-		const session = id ? await sessions.get(id) : null;
-		if (id) await sessions.delete(id);
-		reply.header("set-cookie", sessionCookie("", true));
-		if (session) await authGateway.logout(session).catch(() => undefined);
-		return reply.code(204).send();
-	});
-	server.all("/bff/api/*", async (request, reply) => {
-		const result = await relayRequest({
-			fetch,
-			refreshSession,
-			request,
-			sessions,
-			upstreamUrl,
-		});
-		if (result.kind === "not_found") {
-			return reply.code(404).send({ error: "not_found" });
-		}
-		if (result.kind === "unauthenticated") {
-			return reply.code(401).send({ error: "unauthenticated" });
-		}
-		if (result.kind === "unreachable") {
-			return reply.code(502).send({ error: "upstream_unreachable" });
-		}
-		for (const [name, value] of Object.entries(result.headers))
-			reply.header(name, value);
-		return reply.code(result.status).send(result.body);
-	});
+				await realtimeRelay.authorizeUpgrade(
+					request,
+					reply,
+					extensionSessionCookieName,
+				);
+			},
+			websocket: true,
+		},
+		(socket, request) => realtimeRelay.connect(socket, request),
+	);
 
 	if (staticDir) {
 		await server.register(fastifyStatic, { root: staticDir });

@@ -14,11 +14,10 @@ export function App() {
 	if (auth.step !== "authenticated") {
 		return (
 			<AuthScreen
-				step={auth.step}
 				loading={auth.loading}
 				error={auth.error}
-				onSendOtp={auth.requestOtp}
-				onVerifyOtp={auth.submitOtp}
+				onOpenSignIn={() => void auth.openBffSignIn()}
+				onRefresh={() => void auth.refresh()}
 			/>
 		);
 	}

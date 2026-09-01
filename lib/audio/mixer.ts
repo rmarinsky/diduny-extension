@@ -24,6 +24,7 @@ export function mixStreams(
 	const destination = context.createMediaStreamDestination();
 
 	tabSource.connect(tabGain).connect(destination);
+	tabGain.connect(context.destination);
 	micSource.connect(micGain).connect(destination);
 
 	return {

@@ -1,5 +1,5 @@
+import { bffFetch } from "../bff/client";
 import type { TranscriptionResult } from "../types";
-import { apiFetch } from "./client";
 
 export async function transcribeAudio(
 	audioBlob: Blob,
@@ -7,6 +7,7 @@ export async function transcribeAudio(
 		language_hints?: string[];
 		enable_speaker_diarization?: boolean;
 	},
+	bffOrigin?: string,
 ): Promise<TranscriptionResult> {
 	const form = new FormData();
 	form.append("audio", audioBlob, "recording.webm");
@@ -19,9 +20,14 @@ export async function transcribeAudio(
 		}),
 	);
 
-	const res = await apiFetch("/api/v1/transcriptions", {
-		method: "POST",
-		body: form,
-	});
+	const res = await bffFetch(
+		"/bff/extension/api/transcriptions",
+		{
+			method: "POST",
+			body: form,
+		},
+		bffOrigin,
+	);
+	if (!res.ok) throw new Error(`Transcription failed (${res.status})`);
 	return res.json();
 }

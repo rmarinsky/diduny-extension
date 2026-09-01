@@ -1,4 +1,14 @@
-import { Database } from "bun:sqlite";
+import type { Database as BunDatabase } from "bun:sqlite";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+
+function openBunDatabase(path: string): BunDatabase {
+	const { Database } = require("bun:sqlite") as {
+		Database: new (filename: string) => BunDatabase;
+	};
+	return new Database(path);
+}
 
 export interface BffSession {
 	accessToken: string;
@@ -44,10 +54,10 @@ type SessionRow = {
 };
 
 export class SqliteSessionStore implements SessionStore {
-	private readonly database: Database;
+	private readonly database: BunDatabase;
 
 	constructor(path: string) {
-		this.database = new Database(path);
+		this.database = openBunDatabase(path);
 		this.database.exec(`
 			CREATE TABLE IF NOT EXISTS bff_sessions (
 				id TEXT PRIMARY KEY,

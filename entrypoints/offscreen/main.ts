@@ -1,16 +1,18 @@
+import { transcribeAudio } from "../../lib/api/transcription";
 import { mixStreams } from "../../lib/audio/mixer";
 import { crashLog, logError } from "../../lib/crash-log";
 import { onMessage, sendMessage } from "../../lib/messaging/bridge";
 import type { AudioSource, StartCapture } from "../../lib/messaging/types";
-import { RealtimeWSClient } from "../../lib/realtime/ws-client";
 
 interface AudioPipeline {
-	stream: MediaStream;
-	context: AudioContext;
+	bffOrigin: string;
+	chunks: Blob[];
 	cleanupContexts: AudioContext[];
-	worklet: AudioWorkletNode;
-	wsClient: RealtimeWSClient;
+	diarization: boolean;
+	language: string;
+	recorder: MediaRecorder;
 	source: AudioSource;
+	stream: MediaStream;
 }
 
 type ChromeDesktopAudioConstraints = MediaTrackConstraints & {
@@ -27,101 +29,65 @@ onMessage(async (msg) => {
 		await startCapture(msg);
 	} else if (msg.type === "stop-capture") {
 		await stopCapture();
+	} else if (msg.type === "forceClose") {
+		await discardCapture();
 	}
 });
 
 console.log("[offscreen] loaded");
 
-async function createPipeline(
+function createPipeline(
 	stream: MediaStream,
 	source: AudioSource,
-	accessToken: string,
+	bffOrigin: string,
 	language: string,
 	diarization: boolean,
-): Promise<AudioPipeline> {
-	const context = new AudioContext({ sampleRate: 16000 });
-
-	const wsClient = new RealtimeWSClient({
-		accessToken,
-		config: {
-			audio_format: "s16le",
-			sample_rate: 16000,
-			num_channels: 1,
-			language_hints: [language],
-			enable_speaker_diarization: diarization,
-		},
-		onTokens: (tokens) => {
-			sendMessage({ type: "capture-tokens", tokens, source });
-		},
-		onComplete: (text) => {
-			wsClient.close();
-			sendMessage({ type: "capture-complete", text, source });
-		},
-		onError: (error) => {
-			crashLog("offscreen:ws", "error", error);
-			sendMessage({ type: "capture-error", error });
-		},
-		onWarning: (warning) => {
-			crashLog("offscreen:ws", "warn", warning);
-		},
-		onReady: () => {},
+): AudioPipeline {
+	const chunks: Blob[] = [];
+	const recorder = new MediaRecorder(stream);
+	recorder.addEventListener("dataavailable", (event) => {
+		if (event.data.size > 0) chunks.push(event.data);
 	});
-	wsClient.connect();
-
-	const workletUrl = chrome.runtime.getURL("/pcm-worklet.js");
-	await context.audioWorklet.addModule(workletUrl);
-
-	const audioSource = context.createMediaStreamSource(stream);
-	const worklet = new AudioWorkletNode(context, "pcm-encoder");
-
-	worklet.port.onmessage = (event) => {
-		if (event.data.pcm) {
-			wsClient.sendAudio(event.data.pcm);
-		}
-	};
-
-	audioSource.connect(worklet);
-	worklet.connect(context.destination);
-
+	recorder.start();
 	return {
-		stream,
-		context,
+		bffOrigin,
+		chunks,
 		cleanupContexts: [],
-		worklet,
-		wsClient,
+		diarization,
+		language,
+		recorder,
 		source,
+		stream,
 	};
 }
 
 self.addEventListener("error", (event) => {
-	const msg =
+	const message =
 		event.error instanceof Error ? event.error.message : event.message;
 	crashLog(
 		"offscreen",
 		"error",
-		msg,
+		message,
 		event.error instanceof Error ? event.error.stack : undefined,
 	);
-	// Only kill recording for fatal errors during capture setup, not transient issues
 	if (pipelines.length === 0) {
-		sendMessage({ type: "capture-error", error: msg });
+		sendMessage({ type: "capture-error", error: message });
 	}
 });
 
 self.addEventListener("unhandledrejection", (event) => {
-	const msg =
+	const message =
 		event.reason instanceof Error
 			? event.reason.message
 			: String(event.reason ?? "Unhandled rejection");
 	crashLog(
 		"offscreen",
 		"error",
-		msg,
+		message,
 		event.reason instanceof Error ? event.reason.stack : undefined,
 	);
-	// Only kill recording for fatal errors during capture setup, not transient issues
 	if (pipelines.length === 0) {
-		sendMessage({ type: "capture-error", error: msg });
+		sendMessage({ type: "capture-error", error: message });
 	}
 });
 
@@ -145,19 +111,13 @@ async function startCapture(msg: StartCapture) {
 					tabStream = await navigator.mediaDevices.getUserMedia({
 						audio: desktopAudioConstraints,
 					});
-				} catch (err) {
+				} catch (error) {
 					crashLog(
 						"offscreen:tabAudio",
 						"warn",
-						`Tab audio capture failed, falling back to mic-only: ${err instanceof Error ? err.message : String(err)}`,
+						`Tab audio capture failed, falling back to mic-only: ${error instanceof Error ? error.message : String(error)}`,
 					);
 				}
-			} else {
-				crashLog(
-					"offscreen:tabAudio",
-					"warn",
-					"Source has no capturable audio, using mic-only",
-				);
 			}
 
 			if (tabStream) {
@@ -167,84 +127,105 @@ async function startCapture(msg: StartCapture) {
 					tabStream,
 					micStream,
 				);
-
-				const meetingPipeline = await createPipeline(
+				await mixerContext.resume();
+				const pipeline = createPipeline(
 					mixedStream,
 					"tab",
-					msg.accessToken,
+					msg.bffOrigin,
 					msg.language,
 					msg.diarization,
 				);
-				meetingPipeline.cleanupContexts.push(mixerContext);
-				pipelines = [meetingPipeline];
+				pipeline.cleanupContexts.push(mixerContext);
+				pipelines = [pipeline];
 			} else {
-				// Fallback: mic-only when system audio is unavailable
-				const micPipeline = await createPipeline(
-					micStream,
-					"mic",
-					msg.accessToken,
-					msg.language,
-					msg.diarization,
-				);
-				pipelines = [micPipeline];
+				pipelines = [
+					createPipeline(
+						micStream,
+						"mic",
+						msg.bffOrigin,
+						msg.language,
+						msg.diarization,
+					),
+				];
 			}
 		} else {
-			// Voice mode: mic only, single pipeline
 			const micStream = await navigator.mediaDevices.getUserMedia({
 				audio: true,
 			});
-			const micPipeline = await createPipeline(
-				micStream,
-				"mic",
-				msg.accessToken,
-				msg.language,
-				false,
-			);
-			pipelines = [micPipeline];
+			pipelines = [
+				createPipeline(micStream, "mic", msg.bffOrigin, msg.language, false),
+			];
 		}
-	} catch (err) {
-		logError("offscreen:startCapture", err);
+		await sendMessage({ type: "capture-ready" });
+	} catch (error) {
+		logError("offscreen:startCapture", error);
 		sendMessage({
 			type: "capture-error",
-			error: err instanceof Error ? err.message : "Failed to start capture",
+			error: error instanceof Error ? error.message : "Failed to start capture",
 		});
 	}
 }
 
 async function stopCapture() {
-	// Stop all pipelines
-	for (const pipeline of pipelines) {
-		pipeline.worklet.disconnect();
-		for (const track of pipeline.stream.getTracks()) {
-			track.stop();
-		}
-
-		const finalText = pipeline.wsClient.getFinalText();
-		pipeline.wsClient.finalize();
-
-		// Force-complete after 3s if server doesn't respond
-		let completed = false;
-		// biome-ignore lint/suspicious/noExplicitAny: accessing private opts for force-complete timeout
-		const originalOnComplete = (pipeline.wsClient as any).opts.onComplete;
-		// biome-ignore lint/suspicious/noExplicitAny: accessing private opts for force-complete timeout
-		(pipeline.wsClient as any).opts.onComplete = (text: string) => {
-			if (completed) return;
-			completed = true;
-			originalOnComplete(text);
-		};
-		const { wsClient, source } = pipeline;
-		setTimeout(() => {
-			if (!completed) {
-				completed = true;
-				wsClient.close();
-				sendMessage({ type: "capture-complete", text: finalText, source });
-			}
-		}, 3000);
-
-		for (const context of pipeline.cleanupContexts) {
-			await context.close();
-		}
-		await pipeline.context.close();
-	}
+	const activePipelines = pipelines;
 	pipelines = [];
+	for (const pipeline of activePipelines) {
+		try {
+			const audio = await stopAndCollect(pipeline);
+			const result = await transcribeAudio(
+				audio,
+				{
+					enable_speaker_diarization: pipeline.diarization,
+					language_hints: pipeline.language.split(","),
+				},
+				pipeline.bffOrigin,
+			);
+			await sendMessage({
+				type: "capture-complete",
+				text: result.text,
+				source: pipeline.source,
+			});
+		} catch (error) {
+			logError("offscreen:transcribe", error);
+			await sendMessage({
+				type: "capture-error",
+				error: error instanceof Error ? error.message : "Transcription failed",
+			});
+		}
+	}
+}
+
+async function discardCapture() {
+	const activePipelines = pipelines;
+	pipelines = [];
+	await Promise.all(activePipelines.map(stopAndDiscard));
+}
+
+async function stopAndCollect(pipeline: AudioPipeline): Promise<Blob> {
+	await stopRecorder(pipeline.recorder);
+	await stopPipelineResources(pipeline);
+	return new Blob(pipeline.chunks, { type: pipeline.recorder.mimeType });
+}
+
+async function stopAndDiscard(pipeline: AudioPipeline) {
+	if (pipeline.recorder.state !== "inactive") pipeline.recorder.stop();
+	await stopPipelineResources(pipeline);
+}
+
+function stopRecorder(recorder: MediaRecorder): Promise<void> {
+	if (recorder.state === "inactive") return Promise.resolve();
+	return new Promise((resolve, reject) => {
+		recorder.addEventListener("stop", () => resolve(), { once: true });
+		recorder.addEventListener(
+			"error",
+			() => reject(new Error("Recorder failed")),
+			{ once: true },
+		);
+		recorder.stop();
+	});
+}
+
+async function stopPipelineResources(pipeline: AudioPipeline) {
+	for (const track of pipeline.stream.getTracks()) track.stop();
+	for (const context of pipeline.cleanupContexts) await context.close();
 }

@@ -3,6 +3,8 @@ node_modules/
 .wxt/
 data/
 dist/
+playwright-report/
+test-results/
 .DS_Store
 *.log
 .claude/

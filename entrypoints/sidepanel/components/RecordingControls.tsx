@@ -22,6 +22,7 @@ interface Props {
 
 const stateLabels: Record<RecordingState, string> = {
 	idle: "Ready",
+	starting: "Starting...",
 	recording: "Recording...",
 	processing: "Processing...",
 	success: "Done",
@@ -42,8 +43,9 @@ export function RecordingControls({
 	error,
 }: Props) {
 	const isRecording = state === "recording";
+	const isStarting = state === "starting";
 	const isProcessing = state === "processing";
-	const canRecord = !isProcessing;
+	const canRecord = !isStarting && !isProcessing;
 	const [logs, setLogs] = useState<LogEntry[] | null>(null);
 
 	const toggleLogs = async () => {
@@ -59,6 +61,13 @@ export function RecordingControls({
 			<div className="controls-header">
 				<span className="user-email">{userEmail}</span>
 				<div>
+					<button
+						type="button"
+						className="btn btn-ghost"
+						onClick={() => void chrome.runtime.openOptionsPage()}
+					>
+						Settings
+					</button>
 					<button type="button" className="btn btn-ghost" onClick={toggleLogs}>
 						Logs
 					</button>
@@ -113,7 +122,7 @@ export function RecordingControls({
 					type="button"
 					className={mode === "voice" ? "active" : ""}
 					onClick={() => onModeChange("voice")}
-					disabled={isRecording || isProcessing}
+					disabled={isRecording || isStarting || isProcessing}
 				>
 					Voice
 				</button>
@@ -121,7 +130,7 @@ export function RecordingControls({
 					type="button"
 					className={mode === "meeting" ? "active" : ""}
 					onClick={() => onModeChange("meeting")}
-					disabled={isRecording || isProcessing}
+					disabled={isRecording || isStarting || isProcessing}
 				>
 					Meeting
 				</button>
@@ -131,7 +140,7 @@ export function RecordingControls({
 				<select
 					value={language}
 					onChange={(e) => onLanguageChange(e.target.value)}
-					disabled={isRecording || isProcessing}
+					disabled={isRecording || isStarting || isProcessing}
 				>
 					<option value="uk">Ukrainian</option>
 					<option value="en">English</option>
@@ -144,7 +153,7 @@ export function RecordingControls({
 							type="checkbox"
 							checked={diarization}
 							onChange={(e) => onDiarizationChange(e.target.checked)}
-							disabled={isRecording || isProcessing}
+							disabled={isRecording || isStarting || isProcessing}
 						/>
 						Speakers
 					</label>

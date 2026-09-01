@@ -1,19 +1,3 @@
-const isLocal = import.meta.env.MODE === "development";
-
-export const PROXY_URL = isLocal
-	? "http://localhost:3000"
-	: "https://diduny-ears-proxy.fly.dev";
-
-export const WS_URL = isLocal
-	? "ws://localhost:3000"
-	: "wss://diduny-ears-proxy.fly.dev";
-
-export interface AuthTokens {
-	accessToken: string;
-	refreshToken: string;
-	user: { id: string; email: string };
-}
-
 export interface TranscriptionToken {
 	text: string;
 	is_final: boolean;
@@ -31,6 +15,7 @@ export interface TranscriptionResult {
 export type RecordingMode = "voice" | "meeting";
 export type RecordingState =
 	| "idle"
+	| "starting"
 	| "recording"
 	| "processing"
 	| "success"

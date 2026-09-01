@@ -9,7 +9,7 @@ const supabaseUrl =
 const supabasePublishableKey =
 	process.env.SUPABASE_PUBLISHABLE_KEY ??
 	"sb_publishable_kLAVgHi1AGvXF_ZTdAdaEA_Yyfgvv_o";
-const host = process.env.HOST ?? "127.0.0.1";
+const host = process.env.HOST ?? "localhost";
 const port = Number(process.env.PORT ?? 3000);
 const startup = await prepareBffStartup({
 	dataDir: process.env.DATA_DIR,
