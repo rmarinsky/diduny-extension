@@ -43,3 +43,11 @@ test("never exposes an unknown Error message directly to the UI", () => {
 		),
 	).toContain("Локальний процес Diduny");
 });
+
+test("keeps the upstream error body on typed request failures", () => {
+	const body = { error: "provider_rejected", reason: "unsupported language" };
+	expect(errorFromResponse(422, body)).toMatchObject({
+		code: "request_rejected",
+		details: { body, status: 422 },
+	});
+});

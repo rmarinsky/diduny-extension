@@ -33,7 +33,7 @@ export function errorFromResponse(status: number, body: unknown) {
 	}
 	if (status === 502 && code === "upstream_unreachable")
 		return new DidunyError("proxy_unreachable", { status });
-	return new DidunyError("request_rejected", { status });
+	return new DidunyError("request_rejected", { body, status });
 }
 
 export function localProcessUnavailable(error: unknown) {

@@ -512,18 +512,23 @@ export function App() {
 							.filter(Boolean);
 				form.append(
 					"config",
-					JSON.stringify(
-						buildTranscriptionConfig({
-							languageHints,
-							...(translationMode
-								? {
-										translation: {
-											sourceLanguage: translationSourceLanguage,
-											targetLanguage: translationTargetLanguage,
-										},
-									}
-								: {}),
-						}),
+					new Blob(
+						[
+							JSON.stringify(
+								buildTranscriptionConfig({
+									languageHints,
+									...(translationMode
+										? {
+												translation: {
+													sourceLanguage: translationSourceLanguage,
+													targetLanguage: translationTargetLanguage,
+												},
+											}
+										: {}),
+								}),
+							),
+						],
+						{ type: "text/plain" },
 					),
 				);
 				const result = await bffJson<TranscriptionResponse>(

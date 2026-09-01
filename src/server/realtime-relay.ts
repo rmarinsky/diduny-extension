@@ -48,6 +48,7 @@ function payloadSize(data: RawData) {
 
 export class RealtimeRelay {
 	private readonly activeSessions = new Set<string>();
+	private lastRealtimeEnabled: boolean | null = null;
 	private readonly reservedSessions = new Set<string>();
 	private activeSockets = 0;
 
@@ -56,6 +57,9 @@ export class RealtimeRelay {
 		private readonly sessions: SessionStore,
 		private readonly upstreamUrl: string,
 		private readonly timeoutMs: number = HTTP.logoutTimeoutMs,
+		private readonly onRealtimeConfigChange: (
+			enabled: boolean,
+		) => void = () => {},
 	) {}
 
 	get activeUpstreamSockets() {
@@ -195,9 +199,11 @@ export class RealtimeRelay {
 						: REALTIME_CLOSE_CODES.upstreamUnavailable;
 				closeDownstream(
 					code,
-					code === REALTIME_CLOSE_CODES.quotaExceeded
-						? "usage exhausted"
-						: "usage check failed",
+					error instanceof RealtimeDisabledError
+						? "realtime disabled"
+						: code === REALTIME_CLOSE_CODES.quotaExceeded
+							? "usage exhausted"
+							: "usage check failed",
 				);
 				cleanup();
 			});
@@ -212,7 +218,42 @@ export class RealtimeRelay {
 		);
 		if (response.status === 402) throw new UsageExceededError();
 		if (!response.ok) throw new Error("usage check failed");
+		let config: Response;
+		try {
+			config = await proxyFetch(
+				this.fetch,
+				`${this.upstreamUrl.replace(/\/$/, "")}/api/v1/config`,
+				{},
+				this.timeoutMs,
+			);
+		} catch {
+			return;
+		}
+		if (!config.ok) return;
+		const body = await config.json().catch(() => null);
+		const realtimeEnabled =
+			body &&
+			typeof body === "object" &&
+			"featureFlags" in body &&
+			body.featureFlags &&
+			typeof body.featureFlags === "object" &&
+			typeof (body.featureFlags as { realtime?: unknown }).realtime ===
+				"boolean"
+				? (body.featureFlags as { realtime: boolean }).realtime
+				: null;
+		if (
+			realtimeEnabled !== null &&
+			this.lastRealtimeEnabled !== null &&
+			this.lastRealtimeEnabled !== realtimeEnabled
+		) {
+			this.onRealtimeConfigChange(realtimeEnabled);
+		}
+		if (realtimeEnabled !== null) this.lastRealtimeEnabled = realtimeEnabled;
+		if (realtimeEnabled === false) {
+			throw new RealtimeDisabledError();
+		}
 	}
 }
 
 class UsageExceededError extends Error {}
+class RealtimeDisabledError extends Error {}

@@ -126,6 +126,32 @@ test("clears any partial stored token set before it can authorize a request", as
 	expect(await store.read()).toBeNull();
 });
 
+test("keeps cached usage when an optional refresh fails or cannot decode", async () => {
+	let failure = null;
+	const client = new ProxyApiClient({
+		clock: { now: () => 0 },
+		http: {
+			isAvailable: true,
+			async send() {
+				if (failure === "decode") return json(200, { malformed: true });
+				if (failure === "request") return json(500, { error: "unavailable" });
+				return json(200, {
+					isWhitelisted: true,
+					usedHours: 0,
+					usedMs: 0,
+				});
+			},
+		},
+		tokens: new MemoryTokenStore(tokens("valid-token")),
+	});
+
+	const cached = await client.refreshUsage();
+	failure = "request";
+	expect(await client.refreshUsage()).toEqual(cached);
+	failure = "decode";
+	expect(await client.refreshUsage()).toEqual(cached);
+});
+
 test("normalizes tolerant transcript variants and preserves a quota error", () => {
 	expect(
 		decodeTranscriptResult({

@@ -59,5 +59,7 @@ test("joins the translated sentences returned by the proxy", () => {
 			sentences: [{ trans: " Hello" }, { trans: " world " }],
 		}),
 	).toBe("Hello world");
-	expect(translationResultText({ sentences: [] })).toBe("");
+	expect(() => translationResultText({ sentences: [] })).toThrow(
+		"empty_result",
+	);
 });

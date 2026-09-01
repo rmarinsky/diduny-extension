@@ -207,6 +207,7 @@ function usageError(response: HttpResponse, endpoint: string) {
 }
 
 export class ProxyApiClient {
+	private cachedUsage: Usage | null = null;
 	private refreshTask: Promise<SessionTokens> | null = null;
 
 	constructor(
@@ -244,6 +245,20 @@ export class ProxyApiClient {
 			usedHours,
 			usedMs,
 		};
+	}
+
+	async refreshUsage(): Promise<Usage | null> {
+		try {
+			this.cachedUsage = await this.usage();
+			return this.cachedUsage;
+		} catch (error) {
+			if (
+				error instanceof AuthenticationError ||
+				error instanceof UsageLimitError
+			)
+				throw error;
+			return this.cachedUsage;
+		}
 	}
 
 	async logout() {

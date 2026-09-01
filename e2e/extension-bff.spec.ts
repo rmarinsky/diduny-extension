@@ -135,6 +135,8 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 
 		const panel = await context.newPage();
 		await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
+		const refreshSession = panel.getByRole("button", { name: "I signed in" });
+		if (await refreshSession.isVisible()) await refreshSession.click();
 		await expect(panel.getByText("person@example.com")).toBeVisible();
 
 		await fixture.bringToFront();
@@ -162,10 +164,16 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 			timeout: 30_000,
 		});
 		expect(mock.transcriptions()).toHaveLength(1);
-		expect(mock.transcriptions()[0]).toMatchObject({
+		const [transcription] = mock.transcriptions();
+		if (!transcription) throw new Error("Expected extension transcription");
+		expect(transcription).toMatchObject({
 			authorization: `Bearer ${accessToken}`,
 		});
-		expect(mock.transcriptions()[0]?.bytes).toBeGreaterThan(0);
+		expect(transcription.bytes).toBeGreaterThan(0);
+		const configPart = transcription.body.slice(
+			transcription.body.indexOf('name="config"'),
+		);
+		expect(configPart).toContain("Content-Type: text/plain");
 		await expect
 			.poll(() => e2eLibrary.savedTexts(), { timeout: 10_000 })
 			.toEqual(["Mock transcript"]);

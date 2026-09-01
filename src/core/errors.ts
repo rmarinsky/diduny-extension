@@ -1,5 +1,6 @@
 export type DidunyErrorCode =
 	| "authentication_failed"
+	| "empty_result"
 	| "local_process_unreachable"
 	| "proxy_unreachable"
 	| "quota_exhausted"
@@ -8,6 +9,7 @@ export type DidunyErrorCode =
 	| "request_rejected";
 
 export interface DidunyErrorDetails {
+	body?: unknown;
 	limitHours?: number;
 	status?: number;
 	usedHours?: number;

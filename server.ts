@@ -222,7 +222,14 @@ function localeCookie(locale: Settings["uiLocale"]) {
 }
 
 function isExtensionRequest(request: FastifyRequest, extensionOrigin: string) {
-	return request.headers.origin === extensionOrigin;
+	if (request.headers.origin === extensionOrigin) return true;
+	// Chromium omits Origin for extension fetches. Fetch Metadata still
+	// distinguishes that request from a cross-site page request.
+	return (
+		request.headers.origin === undefined &&
+		request.headers["sec-fetch-site"] === "none" &&
+		request.headers["sec-fetch-mode"] === "cors"
+	);
 }
 
 function requestSessionId(request: FastifyRequest) {
@@ -612,6 +619,10 @@ export async function buildServer({
 		sessions,
 		upstreamUrl,
 		proxyTimeoutMs,
+		(enabled) =>
+			log("info", "proxy.realtime_config_changed", {
+				realtimeEnabled: enabled,
+			}),
 	);
 	const refreshes = new Map<string, Promise<BffSession>>();
 	const maxPendingLibrarySavesPerSession = 8;

@@ -22,7 +22,12 @@ export async function transcribeAudio(
 ): Promise<TranscriptionResult> {
 	const form = new FormData();
 	form.append("audio", audioBlob, "recording.webm");
-	form.append("config", JSON.stringify(extensionTranscriptionConfig(config)));
+	form.append(
+		"config",
+		new Blob([JSON.stringify(extensionTranscriptionConfig(config))], {
+			type: "text/plain",
+		}),
+	);
 
 	const res = await bffFetch(
 		"/bff/extension/api/transcriptions",

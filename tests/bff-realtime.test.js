@@ -172,6 +172,90 @@ test("reports quota exhaustion with a websocket close code without opening the u
 	});
 });
 
+test("honors a proxy realtime kill switch before opening the upstream socket", async () => {
+	let realtimeOpened = false;
+	const upstream = Fastify();
+	servers.push(upstream);
+	await upstream.register(websocket);
+	upstream.get("/api/v1/usage/me", async () => ({ remaining_seconds: 60 }));
+	upstream.get("/api/v1/config", async () => ({
+		endpoints: {},
+		featureFlags: { realtime: false },
+		messages: {},
+		version: "mock",
+	}));
+	upstream.get("/api/v1/realtime", { websocket: true }, () => {
+		realtimeOpened = true;
+	});
+	await upstream.listen({ host: "127.0.0.1", port: 0 });
+	const address = upstream.server.address();
+	if (!address || typeof address === "string")
+		throw new Error("Upstream did not bind");
+	const sessions = new InMemorySessionStore();
+	const sessionId = await sessions.create({ accessToken: "server-only-token" });
+	const bff = await buildServer({
+		sessions,
+		upstreamUrl: `http://127.0.0.1:${address.port}`,
+	});
+	servers.push(bff);
+	const bffUrl = await bff.listen({ host: "127.0.0.1", port: 0 });
+	const [code] = await connectUntilClose(
+		`${bffUrl.replace("http", "ws")}/bff/realtime`,
+		{ cookie: `diduny_session=${sessionId}` },
+	);
+
+	expect(code).toBe(1011);
+	expect(realtimeOpened).toBeFalse();
+});
+
+test("logs when the proxy changes the realtime feature flag", async () => {
+	let realtimeEnabled = true;
+	let realtimeOpened = 0;
+	const logs = [];
+	const upstream = Fastify();
+	servers.push(upstream);
+	await upstream.register(websocket);
+	upstream.get("/api/v1/usage/me", async () => ({ remaining_seconds: 60 }));
+	upstream.get("/api/v1/config", async () => ({
+		endpoints: {},
+		featureFlags: { realtime: realtimeEnabled },
+		messages: {},
+		version: realtimeEnabled ? "one" : "two",
+	}));
+	upstream.get("/api/v1/realtime", { websocket: true }, () => {
+		realtimeOpened += 1;
+	});
+	await upstream.listen({ host: "127.0.0.1", port: 0 });
+	const address = upstream.server.address();
+	if (!address || typeof address === "string")
+		throw new Error("Upstream did not bind");
+	const sessions = new InMemorySessionStore();
+	const sessionId = await sessions.create({ accessToken: "server-only-token" });
+	const bff = await buildServer({
+		log: (line) => logs.push(JSON.parse(line)),
+		sessions,
+		upstreamUrl: `http://127.0.0.1:${address.port}`,
+	});
+	servers.push(bff);
+	const bffUrl = await bff.listen({ host: "127.0.0.1", port: 0 });
+	const realtimeUrl = `${bffUrl.replace("http", "ws")}/bff/realtime`;
+	const headers = { cookie: `diduny_session=${sessionId}` };
+	const first = await connect(realtimeUrl, headers);
+	await waitFor(() => realtimeOpened === 1);
+	first.close();
+	await once(first, "close");
+	await waitFor(() => bff.websocketServer.clients.size === 0);
+
+	realtimeEnabled = false;
+	expect((await connectUntilClose(realtimeUrl, headers))[0]).toBe(1011);
+	expect(logs).toContainEqual(
+		expect.objectContaining({
+			event: "proxy.realtime_config_changed",
+			realtimeEnabled: false,
+		}),
+	);
+});
+
 test("refuses a second concurrent realtime socket for one BFF session", async () => {
 	const upstream = Fastify();
 	servers.push(upstream);

@@ -1,4 +1,5 @@
 export { buildTranscriptionConfig } from "../../src/core/transcription-config";
+import { DidunyError } from "../../src/core/errors";
 
 export interface TranslationPair {
 	sourceLanguage: string;
@@ -18,7 +19,7 @@ export function translationResultText(value: unknown) {
 	if (!value || typeof value !== "object" || !("sentences" in value)) return "";
 	const sentences = value.sentences;
 	if (!Array.isArray(sentences)) return "";
-	return sentences
+	const text = sentences
 		.map((sentence) =>
 			sentence &&
 			typeof sentence === "object" &&
@@ -29,4 +30,6 @@ export function translationResultText(value: unknown) {
 		)
 		.join("")
 		.trim();
+	if (!text) throw new DidunyError("empty_result");
+	return text;
 }

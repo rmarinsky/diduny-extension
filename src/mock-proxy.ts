@@ -1,7 +1,12 @@
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 
-export type MockProxyBehavior = "hang" | "malformed" | "quota" | "unauthorized";
+export type MockProxyBehavior =
+	| "hang"
+	| "malformed"
+	| "quota"
+	| "server_error"
+	| "unauthorized";
 
 export interface MockMailboxMessage {
 	email: string;
@@ -109,6 +114,10 @@ export async function buildMockProxy({
 		}
 		if (behavior === "malformed") {
 			reply.send({ malformed: true });
+			return;
+		}
+		if (behavior === "server_error") {
+			reply.code(500).send({ error: "upstream_failed" });
 			return;
 		}
 		// Intentionally leave the request unresolved so callers can exercise timeout handling.

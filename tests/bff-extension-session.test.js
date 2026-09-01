@@ -51,8 +51,28 @@ test("scopes the cross-site extension cookie to BFF extension routes", async () 
 		method: "GET",
 		url: "/bff/extension/api/usage/me",
 	});
+	const originlessExtension = await server.inject({
+		headers: {
+			cookie: extensionCookie,
+			"sec-fetch-mode": "cors",
+			"sec-fetch-site": "none",
+		},
+		method: "GET",
+		url: "/bff/extension/api/usage/me",
+	});
+	const originlessCrossSiteRequest = await server.inject({
+		headers: {
+			cookie: extensionCookie,
+			"sec-fetch-mode": "cors",
+			"sec-fetch-site": "cross-site",
+		},
+		method: "GET",
+		url: "/bff/extension/api/usage/me",
+	});
 
 	expect(accepted.statusCode).toBe(200);
 	expect(rejected.statusCode).toBe(403);
+	expect(originlessExtension.statusCode).toBe(200);
+	expect(originlessCrossSiteRequest.statusCode).toBe(403);
 	await server.close();
 });
