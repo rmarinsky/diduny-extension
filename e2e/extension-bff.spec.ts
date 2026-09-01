@@ -16,6 +16,9 @@ function serverUrl(server: ReturnType<typeof Fastify>, hostname = "127.0.0.1") {
 }
 
 test("loaded extension signs in through the BFF, triggers its backend relay, delivers dictation, and saves it", async () => {
+	const accessToken = "access-token-should-never-reach-page";
+	const refreshToken = "refresh-token-should-never-reach-page";
+	const tokenFragments = [accessToken, refreshToken];
 	const upstream = Fastify();
 	let transcriptionRequests = 0;
 	let transcriptionBytes = 0;
@@ -35,9 +38,9 @@ test("loaded extension signs in through the BFF, triggers its backend relay, del
 	);
 	upstream.post("/api/v1/auth/verify-otp", async () =>
 		JSON.stringify({
-			accessToken: "test-server-token",
+			accessToken,
 			accessTokenExpiresAt: Date.now() + 300_000,
-			refreshToken: "test-server-refresh",
+			refreshToken,
 			user: { email: "person@example.com" },
 		}),
 	);
@@ -80,6 +83,19 @@ test("loaded extension signs in through the BFF, triggers its backend relay, del
 			headless: true,
 		});
 		await installSupportedBrowserCapabilities(context);
+		const responseBodies: Array<{ body: string; url: string }> = [];
+		const responseReads: Array<Promise<void>> = [];
+		context.on("response", (response) => {
+			if (!response.url().startsWith(bffUrl)) return;
+			responseReads.push(
+				response
+					.text()
+					.then((body) => {
+						responseBodies.push({ body, url: response.url() });
+					})
+					.catch(() => undefined),
+			);
+		});
 		const worker =
 			context.serviceWorkers()[0] ??
 			(await context.waitForEvent("serviceworker", { timeout: 10_000 }));
@@ -169,10 +185,35 @@ test("loaded extension signs in through the BFF, triggers its backend relay, del
 		});
 		expect(transcriptionRequests).toBe(1);
 		expect(transcriptionBytes).toBeGreaterThan(0);
-		expect(upstreamAuthorization).toBe("Bearer test-server-token");
+		expect(upstreamAuthorization).toBe(`Bearer ${accessToken}`);
 		await expect
 			.poll(() => e2eLibrary.savedTexts(), { timeout: 10_000 })
 			.toEqual(["Hello from backend"]);
+		await Promise.all(responseReads);
+		const pageStorage = await webLogin.evaluate(() => ({
+			cookie: document.cookie,
+			localStorage: Object.entries(localStorage),
+			sessionStorage: Object.entries(sessionStorage),
+		}));
+		for (const tokenFragment of tokenFragments) {
+			expect(pageStorage.cookie, "document.cookie").not.toContain(
+				tokenFragment,
+			);
+			expect(
+				JSON.stringify(pageStorage.localStorage),
+				"localStorage",
+			).not.toContain(tokenFragment);
+			expect(
+				JSON.stringify(pageStorage.sessionStorage),
+				"sessionStorage",
+			).not.toContain(tokenFragment);
+			for (const response of responseBodies) {
+				expect(
+					response.body,
+					`response body from ${response.url}`,
+				).not.toContain(tokenFragment);
+			}
+		}
 	} finally {
 		await context?.close();
 		bff.server.closeAllConnections?.();
