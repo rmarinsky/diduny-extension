@@ -5,26 +5,35 @@
 	"type": "module",
 	"scripts": {
 		"dev": "wxt",
+		"dev:web": "vite --config web/vite.config.ts",
+		"start:web": "bun server-main.ts",
 		"dev:firefox": "wxt --browser firefox",
-		"build": "wxt build",
+		"build": "bun run build:web && bun run build:extension",
+		"build:extension": "wxt build",
+		"build:web": "vite build --config web/vite.config.ts",
 		"zip": "wxt zip",
 		"test": "bun test",
+		"check:core": "bun scripts/check-core-boundary.ts",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
-		"validate": "bun run lint && bun run typecheck && bun run test"
+		"validate": "bun run lint && bun run typecheck && bun run check:core && bun run test"
 	},
 	"dependencies": {
+		"@fastify/static": "^8.3.0",
 		"@supabase/supabase-js": "^2",
+		"fastify": "^5.6.0",
 		"react": "^19.1.0",
 		"react-dom": "^19.1.0"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.4",
+		"@types/node": "^22.15.3",
 		"@types/chrome": "^0.0.304",
 		"@types/react": "^19.1.2",
 		"@types/react-dom": "^19.1.2",
 		"@vitejs/plugin-react": "^4.4.1",
+		"vite": "^6.4.1",
 		"@wxt-dev/module-react": "^1.1.3",
 		"typescript": "^5.7.3",
 		"wxt": "^0.19.25"

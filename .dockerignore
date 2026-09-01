@@ -1,0 +1,7 @@
+.git
+.github
+.output
+.wxt
+node_modules
+web/dist
+*.log
