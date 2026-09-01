@@ -218,6 +218,7 @@ export async function buildMockProxy({
 			"http://mock.local",
 		).searchParams.get("token");
 		if (token !== accessToken) return socket.close(4001, "unauthorized");
+		let realtimeConfig: Record<string, unknown> = {};
 		socket.send(JSON.stringify({ type: "proxy_ready" }));
 		socket.on("message", (data, isBinary) => {
 			realtimeFrames.push({
@@ -229,16 +230,39 @@ export async function buildMockProxy({
 				isBinary,
 			});
 			if (isBinary) return;
-			if (String(data).includes('"finalize"')) {
+			const message = String(data);
+			if (message.includes('"finalize"')) {
+				const diarization = realtimeConfig.enable_speaker_diarization === true;
+				socket.send(
+					JSON.stringify({
+						finished: realtimeConfig.mode !== "translate",
+						tokens: [
+							{
+								end_ms: 480,
+								is_final: true,
+								...(diarization ? { speaker: "1" } : {}),
+								start_ms: 0,
+								text: "Mock transcript",
+							},
+						],
+					}),
+				);
 				socket.send(
 					JSON.stringify({
 						tokens: [
-							{ is_final: true, text: "Mock transcript" },
 							{ is_final: true, text: "<end>" },
 							{ is_final: true, text: "<fin>" },
 						],
 					}),
 				);
+				return;
+			}
+			try {
+				const parsed: unknown = JSON.parse(message);
+				if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+					realtimeConfig = parsed as Record<string, unknown>;
+			} catch {
+				// Invalid upstream frames are intentionally ignored by the test double.
 			}
 		});
 	});

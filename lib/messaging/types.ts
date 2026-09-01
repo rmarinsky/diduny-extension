@@ -5,6 +5,7 @@ import type {
 } from "../types";
 
 export type AudioSource = "mic" | "tab";
+export type DictationTranslation = { targetLanguage: string };
 
 // ── Recording messages ────────────────────────────────────────────────────────
 
@@ -16,7 +17,7 @@ export type StartRecording = {
 	diarization: boolean;
 	targetTabId?: number;
 	streamId?: string;
-	canRequestAudioTrack?: boolean;
+	translation?: DictationTranslation;
 };
 export type StopRecording = { type: "stop-recording" };
 
@@ -36,6 +37,16 @@ export type TranscriptionComplete = {
 	text: string;
 	source: AudioSource;
 };
+export type DeliveryAvailability = {
+	type: "delivery-availability";
+	available: boolean;
+	reason?:
+		| "no-text-field"
+		| "permission-denied"
+		| "site-disabled"
+		| "target-unavailable"
+		| "unsupported-editor";
+};
 
 // Background → Offscreen
 export type StartCapture = {
@@ -44,8 +55,9 @@ export type StartCapture = {
 	bffOrigin: string;
 	language: string;
 	diarization: boolean;
+	microphoneDeviceId?: string | null;
 	streamId?: string;
-	canRequestAudioTrack?: boolean;
+	translation?: DictationTranslation;
 };
 export type StopCapture = { type: "stop-capture" };
 
@@ -82,6 +94,7 @@ export type Message =
 	| RecordingStateChanged
 	| RealtimeTokens
 	| TranscriptionComplete
+	| DeliveryAvailability
 	| StartCapture
 	| StopCapture
 	| CaptureReady

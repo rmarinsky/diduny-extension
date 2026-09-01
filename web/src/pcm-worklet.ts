@@ -14,13 +14,16 @@ declare function registerProcessor(
 ): void;
 
 class PcmWorkletProcessor extends AudioWorkletProcessor {
+	private readonly chunkRotationFrames?: number;
 	private readonly framesPerUpdate: number;
+	private framesSinceChunkRotation = 0;
 	private framesSinceUpdate = 0;
 
 	constructor(options?: { processorOptions?: Record<string, unknown> }) {
 		super(options);
 		const sampleRate = options?.processorOptions?.sampleRate;
 		const uiUpdatesPerSecond = options?.processorOptions?.uiUpdatesPerSecond;
+		const chunkRotationFrames = options?.processorOptions?.chunkRotationFrames;
 		if (
 			typeof sampleRate !== "number" ||
 			typeof uiUpdatesPerSecond !== "number" ||
@@ -29,6 +32,14 @@ class PcmWorkletProcessor extends AudioWorkletProcessor {
 		) {
 			throw new Error("Invalid Diduny audio format");
 		}
+		if (
+			typeof chunkRotationFrames === "number" &&
+			(!Number.isInteger(chunkRotationFrames) || chunkRotationFrames <= 0)
+		) {
+			throw new Error("Invalid Diduny chunk rotation");
+		}
+		this.chunkRotationFrames =
+			typeof chunkRotationFrames === "number" ? chunkRotationFrames : undefined;
 		this.framesPerUpdate = sampleRate / uiUpdatesPerSecond;
 	}
 
@@ -45,18 +56,20 @@ class PcmWorkletProcessor extends AudioWorkletProcessor {
 			sum += sample * sample;
 		}
 		this.framesSinceUpdate += input.length;
+		this.framesSinceChunkRotation += input.length;
+		const rotate =
+			this.chunkRotationFrames !== undefined &&
+			this.framesSinceChunkRotation >= this.chunkRotationFrames;
+		if (rotate) this.framesSinceChunkRotation = 0;
+		const message: { frame: ArrayBuffer; level?: number; rotate?: true } = {
+			frame: frame.buffer,
+		};
 		if (this.framesSinceUpdate >= this.framesPerUpdate) {
 			this.framesSinceUpdate = 0;
-			this.port.postMessage(
-				{
-					frame: frame.buffer,
-					level: Math.min(1, Math.sqrt(sum / input.length) * 8),
-				},
-				[frame.buffer],
-			);
-		} else {
-			this.port.postMessage({ frame: frame.buffer }, [frame.buffer]);
+			message.level = Math.min(1, Math.sqrt(sum / input.length) * 8);
 		}
+		if (rotate) message.rotate = true;
+		this.port.postMessage(message, [frame.buffer]);
 		return true;
 	}
 }

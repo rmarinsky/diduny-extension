@@ -28,11 +28,15 @@ export function App() {
 				state={recording.state}
 				mode={recording.mode}
 				language={recording.language}
+				translationTargetLanguage={recording.translationTargetLanguage}
 				diarization={recording.diarization}
 				userEmail={auth.user?.email ?? ""}
 				onToggleRecording={recording.toggleRecording}
 				onModeChange={recording.setMode}
 				onLanguageChange={recording.setLanguage}
+				onTranslationTargetLanguageChange={
+					recording.setTranslationTargetLanguage
+				}
 				onDiarizationChange={recording.setDiarization}
 				onLogout={auth.logout}
 				error={recording.error}
@@ -50,6 +54,7 @@ export function App() {
 					finalText={transcript.mic.finalText}
 					interimText={transcript.mic.interimText}
 					copied={transcript.copied}
+					deliveryNotice={recording.deliveryNotice}
 					onCopy={transcript.copyToClipboard}
 					onClear={transcript.clear}
 				/>

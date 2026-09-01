@@ -224,12 +224,39 @@ test("lets an extension session stream its capture into the local library", asyn
 			url: "/bff/extension/library",
 		});
 		expect(rejected.statusCode).toBe(403);
+		const invalidSegments = await server.inject({
+			headers: extensionHeaders,
+			method: "POST",
+			payload: {
+				durationSeconds: 1,
+				segments: [
+					{
+						endMs: 0,
+						startMs: 1,
+						text: "Impossible timing",
+					},
+				],
+				status: "transcribed",
+				text: "Extension library copy",
+				type: "voice",
+			},
+			url: "/bff/extension/library",
+		});
+		expect(invalidSegments.statusCode).toBe(400);
 
 		const created = await server.inject({
 			headers: extensionHeaders,
 			method: "POST",
 			payload: {
 				durationSeconds: 1,
+				segments: [
+					{
+						endMs: 1_000,
+						speaker: "1",
+						startMs: 0,
+						text: "Extension library copy",
+					},
+				],
 				status: "transcribed",
 				text: "Extension library copy",
 				type: "voice",
@@ -249,7 +276,17 @@ test("lets an extension session stream its capture into the local library", asyn
 		});
 		expect(upload.statusCode).toBe(201);
 		expect(upload.json()).toEqual(
-			expect.objectContaining({ text: "Extension library copy" }),
+			expect.objectContaining({
+				segments: [
+					{
+						endMs: 1_000,
+						speaker: "1",
+						startMs: 0,
+						text: "Extension library copy",
+					},
+				],
+				text: "Extension library copy",
+			}),
 		);
 	} finally {
 		await server.close();

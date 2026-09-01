@@ -1,3 +1,5 @@
+import { getDefaultMicrophoneId } from "../lib/audio/microphone";
+import { getTabCaptureStreamId } from "../lib/audio/tab-capture";
 /**
  * Background service worker — single entry point per ADR-0005.
  *
@@ -12,21 +14,26 @@
  */
 import { getBffAuthSession, logoutBff } from "../lib/bff/auth";
 import { getBffOrigin } from "../lib/bff/client";
+import {
+	type CommandPress,
+	nextCommandPress,
+} from "../lib/commands/multi-press";
 import { crashLog, getCrashLogs, logError } from "../lib/crash-log";
 import {
 	type DeliverySession,
 	isDeliverySession,
 	selectDeliverySession,
 } from "../lib/delivery/delivery-session";
-import { installDeliveryBridge } from "../lib/delivery/page-bridge";
+import {
+	type DeliveryPreparation,
+	deliverToQuill,
+	installDeliveryBridge,
+} from "../lib/delivery/page-bridge";
+import { isDeliveryEnabled } from "../lib/delivery/site-settings";
 import { onMessage, sendMessage } from "../lib/messaging/bridge";
-import type { Message } from "../lib/messaging/types";
+import type { DictationTranslation, Message } from "../lib/messaging/types";
 import type { RecordingMode, RecordingState } from "../lib/types";
-
-interface DesktopCaptureSelection {
-	streamId: string;
-	canRequestAudioTrack: boolean;
-}
+import { INPUT_TIMING } from "../src/core/constants";
 
 export default defineBackground(() => {
 	let currentState: RecordingState = "idle";
@@ -35,6 +42,12 @@ export default defineBackground(() => {
 	const KEEPALIVE_ALARM = "recording-keepalive";
 	const DELIVERY_SESSION_STORAGE_KEY = "didunyDeliverySession";
 	let deliverySession: DeliverySession | undefined;
+	let commandPress: CommandPress | undefined;
+	let commandPressTimer: ReturnType<typeof setTimeout> | undefined;
+	type DeliveryUnavailableReason = Exclude<
+		Extract<Message, { type: "delivery-availability" }>["reason"],
+		undefined
+	>;
 
 	// Keepalive: prevent SW from sleeping during recording
 	chrome.alarms.onAlarm.addListener((alarm) => {
@@ -147,8 +160,6 @@ export default defineBackground(() => {
 
 	// ── Keyboard shortcut ───────────────────────────────────────────────────────
 	chrome.commands.onCommand.addListener(async (command) => {
-		if (command !== "toggle-recording") return;
-
 		if (currentState === "recording") {
 			await stopRecording();
 		} else if (
@@ -156,9 +167,40 @@ export default defineBackground(() => {
 			currentState === "success" ||
 			currentState === "error"
 		) {
-			await startRecording("voice", "uk", false);
+			if (command === "toggle-recording") {
+				await handleDictationCommandPress();
+			} else if (command === "toggle-translation") {
+				await startRecording("translation", "uk", false, {
+					targetLanguage: "en",
+				});
+			} else if (command === "start-meeting") {
+				await startRecording("meeting", "uk", false);
+			}
 		}
 	});
+
+	async function handleDictationCommandPress() {
+		const next = nextCommandPress(commandPress, Date.now());
+		commandPress = next;
+		if (commandPressTimer) clearTimeout(commandPressTimer);
+		if (next.count >= 3) {
+			commandPress = undefined;
+			commandPressTimer = undefined;
+			await startRecording("meeting", "uk", false);
+			return;
+		}
+		// ponytail: this is input disambiguation before capture; audio rotation never uses a timer.
+		commandPressTimer = setTimeout(() => {
+			commandPress = undefined;
+			commandPressTimer = undefined;
+			if (
+				currentState === "idle" ||
+				currentState === "success" ||
+				currentState === "error"
+			)
+				void startRecording("voice", "uk", false);
+		}, INPUT_TIMING.multiPressWindowMs);
+	}
 
 	// ── Recording message routing ───────────────────────────────────────────────
 	onMessage(async (msg) => {
@@ -169,12 +211,8 @@ export default defineBackground(() => {
 					msg.mode,
 					msg.language,
 					msg.diarization,
-					msg.streamId
-						? {
-								streamId: msg.streamId,
-								canRequestAudioTrack: msg.canRequestAudioTrack ?? false,
-							}
-						: undefined,
+					msg.translation,
+					msg.targetTabId,
 				);
 				break;
 			}
@@ -241,17 +279,19 @@ export default defineBackground(() => {
 		mode: RecordingMode,
 		language: string,
 		diarization: boolean,
-		selection?: DesktopCaptureSelection,
+		translation?: DictationTranslation,
+		targetTabId?: number,
 	) {
 		crashLog(
 			"bg:startRecording",
 			"info",
-			`mode=${mode}, lang=${language}, diarization=${diarization}, hasStream=${!!selection?.streamId}`,
+			`mode=${mode}, lang=${language}, diarization=${diarization}`,
 		);
 
-		const [session, bffOrigin] = await Promise.all([
+		const [session, bffOrigin, microphoneDeviceId] = await Promise.all([
 			getBffAuthSession(),
 			getBffOrigin(),
+			getDefaultMicrophoneId(),
 		]);
 		if (!session.authenticated) {
 			await setState("error", "Not authenticated");
@@ -262,18 +302,26 @@ export default defineBackground(() => {
 			completedSources.clear();
 			persistedSources.clear();
 			await clearDeliveryStatus();
-			await saveDeliverySession(
-				mode === "voice" ? await prepareDeliveryTarget() : undefined,
-			);
+			const delivery =
+				mode !== "meeting" ? await prepareDeliveryTarget() : undefined;
+			await saveDeliverySession(delivery?.session);
+			if (mode !== "meeting") {
+				await sendMessage({
+					type: "delivery-availability",
+					available: Boolean(delivery?.session),
+					reason: delivery?.reason,
+				});
+			}
 			await ensureMicPermission();
 			crashLog("bg:startRecording", "info", "mic permission OK");
 
 			await createOffscreen();
 			crashLog("bg:startRecording", "info", "offscreen created");
 
-			if (mode === "meeting" && !selection?.streamId) {
-				throw new Error("No sharing source selected");
-			}
+			const streamId =
+				mode === "meeting"
+					? await meetingTabCaptureStreamId(targetTabId)
+					: undefined;
 
 			await setState("starting");
 			startKeepalive();
@@ -283,8 +331,9 @@ export default defineBackground(() => {
 				bffOrigin,
 				language,
 				diarization,
-				streamId: selection?.streamId,
-				canRequestAudioTrack: selection?.canRequestAudioTrack,
+				microphoneDeviceId,
+				streamId,
+				translation,
 			});
 		} catch (err) {
 			stopKeepalive();
@@ -292,11 +341,7 @@ export default defineBackground(() => {
 			logError("bg:startRecording", err);
 			const msg =
 				err instanceof Error ? err.message : "Failed to start recording";
-			if (msg === "No source selected") {
-				await setState("idle");
-			} else {
-				await setState("error", msg);
-			}
+			await setState("error", msg);
 		}
 	}
 
@@ -306,12 +351,31 @@ export default defineBackground(() => {
 		await sendMessage({ type: "stop-capture" });
 	}
 
-	async function prepareDeliveryTarget(): Promise<DeliverySession | undefined> {
+	async function meetingTabCaptureStreamId(targetTabId?: number) {
+		if (targetTabId)
+			return getTabCaptureStreamId(
+				chrome.tabCapture,
+				chrome.runtime,
+				targetTabId,
+			);
 		const [tab] = await chrome.tabs.query({
 			active: true,
 			lastFocusedWindow: true,
 		});
-		if (!tab?.id) return undefined;
+		if (!tab?.id) throw new Error("Could not find the active browser tab");
+		return getTabCaptureStreamId(chrome.tabCapture, chrome.runtime, tab.id);
+	}
+
+	async function prepareDeliveryTarget(): Promise<{
+		reason?: DeliveryUnavailableReason;
+		session?: DeliverySession;
+	}> {
+		const [tab] = await chrome.tabs.query({
+			active: true,
+			lastFocusedWindow: true,
+		});
+		if (!tab?.id || !tab.url) return { reason: "no-text-field" };
+		if (!(await isDeliveryEnabled(tab.url))) return { reason: "site-disabled" };
 
 		try {
 			const results = await chrome.scripting.executeScript({
@@ -321,7 +385,14 @@ export default defineBackground(() => {
 			});
 			const session = selectDeliverySession(tab.id, results);
 			crashLog("bg:delivery", "info", `targetReady=${!!session}`);
-			return session;
+			if (session) return { session };
+			const unavailable = results
+				.map((result) => result.result as DeliveryPreparation | undefined)
+				.find((result) => result?.ready === false);
+			return {
+				reason:
+					unavailable?.ready === false ? unavailable.reason : "no-text-field",
+			};
 		} catch (err) {
 			crashLog(
 				"bg:delivery",
@@ -330,7 +401,7 @@ export default defineBackground(() => {
 					? err.message
 					: "Could not prepare delivery target",
 			);
-			return undefined;
+			return { reason: "permission-denied" };
 		}
 	}
 
@@ -339,20 +410,40 @@ export default defineBackground(() => {
 		if (!session) return;
 
 		try {
+			if (!(await isDeliveryEnabled(session.origin))) {
+				await sendMessage({
+					type: "delivery-availability",
+					available: false,
+					reason: "site-disabled",
+				});
+				return;
+			}
 			if (text) {
-				const result = await chrome.tabs.sendMessage(
-					session.tabId,
-					{
-						type: "diduny:deliver-transcript",
-						text,
-					},
-					{ frameId: session.frameId },
-				);
+				let result =
+					session.editor === "quill"
+						? await deliverQuillTranscript(session, text)
+						: undefined;
+				if (result?.inserted !== true) {
+					result = await chrome.tabs.sendMessage(
+						session.tabId,
+						{
+							type: "diduny:deliver-transcript",
+							text,
+						},
+						{ frameId: session.frameId },
+					);
+				}
 				crashLog(
 					"bg:delivery",
 					"info",
 					`inserted=${result?.inserted === true}`,
 				);
+				if (result?.inserted !== true)
+					await sendMessage({
+						type: "delivery-availability",
+						available: false,
+						reason: "target-unavailable",
+					});
 			}
 		} catch (err) {
 			crashLog(
@@ -363,6 +454,24 @@ export default defineBackground(() => {
 		} finally {
 			await sendDeliveryStatus("clear", session);
 			await clearDeliverySession();
+		}
+	}
+
+	async function deliverQuillTranscript(
+		session: DeliverySession,
+		text: string,
+	) {
+		try {
+			const [result] = await chrome.scripting.executeScript({
+				args: [text],
+				func: deliverToQuill,
+				target: { frameIds: [session.frameId], tabId: session.tabId },
+				world: "MAIN",
+			});
+			return result?.result;
+		} catch (error) {
+			logError("bg:quill-delivery", error);
+			return undefined;
 		}
 	}
 
@@ -492,7 +601,7 @@ export default defineBackground(() => {
 				chrome.offscreen.Reason.AUDIO_PLAYBACK,
 			],
 			justification:
-				"Audio capture (mic + desktop) and processing for transcription",
+				"Audio capture (microphone + browser tab) and processing for transcription",
 		});
 	}
 

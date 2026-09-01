@@ -18,9 +18,11 @@ function realtimeUrl(location = window.location) {
 
 export function startWebRealtime({
 	config,
+	endpoint = realtimeUrl(),
 	onTokens,
 }: {
 	config: Record<string, unknown>;
+	endpoint?: string;
 	onTokens(tokens: readonly RealtimeToken[]): void;
 }): WebRealtimeSession {
 	let resolveResult: (text: string) => void = () => {};
@@ -31,7 +33,7 @@ export function startWebRealtime({
 	});
 	const session = new RealtimeSession({
 		connect(handlers) {
-			const socket = new WebSocket(realtimeUrl());
+			const socket = new WebSocket(endpoint);
 			socket.binaryType = "arraybuffer";
 			socket.addEventListener("open", () => {
 				socket.send(JSON.stringify(config));

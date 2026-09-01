@@ -143,6 +143,43 @@ test("coalesces clean tokens, then finalizes with the configured fast profile", 
 	expect(completed).toEqual(["Hello done"]);
 });
 
+test("keeps speaker labels and timings on realtime token updates", () => {
+	const timer = scheduler();
+	const updates = [];
+	let handlers;
+	const session = new RealtimeSession({
+		connect(next) {
+			handlers = next;
+			return { close() {}, send() {} };
+		},
+		onComplete() {},
+		onError() {},
+		onTokens(tokens) {
+			updates.push(tokens);
+		},
+		scheduler: timer,
+	});
+
+	session.start();
+	handlers.message('{"type":"proxy_ready"}');
+	handlers.message(
+		'{"tokens":[{"text":"Hello","is_final":true,"speaker":"2","start_ms":120,"end_ms":430}]}',
+	);
+	timer.run(1_000 / REALTIME.uiUpdatesPerSecond);
+
+	expect(updates).toEqual([
+		[
+			{
+				endMs: 430,
+				isFinal: true,
+				speaker: "2",
+				startMs: 120,
+				text: "Hello",
+			},
+		],
+	]);
+});
+
 test("reconnects if the socket closes while finalization is pending", () => {
 	const timer = scheduler();
 	let attempts = 0;

@@ -1,5 +1,29 @@
 import { expect, test } from "bun:test";
-import { saveExtensionRecording } from "./library";
+import { extensionRecordingStatus, saveExtensionRecording } from "./library";
+
+test("keeps a stream-ended recording partial even when transcription cannot finish", () => {
+	expect(
+		extensionRecordingStatus({
+			partiallyRecovered: true,
+			transcribed: false,
+			translation: false,
+		}),
+	).toBe("partiallyRecovered");
+	expect(
+		extensionRecordingStatus({
+			partiallyRecovered: false,
+			transcribed: false,
+			translation: false,
+		}),
+	).toBe("failed");
+	expect(
+		extensionRecordingStatus({
+			partiallyRecovered: false,
+			transcribed: true,
+			translation: true,
+		}),
+	).toBe("translated");
+});
 
 test("saves an extension recording through the extension-only BFF routes", async () => {
 	const originalFetch = globalThis.fetch;
@@ -20,6 +44,15 @@ test("saves an extension recording through the extension-only BFF routes", async
 			{
 				audio,
 				durationSeconds: 2,
+				segments: [
+					{
+						endMs: 480,
+						speaker: "1",
+						startMs: 0,
+						text: "Saved after delivery",
+					},
+				],
+				status: "transcribed",
 				text: "Saved after delivery",
 				type: "voice",
 			},
@@ -30,7 +63,24 @@ test("saves an extension recording through the extension-only BFF routes", async
 	}
 
 	expect(calls[0]).toMatchObject({
-		init: expect.objectContaining({ credentials: "include", method: "POST" }),
+		init: expect.objectContaining({
+			body: JSON.stringify({
+				durationSeconds: 2,
+				segments: [
+					{
+						endMs: 480,
+						speaker: "1",
+						startMs: 0,
+						text: "Saved after delivery",
+					},
+				],
+				status: "transcribed",
+				text: "Saved after delivery",
+				type: "voice",
+			}),
+			credentials: "include",
+			method: "POST",
+		}),
 		url: "http://localhost:4317/bff/extension/library",
 	});
 	expect(calls[1]).toMatchObject({

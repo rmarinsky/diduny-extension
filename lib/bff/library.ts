@@ -1,5 +1,9 @@
 import { DidunyError } from "../../src/core/errors";
-import type { ProcessingStatus, RecordingType } from "../../src/core/models";
+import type {
+	ProcessingStatus,
+	RecordingType,
+	TranscriptSegment,
+} from "../../src/core/models";
 import { bffFetch } from "./client";
 
 export type LibraryRecordingType = RecordingType;
@@ -7,9 +11,24 @@ export type LibraryRecordingType = RecordingType;
 export interface LibrarySaveInput {
 	audio: Blob;
 	durationSeconds: number;
+	segments?: readonly TranscriptSegment[];
 	status?: ProcessingStatus;
 	text: string;
 	type: LibraryRecordingType;
+}
+
+export function extensionRecordingStatus({
+	partiallyRecovered,
+	transcribed,
+	translation,
+}: {
+	partiallyRecovered: boolean;
+	transcribed: boolean;
+	translation: boolean;
+}): ProcessingStatus {
+	if (partiallyRecovered) return "partiallyRecovered";
+	if (!transcribed) return "failed";
+	return translation ? "translated" : "transcribed";
 }
 
 export type LibraryRequest = (
@@ -31,6 +50,7 @@ export async function saveLibraryRecording(
 	{
 		audio,
 		durationSeconds,
+		segments,
 		status = "transcribed",
 		text,
 		type,
@@ -41,6 +61,7 @@ export async function saveLibraryRecording(
 	const created = await request(path, {
 		body: JSON.stringify({
 			durationSeconds,
+			...(segments?.length ? { segments } : {}),
 			status,
 			text,
 			type,

@@ -29,7 +29,10 @@ export interface RealtimeSocketHandlers {
 }
 
 export interface RealtimeToken {
+	endMs?: number;
 	isFinal: boolean;
+	speaker?: string;
+	startMs?: number;
 	text: string;
 }
 
@@ -68,7 +71,23 @@ function messageTokens(value: unknown): RealtimeToken[] {
 		const token = item as Record<string, unknown>;
 		if (typeof token.text !== "string") return [];
 		const text = controlFree(token.text);
-		return text ? [{ isFinal: token.is_final === true, text }] : [];
+		if (!text) return [];
+		return [
+			{
+				...(typeof token.end_ms === "number" && Number.isFinite(token.end_ms)
+					? { endMs: token.end_ms }
+					: {}),
+				isFinal: token.is_final === true,
+				...(typeof token.speaker === "string"
+					? { speaker: token.speaker }
+					: {}),
+				...(typeof token.start_ms === "number" &&
+				Number.isFinite(token.start_ms)
+					? { startMs: token.start_ms }
+					: {}),
+				text,
+			},
+		];
 	});
 }
 

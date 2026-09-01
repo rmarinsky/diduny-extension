@@ -10,11 +10,13 @@ interface Props {
 	state: RecordingState;
 	mode: RecordingMode;
 	language: string;
+	translationTargetLanguage: string;
 	diarization: boolean;
 	userEmail: string;
 	onToggleRecording: () => void;
 	onModeChange: (mode: RecordingMode) => void;
 	onLanguageChange: (lang: string) => void;
+	onTranslationTargetLanguageChange: (lang: string) => void;
 	onDiarizationChange: (val: boolean) => void;
 	onLogout: () => void;
 	error: string | null;
@@ -33,11 +35,13 @@ export function RecordingControls({
 	state,
 	mode,
 	language,
+	translationTargetLanguage,
 	diarization,
 	userEmail,
 	onToggleRecording,
 	onModeChange,
 	onLanguageChange,
+	onTranslationTargetLanguageChange,
 	onDiarizationChange,
 	onLogout,
 	error,
@@ -120,6 +124,14 @@ export function RecordingControls({
 			<div className="mode-toggle">
 				<button
 					type="button"
+					className={mode === "translation" ? "active" : ""}
+					onClick={() => onModeChange("translation")}
+					disabled={isRecording || isStarting || isProcessing}
+				>
+					Translate
+				</button>
+				<button
+					type="button"
 					className={mode === "voice" ? "active" : ""}
 					onClick={() => onModeChange("voice")}
 					disabled={isRecording || isStarting || isProcessing}
@@ -147,6 +159,22 @@ export function RecordingControls({
 					<option value="uk,en">UK + EN</option>
 				</select>
 
+				{mode === "translation" && (
+					<label>
+						To
+						<select
+							value={translationTargetLanguage}
+							onChange={(e) =>
+								onTranslationTargetLanguageChange(e.target.value)
+							}
+							disabled={isRecording || isStarting || isProcessing}
+						>
+							<option value="en">English</option>
+							<option value="uk">Ukrainian</option>
+						</select>
+					</label>
+				)}
+
 				{mode === "meeting" && (
 					<label>
 						<input
@@ -162,7 +190,8 @@ export function RecordingControls({
 
 			{mode === "meeting" && (
 				<div className="hint-text">
-					Choose a Chrome tab, app window, or full screen in the share picker.
+					Records the current browser tab and your microphone. Native meeting
+					apps and system audio are not available.
 				</div>
 			)}
 

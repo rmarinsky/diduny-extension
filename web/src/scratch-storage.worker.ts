@@ -222,7 +222,6 @@ async function complete(id: string) {
 	const pcm = await (
 		await directoryHandle.getFileHandle(pcmName(id))
 	).getFile();
-	if (!pcm.size) throw new Error("Scratch recording has no audio");
 	if (!capture.encoded.failed && capture.encoded.bytes > 0) {
 		const encoded = await (
 			await directoryHandle.getFileHandle(encodedName(id))
@@ -230,12 +229,15 @@ async function complete(id: string) {
 		return {
 			audio: new Blob([encoded], { type: "audio/webm;codecs=opus" }),
 			durationSeconds:
-				pcm.size /
-				(capture.manifest.sampleRate * capture.manifest.channels * 2),
+				pcm.size > 0
+					? pcm.size /
+						(capture.manifest.sampleRate * capture.manifest.channels * 2)
+					: Math.max(0, (Date.now() - capture.manifest.createdAt) / 1000),
 			id,
 			text: capture.manifest.text,
 		};
 	}
+	if (!pcm.size) throw new Error("Scratch recording has no audio");
 	return toRecoveredRecording(capture.manifest, pcm);
 }
 

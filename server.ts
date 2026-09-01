@@ -6,7 +6,11 @@ import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { isValidEmail, isValidOtp } from "./src/core/auth-validation";
 import { HTTP } from "./src/core/constants";
-import type { ProcessingStatus, RecordingType } from "./src/core/models";
+import type {
+	ProcessingStatus,
+	RecordingType,
+	TranscriptSegment,
+} from "./src/core/models";
 import type {
 	LibraryDetail,
 	LibraryListOptions,
@@ -379,16 +383,67 @@ function isReadableStream(value: unknown): value is NodeJS.ReadableStream {
 	return !!value && typeof value === "object" && "pipe" in value;
 }
 
+function parseTranscriptSegments(
+	value: unknown,
+): readonly TranscriptSegment[] | null {
+	if (value === undefined) return [];
+	if (!Array.isArray(value) || value.length > 100_000) return null;
+	const segments: TranscriptSegment[] = [];
+	for (const item of value) {
+		if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+		const segment = item as Record<string, unknown>;
+		const startMs = segment.startMs;
+		const endMs = segment.endMs;
+		if (
+			Object.keys(segment).some(
+				(key) =>
+					!["endMs", "language", "speaker", "startMs", "text"].includes(key),
+			) ||
+			typeof segment.text !== "string" ||
+			segment.text.length > 20_000 ||
+			typeof startMs !== "number" ||
+			typeof endMs !== "number" ||
+			!Number.isSafeInteger(startMs) ||
+			!Number.isSafeInteger(endMs) ||
+			startMs < 0 ||
+			endMs < startMs ||
+			("speaker" in segment &&
+				(typeof segment.speaker !== "string" ||
+					segment.speaker.length > 200)) ||
+			("language" in segment &&
+				(typeof segment.language !== "string" || segment.language.length > 32))
+		) {
+			return null;
+		}
+		segments.push({
+			endMs,
+			...(typeof segment.language === "string"
+				? { language: segment.language }
+				: {}),
+			...(typeof segment.speaker === "string"
+				? { speaker: segment.speaker }
+				: {}),
+			startMs,
+			text: segment.text,
+		});
+	}
+	return segments;
+}
+
 function parseLibraryRecording(value: unknown): NewLibraryRecording | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 	const record = value as Record<string, unknown>;
 	if (
 		Object.keys(record).some(
-			(key) => !["durationSeconds", "status", "text", "type"].includes(key),
+			(key) =>
+				!["durationSeconds", "segments", "status", "text", "type"].includes(
+					key,
+				),
 		)
 	) {
 		return null;
 	}
+	const segments = parseTranscriptSegments(record.segments);
 	if (
 		typeof record.text !== "string" ||
 		typeof record.durationSeconds !== "number" ||
@@ -397,12 +452,14 @@ function parseLibraryRecording(value: unknown): NewLibraryRecording | null {
 		typeof record.type !== "string" ||
 		!recordingTypes.includes(record.type as RecordingType) ||
 		typeof record.status !== "string" ||
-		!processingStatuses.includes(record.status as ProcessingStatus)
+		!processingStatuses.includes(record.status as ProcessingStatus) ||
+		!segments
 	) {
 		return null;
 	}
 	return {
 		durationSeconds: record.durationSeconds,
+		...(segments.length ? { segments } : {}),
 		status: record.status as NewLibraryRecording["status"],
 		text: record.text,
 		type: record.type as NewLibraryRecording["type"],

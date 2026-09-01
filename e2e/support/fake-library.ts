@@ -144,6 +144,7 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 				status: recording.status,
 				text: recording.text,
 				type: recording.type,
+				...(recording.segments ? { segments: recording.segments } : {}),
 			};
 			recordings.set(id, detail);
 			return detail;

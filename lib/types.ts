@@ -12,7 +12,7 @@ export interface TranscriptionResult {
 	tokens: TranscriptionToken[];
 }
 
-export type RecordingMode = "voice" | "meeting";
+export type RecordingMode = "voice" | "translation" | "meeting";
 export type RecordingState =
 	| "idle"
 	| "starting"

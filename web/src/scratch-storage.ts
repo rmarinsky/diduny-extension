@@ -1,4 +1,5 @@
 import { AUDIO_FORMAT } from "../../src/core/constants";
+import scratchStorageWorkerUrl from "./scratch-storage.worker.ts?worker&url";
 
 export interface ScratchRecording {
 	audio: Blob;
@@ -63,7 +64,7 @@ export interface ScratchStorage {
 }
 
 function browserWorker(): ScratchWorker {
-	return new Worker(new URL("./scratch-storage.worker.ts", import.meta.url), {
+	return new Worker(scratchStorageWorkerUrl, {
 		type: "module",
 	});
 }

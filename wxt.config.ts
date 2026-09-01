@@ -8,10 +8,11 @@ export default defineConfig({
 		description: "Voice dictation & meeting recording",
 		minimum_chrome_version: "116",
 		host_permissions: ["http://localhost/*"],
+		optional_host_permissions: ["http://*/*", "https://*/*"],
 		permissions: [
 			"activeTab",
 			"sidePanel",
-			"desktopCapture",
+			"tabCapture",
 			"offscreen",
 			"scripting",
 			"storage",
@@ -32,6 +33,20 @@ export default defineConfig({
 					mac: "Alt+Shift+D",
 				},
 				description: "Start/stop recording",
+			},
+			"toggle-translation": {
+				suggested_key: {
+					default: "Alt+Shift+T",
+					mac: "Alt+Shift+T",
+				},
+				description: "Start or stop translation dictation",
+			},
+			"start-meeting": {
+				suggested_key: {
+					default: "Alt+Shift+M",
+					mac: "Alt+Shift+M",
+				},
+				description: "Start or stop browser meeting recording",
 			},
 		},
 		action: {
