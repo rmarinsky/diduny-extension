@@ -7,9 +7,11 @@ export default defineConfig({
 		description: "Voice dictation & meeting recording",
 		minimum_chrome_version: "116",
 		permissions: [
+			"activeTab",
 			"sidePanel",
 			"desktopCapture",
 			"offscreen",
+			"scripting",
 			"storage",
 			"alarms",
 			"tabs",

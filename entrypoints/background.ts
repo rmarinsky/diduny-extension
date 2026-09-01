@@ -14,6 +14,10 @@
 import { supabase } from "../lib/auth/supabaseClient";
 import type { TokenResult } from "../lib/auth/tokenBridge";
 import { crashLog, getCrashLogs, logError } from "../lib/crash-log";
+import {
+	type DeliveryPreparation,
+	installDeliveryBridge,
+} from "../lib/delivery/page-bridge";
 import { onMessage, sendMessage } from "../lib/messaging/bridge";
 import type { Message } from "../lib/messaging/types";
 import type { RecordingMode, RecordingState } from "../lib/types";
@@ -23,10 +27,16 @@ interface DesktopCaptureSelection {
 	canRequestAudioTrack: boolean;
 }
 
+interface DeliverySession {
+	tabId: number;
+	ready: boolean;
+}
+
 export default defineBackground(() => {
 	let currentState: RecordingState = "idle";
 	const completedSources = new Set<string>();
 	const KEEPALIVE_ALARM = "recording-keepalive";
+	let deliverySession: DeliverySession | undefined;
 
 	// Keepalive: prevent SW from sleeping during recording
 	chrome.alarms.onAlarm.addListener((alarm) => {
@@ -273,6 +283,7 @@ export default defineBackground(() => {
 				break;
 			}
 			case "capture-complete": {
+				await deliverTranscript(msg.text);
 				await sendMessage({
 					type: "transcription-complete",
 					text: msg.text,
@@ -287,6 +298,7 @@ export default defineBackground(() => {
 				break;
 			}
 			case "capture-error": {
+				await clearDeliveryStatus();
 				await setState("error", msg.error);
 				await closeOffscreen();
 				break;
@@ -317,6 +329,8 @@ export default defineBackground(() => {
 		const accessToken = sessionData.session.access_token;
 
 		try {
+			deliverySession =
+				mode === "voice" ? await prepareDeliveryTarget() : undefined;
 			await ensureMicPermission();
 			crashLog("bg:startRecording", "info", "mic permission OK");
 
@@ -340,6 +354,7 @@ export default defineBackground(() => {
 			});
 		} catch (err) {
 			stopKeepalive();
+			await clearDeliveryStatus();
 			logError("bg:startRecording", err);
 			const msg =
 				err instanceof Error ? err.message : "Failed to start recording";
@@ -353,7 +368,82 @@ export default defineBackground(() => {
 
 	async function stopRecording() {
 		await setState("processing");
+		await sendDeliveryStatus("processing");
 		await sendMessage({ type: "stop-capture" });
+	}
+
+	async function prepareDeliveryTarget(): Promise<DeliverySession | undefined> {
+		const [tab] = await chrome.tabs.query({
+			active: true,
+			lastFocusedWindow: true,
+		});
+		if (!tab?.id) return undefined;
+
+		try {
+			const results = await chrome.scripting.executeScript({
+				target: { tabId: tab.id },
+				func: installDeliveryBridge,
+			});
+			const preparation = results[0]?.result as DeliveryPreparation | undefined;
+			const ready = preparation?.ready === true;
+			crashLog("bg:delivery", "info", `targetReady=${ready}`);
+			return { tabId: tab.id, ready };
+		} catch (err) {
+			crashLog(
+				"bg:delivery",
+				"warn",
+				err instanceof Error
+					? err.message
+					: "Could not prepare delivery target",
+			);
+			return undefined;
+		}
+	}
+
+	async function deliverTranscript(text: string) {
+		const session = deliverySession;
+		deliverySession = undefined;
+		if (!session) return;
+
+		try {
+			if (session.ready && text) {
+				const result = (await chrome.tabs.sendMessage(session.tabId, {
+					type: "diduny:deliver-transcript",
+					text,
+				})) as { inserted?: boolean } | undefined;
+				crashLog(
+					"bg:delivery",
+					"info",
+					`inserted=${result?.inserted === true}`,
+				);
+			}
+		} catch (err) {
+			crashLog(
+				"bg:delivery",
+				"warn",
+				err instanceof Error ? err.message : "Could not deliver transcript",
+			);
+		} finally {
+			await sendDeliveryStatus("clear", session);
+		}
+	}
+
+	async function clearDeliveryStatus() {
+		const session = deliverySession;
+		deliverySession = undefined;
+		if (session) {
+			await sendDeliveryStatus("clear", session);
+		}
+	}
+
+	async function sendDeliveryStatus(
+		status: "processing" | "clear",
+		session = deliverySession,
+	) {
+		if (!session) return;
+		await chrome.tabs
+			.sendMessage(session.tabId, { type: "diduny:delivery-status", status })
+			.catch(() => {});
 	}
 
 	async function setState(state: RecordingState, error?: string) {

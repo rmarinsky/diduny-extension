@@ -8,10 +8,11 @@
 		"dev:firefox": "wxt --browser firefox",
 		"build": "wxt build",
 		"zip": "wxt zip",
+		"test": "bun test",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
-		"validate": "bun run lint && bun run typecheck"
+		"validate": "bun run lint && bun run typecheck && bun run test"
 	},
 	"dependencies": {
 		"@supabase/supabase-js": "^2",
