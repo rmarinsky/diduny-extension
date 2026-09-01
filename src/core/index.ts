@@ -28,6 +28,7 @@ export {
 	decodeTranscriptResult,
 } from "./proxy-api-client";
 export { DEFAULT_SETTINGS, updateSettings } from "./settings";
+export { SessionMachine } from "./session-machine";
 export { speechPreCheck } from "./speech-precheck";
 
 import type { Platform } from "./ports";
