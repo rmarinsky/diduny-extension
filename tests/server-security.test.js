@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { buildServer } from "../server";
 import { InMemorySessionStore } from "../src/server/session-store";
 
-test("serves strict browser headers and applies a human-sized auth rate limit", async () => {
+test("serves strict browser headers and limits OTP sends per normalized email", async () => {
 	const server = await buildServer({
 		fetch: async () => new Response(null, { status: 204 }),
 	});
@@ -14,23 +14,34 @@ test("serves strict browser headers and applies a human-sized auth rate limit", 
 		expect(health.headers["x-frame-options"]).toBe("DENY");
 		expect(health.headers["x-content-type-options"]).toBe("nosniff");
 
+		const normalizedEmail = "person@example.com";
 		for (let attempt = 0; attempt < 10; attempt += 1) {
 			const response = await server.inject({
-				headers: { cookie: `diduny_session=untrusted-${attempt}` },
 				method: "POST",
-				payload: { email: "person@example.com" },
+				payload: {
+					email: attempt % 2 === 0 ? normalizedEmail : "Person@Example.com",
+				},
+				remoteAddress: `198.51.100.${String(attempt + 1)}`,
 				url: "/bff/auth/send-otp",
 			});
 			expect(response.statusCode).toBe(204);
 		}
 		const limited = await server.inject({
-			headers: { cookie: "diduny_session=one-more-untrusted-cookie" },
 			method: "POST",
-			payload: { email: "person@example.com" },
+			payload: { email: normalizedEmail },
+			remoteAddress: "198.51.100.200",
 			url: "/bff/auth/send-otp",
 		});
 		expect(limited.statusCode).toBe(429);
 		expect(limited.json()).toEqual({ error: "rate_limited" });
+
+		const independent = await server.inject({
+			method: "POST",
+			payload: { email: "other@example.com" },
+			remoteAddress: "198.51.100.200",
+			url: "/bff/auth/send-otp",
+		});
+		expect(independent.statusCode).toBe(204);
 	} finally {
 		await server.close();
 	}

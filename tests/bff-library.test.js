@@ -294,3 +294,204 @@ test("lets an extension session stream its capture into the local library", asyn
 		await rm(dataDir, { force: true, recursive: true });
 	}
 });
+
+test("saves a staged extension capture only once when duplicate uploads overlap", async () => {
+	const dataDir = await mkdtemp(
+		join(tmpdir(), "diduny-extension-library-race-"),
+	);
+	const library = await LibraryStore.open({ dataDir });
+	const sessions = new InMemorySessionStore();
+	const sessionId = await sessions.create({ accessToken: "server-only" });
+	const server = await buildServer({ library, sessions });
+	try {
+		const extensionHeaders = {
+			cookie: `diduny_extension_session=${sessionId}`,
+			origin: defaultExtensionOrigin,
+		};
+		const created = await server.inject({
+			headers: extensionHeaders,
+			method: "POST",
+			payload: {
+				durationSeconds: 1,
+				status: "partiallyRecovered",
+				text: "One recovered meeting capture",
+				type: "meeting",
+			},
+			url: "/bff/extension/library",
+		});
+		expect(created.statusCode).toBe(201);
+
+		const uploads = await Promise.all(
+			Array.from({ length: 2 }, () =>
+				server.inject({
+					headers: { ...extensionHeaders, "content-type": "audio/webm" },
+					method: "PUT",
+					payload: "one-capture-upload",
+					url: `/bff/extension/library/${created.json().id}/media`,
+				}),
+			),
+		);
+		expect(
+			uploads.filter((response) => response.statusCode === 201),
+		).toHaveLength(1);
+
+		const recordings = await server.inject({
+			headers: { cookie: `diduny_session=${sessionId}` },
+			method: "GET",
+			url: "/bff/library",
+		});
+		expect(recordings.json().items).toHaveLength(1);
+	} finally {
+		await server.close();
+		await library.close();
+		await rm(dataDir, { force: true, recursive: true });
+	}
+});
+
+test("keeps a staged extension capture retryable after its first library save fails", async () => {
+	const dataDir = await mkdtemp(
+		join(tmpdir(), "diduny-extension-library-retry-"),
+	);
+	const library = await LibraryStore.open({ dataDir });
+	const saveStream = library.saveStream.bind(library);
+	let failFirstSave = true;
+	library.saveStream = async (...args) => {
+		if (failFirstSave) {
+			failFirstSave = false;
+			throw new Error("temporary storage failure");
+		}
+		return saveStream(...args);
+	};
+	const sessions = new InMemorySessionStore();
+	const sessionId = await sessions.create({ accessToken: "server-only" });
+	const server = await buildServer({ library, sessions });
+	try {
+		const extensionHeaders = {
+			cookie: `diduny_extension_session=${sessionId}`,
+			origin: defaultExtensionOrigin,
+		};
+		const created = await server.inject({
+			headers: extensionHeaders,
+			method: "POST",
+			payload: {
+				durationSeconds: 1,
+				status: "partiallyRecovered",
+				text: "Retry this recovered meeting capture",
+				type: "meeting",
+			},
+			url: "/bff/extension/library",
+		});
+		const recordingId = created.json().id;
+		expect(created.statusCode).toBe(201);
+
+		const failed = await server.inject({
+			headers: { ...extensionHeaders, "content-type": "audio/webm" },
+			method: "PUT",
+			payload: "first-attempt-audio",
+			url: `/bff/extension/library/${recordingId}/media`,
+		});
+		expect(failed.statusCode).toBe(500);
+
+		const retry = await server.inject({
+			headers: { ...extensionHeaders, "content-type": "audio/webm" },
+			method: "PUT",
+			payload: "retry-audio",
+			url: `/bff/extension/library/${recordingId}/media`,
+		});
+		expect(retry.statusCode).toBe(201);
+		expect(retry.json()).toEqual(
+			expect.objectContaining({ text: "Retry this recovered meeting capture" }),
+		);
+	} finally {
+		await server.close();
+		await library.close();
+		await rm(dataDir, { force: true, recursive: true });
+	}
+});
+
+test("keeps an in-flight extension capture within the pending limit when its save fails", async () => {
+	const dataDir = await mkdtemp(
+		join(tmpdir(), "diduny-extension-library-pending-limit-"),
+	);
+	const library = await LibraryStore.open({ dataDir });
+	const saveStream = library.saveStream.bind(library);
+	let markSaveStarted;
+	const saveStarted = new Promise((resolve) => {
+		markSaveStarted = resolve;
+	});
+	let releaseFailedSave;
+	const failedSaveReleased = new Promise((resolve) => {
+		releaseFailedSave = resolve;
+	});
+	let failInFlightSave = true;
+	library.saveStream = async (...args) => {
+		if (failInFlightSave) {
+			failInFlightSave = false;
+			markSaveStarted();
+			await failedSaveReleased;
+			throw new Error("temporary storage failure");
+		}
+		return saveStream(...args);
+	};
+	const sessions = new InMemorySessionStore();
+	const sessionId = await sessions.create({ accessToken: "server-only" });
+	const server = await buildServer({ library, sessions });
+	try {
+		const extensionHeaders = {
+			cookie: `diduny_extension_session=${sessionId}`,
+			origin: defaultExtensionOrigin,
+		};
+		const staged = await Promise.all(
+			Array.from({ length: 8 }, (_, index) =>
+				server.inject({
+					headers: extensionHeaders,
+					method: "POST",
+					payload: {
+						durationSeconds: 1,
+						status: "partiallyRecovered",
+						text: `Pending recovered capture ${index}`,
+						type: "meeting",
+					},
+					url: "/bff/extension/library",
+				}),
+			),
+		);
+		expect(staged.every((response) => response.statusCode === 201)).toBeTrue();
+		const recordingId = staged[0].json().id;
+
+		const upload = server.inject({
+			headers: { ...extensionHeaders, "content-type": "audio/webm" },
+			method: "PUT",
+			payload: "first-attempt-audio",
+			url: `/bff/extension/library/${recordingId}/media`,
+		});
+		await saveStarted;
+		const overflow = await server.inject({
+			headers: extensionHeaders,
+			method: "POST",
+			payload: {
+				durationSeconds: 1,
+				status: "partiallyRecovered",
+				text: "Must remain outside the pending limit",
+				type: "meeting",
+			},
+			url: "/bff/extension/library",
+		});
+		releaseFailedSave();
+		const failed = await upload;
+		const retry = await server.inject({
+			headers: { ...extensionHeaders, "content-type": "audio/webm" },
+			method: "PUT",
+			payload: "retry-audio",
+			url: `/bff/extension/library/${recordingId}/media`,
+		});
+
+		expect(overflow.statusCode).toBe(429);
+		expect(failed.statusCode).toBe(500);
+		expect(retry.statusCode).toBe(201);
+	} finally {
+		await server.close();
+		await library.close();
+		await rm(dataDir, { force: true, recursive: true });
+	}
+});
