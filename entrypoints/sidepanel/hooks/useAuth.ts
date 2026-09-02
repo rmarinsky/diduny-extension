@@ -62,6 +62,7 @@ export function useAuth() {
 				setUser({ email: res.email });
 				setStep("authenticated");
 			} else {
+				setUser(null);
 				setStep("unauthenticated");
 			}
 		} catch (err) {
@@ -75,6 +76,12 @@ export function useAuth() {
 			setLoading(false);
 		}
 	}, []);
+
+	useEffect(() => {
+		const revalidate = () => void refresh();
+		window.addEventListener("focus", revalidate);
+		return () => window.removeEventListener("focus", revalidate);
+	}, [refresh]);
 
 	const openBffSignIn = useCallback(async () => {
 		setError(null);

@@ -276,6 +276,130 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 
 		await fixture.bringToFront();
 		await fixture.locator("#target").focus();
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({
+				diarization: false,
+				language: "uk",
+				mode: "voice",
+				type: "start-recording",
+			});
+		});
+		await expect(panel.getByText("Recording...")).toBeVisible();
+		await fixture.locator("#disabled-target").focus();
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({ type: "stop-recording" });
+		});
+		await expect(panel.getByText("Done")).toBeVisible();
+		await expect(fixture.locator("#target")).toHaveValue(
+			"Mock transcriptMock transcript",
+		);
+		await expect(fixture.locator("#disabled-target")).toHaveValue("");
+
+		const recordingsBeforeDuplicateStart = e2eLibrary.recordings().length;
+		const targetBeforeDuplicateStart = await fixture
+			.locator("#target")
+			.inputValue();
+		const realtimeConfigsBeforeDuplicateStart = () =>
+			mock
+				.realtimeFrames()
+				.filter(
+					(frame) =>
+						!frame.isBinary &&
+						typeof frame.data === "string" &&
+						frame.data.includes('"audio_format"'),
+				).length;
+		const configCountBeforeDuplicateStart =
+			realtimeConfigsBeforeDuplicateStart();
+		await fixture.bringToFront();
+		await fixture.locator("#target").focus();
+		await panel.evaluate(() => {
+			const start = {
+				diarization: false,
+				language: "uk",
+				mode: "voice",
+				type: "start-recording",
+			};
+			chrome.runtime.sendMessage(start);
+			chrome.runtime.sendMessage(start);
+		});
+		await expect(panel.getByText("Recording...")).toBeVisible();
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({ type: "stop-recording" });
+		});
+		await expect(panel.getByText("Done")).toBeVisible();
+		await expect
+			.poll(() => e2eLibrary.recordings().length)
+			.toBe(recordingsBeforeDuplicateStart + 1);
+		await expect(fixture.locator("#target")).toHaveValue(
+			`${targetBeforeDuplicateStart}Mock transcript`,
+		);
+		expect(realtimeConfigsBeforeDuplicateStart()).toBe(
+			configCountBeforeDuplicateStart + 1,
+		);
+
+		const recordingsBeforeWorkerTermination = e2eLibrary.recordings().length;
+		const targetBeforeWorkerTermination = await fixture
+			.locator("#target")
+			.inputValue();
+		await fixture.bringToFront();
+		await fixture.locator("#target").focus();
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({
+				diarization: false,
+				language: "uk",
+				mode: "voice",
+				type: "start-recording",
+			});
+		});
+		await expect(panel.getByText("Recording...")).toBeVisible();
+		const cdp = await context.newCDPSession(panel);
+		const workerVersions = new Map<
+			string,
+			{ runningStatus: string; scriptURL: string; versionId: string }
+		>();
+		cdp.on("ServiceWorker.workerVersionUpdated", ({ versions }) => {
+			for (const version of versions)
+				workerVersions.set(version.versionId, version);
+		});
+		await cdp.send("ServiceWorker.enable");
+		const didunyWorker = () =>
+			[...workerVersions.values()].find((version) =>
+				version.scriptURL.startsWith(`chrome-extension://${extensionId}/`),
+			);
+		await expect
+			.poll(() => didunyWorker()?.runningStatus, { timeout: 10_000 })
+			.toBe("running");
+		const runningWorker = didunyWorker();
+		if (!runningWorker)
+			throw new Error("Could not find the Diduny service-worker version");
+		await cdp.send("ServiceWorker.stopWorker", {
+			versionId: runningWorker.versionId,
+		});
+		await expect
+			.poll(() => didunyWorker()?.runningStatus, { timeout: 10_000 })
+			.toBe("stopped");
+		await panel.evaluate(
+			() =>
+				new Promise((resolve) =>
+					chrome.runtime.sendMessage({ type: "getBffSession" }, resolve),
+				),
+		);
+		await expect
+			.poll(() => didunyWorker()?.runningStatus, { timeout: 10_000 })
+			.toBe("running");
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({ type: "stop-recording" });
+		});
+		await expect(panel.getByText("Done")).toBeVisible();
+		await expect
+			.poll(() => e2eLibrary.recordings().length)
+			.toBe(recordingsBeforeWorkerTermination + 1);
+		await expect(fixture.locator("#target")).toHaveValue(
+			`${targetBeforeWorkerTermination}Mock transcript`,
+		);
+
+		await fixture.bringToFront();
+		await fixture.locator("#target").focus();
 		await dictate({ mode: "translation" });
 		const transcription = mock.transcriptions().at(-1);
 		if (!transcription) throw new Error("Expected extension transcription");
@@ -374,6 +498,16 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 			localStorage: Object.entries(localStorage),
 			sessionStorage: Object.entries(sessionStorage),
 		}));
+		const extensionStorage = await panel.evaluate(
+			() =>
+				new Promise<{ local: object; session: object }>((resolve) => {
+					chrome.storage.local.get(null, (local) => {
+						chrome.storage.session.get(null, (session) =>
+							resolve({ local, session }),
+						);
+					});
+				}),
+		);
 		for (const tokenFragment of tokenFragments) {
 			expect(pageStorage.cookie, "document.cookie").not.toContain(
 				tokenFragment,
@@ -386,6 +520,10 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 				JSON.stringify(pageStorage.sessionStorage),
 				"sessionStorage",
 			).not.toContain(tokenFragment);
+			expect(
+				JSON.stringify(extensionStorage),
+				"extension storage",
+			).not.toContain(tokenFragment);
 			for (const response of responseBodies) {
 				expect(
 					response.body,
@@ -393,6 +531,22 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 				).not.toContain(tokenFragment);
 			}
 		}
+		await webLogin.getByRole("button", { name: "Sign out" }).click();
+		await expect(webLogin.getByLabel("Email")).toBeVisible();
+		expect(
+			await panel.evaluate(
+				() =>
+					new Promise((resolve) =>
+						chrome.runtime.sendMessage({ type: "getBffSession" }, resolve),
+					),
+			),
+		).toEqual({ authenticated: false });
+		await panel.bringToFront();
+		// Headless Chromium does not emit focus for extension pages.
+		await panel.evaluate(() => window.dispatchEvent(new Event("focus")));
+		await expect(
+			panel.getByRole("button", { name: "Open Diduny sign-in" }),
+		).toBeVisible();
 	} finally {
 		await context?.close();
 		bff.server.closeAllConnections?.();

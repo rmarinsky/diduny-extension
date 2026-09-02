@@ -287,18 +287,24 @@ export default defineBackground(() => {
 			"info",
 			`mode=${mode}, lang=${language}, diarization=${diarization}`,
 		);
-
-		const [session, bffOrigin, microphoneDeviceId] = await Promise.all([
-			getBffAuthSession(),
-			getBffOrigin(),
-			getDefaultMicrophoneId(),
-		]);
-		if (!session.authenticated) {
-			await setState("error", "Not authenticated");
+		if (
+			currentState === "starting" ||
+			currentState === "recording" ||
+			currentState === "processing"
+		)
 			return;
-		}
 
 		try {
+			await setState("starting");
+			const [session, bffOrigin, microphoneDeviceId] = await Promise.all([
+				getBffAuthSession(),
+				getBffOrigin(),
+				getDefaultMicrophoneId(),
+			]);
+			if (!session.authenticated) {
+				await setState("error", "Not authenticated");
+				return;
+			}
 			completedSources.clear();
 			persistedSources.clear();
 			await clearDeliveryStatus();
@@ -323,7 +329,6 @@ export default defineBackground(() => {
 					? await meetingTabCaptureStreamId(targetTabId)
 					: undefined;
 
-			await setState("starting");
 			startKeepalive();
 			await sendToOffscreenWithRetry({
 				type: "start-capture",
