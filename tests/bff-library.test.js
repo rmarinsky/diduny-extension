@@ -302,10 +302,10 @@ test("replays an extension capture idempotently after a BFF rebuild", async () =
 	const library = await LibraryStore.open({ dataDir });
 	const sessions = new InMemorySessionStore();
 	const sessionId = await sessions.create({ accessToken: "server-only" });
-	const idempotencyKey = "22e4aed8-69f8-4204-94fd-359f5199c0d2";
+	const scratchId = "22e4aed8-69f8-4204-94fd-359f5199c0d2";
 	const extensionHeaders = {
 		cookie: `diduny_extension_session=${sessionId}`,
-		"idempotency-key": idempotencyKey,
+		"idempotency-key": scratchId,
 		origin: defaultExtensionOrigin,
 	};
 	const recording = {
@@ -354,7 +354,7 @@ test("replays an extension capture idempotently after a BFF rebuild", async () =
 		});
 		expect(replayed.statusCode).toBe(200);
 		expect(replayed.json()).toEqual(
-			expect.objectContaining({ id: idempotencyKey, saved: true }),
+			expect.objectContaining({ id: scratchId, saved: true }),
 		);
 
 		const recordings = await server.inject({
@@ -384,10 +384,10 @@ test("replays a persist-then-failed extension upload without saving the audio tw
 	};
 	const sessions = new InMemorySessionStore();
 	const sessionId = await sessions.create({ accessToken: "server-only" });
-	const idempotencyKey = "ca7d67ba-7d7c-4e10-95a2-bae80f25e77d";
+	const scratchId = "ca7d67ba-7d7c-4e10-95a2-bae80f25e77d";
 	const extensionHeaders = {
 		cookie: `diduny_extension_session=${sessionId}`,
-		"idempotency-key": idempotencyKey,
+		"idempotency-key": scratchId,
 		origin: defaultExtensionOrigin,
 	};
 	const recording = {
@@ -426,7 +426,7 @@ test("replays a persist-then-failed extension upload without saving the audio tw
 		});
 		expect(replayed.statusCode).toBe(200);
 		expect(replayed.json()).toEqual(
-			expect.objectContaining({ id: idempotencyKey, saved: true }),
+			expect.objectContaining({ id: scratchId, saved: true }),
 		);
 		expect(saveStreamCalls).toBe(1);
 		const freshStages = await Promise.all(

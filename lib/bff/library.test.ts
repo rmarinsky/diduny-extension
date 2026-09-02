@@ -96,14 +96,14 @@ test("saves an extension recording through the extension-only BFF routes", async
 test("accepts an already saved extension recording only when its marker repeats the idempotency key", async () => {
 	const originalFetch = globalThis.fetch;
 	const calls: Array<{ init?: RequestInit; url: string }> = [];
-	const idempotencyKey = "9de9c452-d224-4df2-9b53-6d97c6a8f1d4";
+	const scratchId = "9de9c452-d224-4df2-9b53-6d97c6a8f1d4";
 	globalThis.fetch = (async (url, init) => {
 		calls.push({ init, url: String(url) });
 		return Response.json(
 			{
 				id:
 					calls.length === 1
-						? idempotencyKey
+						? scratchId
 						: "0cd73873-57cc-475e-b25d-3da2e00a0528",
 				saved: true,
 			},
@@ -121,7 +121,7 @@ test("accepts an already saved extension recording only when its marker repeats 
 				type: "meeting",
 			},
 			"http://localhost:4317",
-			idempotencyKey,
+			scratchId,
 		);
 		await expect(
 			saveExtensionRecording(
@@ -133,7 +133,7 @@ test("accepts an already saved extension recording only when its marker repeats 
 					type: "meeting",
 				},
 				"http://localhost:4317",
-				idempotencyKey,
+				scratchId,
 			),
 		).rejects.toMatchObject({ code: "request_rejected" });
 	} finally {
@@ -145,7 +145,7 @@ test("accepts an already saved extension recording only when its marker repeats 
 		init: expect.objectContaining({
 			headers: expect.objectContaining({
 				"content-type": "application/json",
-				"idempotency-key": idempotencyKey,
+				"idempotency-key": scratchId,
 			}),
 			method: "POST",
 		}),
