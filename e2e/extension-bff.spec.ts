@@ -150,26 +150,35 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 			(await context.waitForEvent("serviceworker", { timeout: 10_000 }));
 		const extensionId = new URL(worker.url()).host;
 
+		await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+			origin: new URL(fixtureUrl).origin,
+		});
 		const fixture = await context.newPage();
 		await fixture.goto(`${fixtureUrl}/fixture`);
 		await fixture.locator("#target").focus();
+		await fixture.evaluate(() =>
+			navigator.clipboard.writeText("clipboard must remain unchanged"),
+		);
 
 		const options = await context.newPage();
 		await options.goto(`chrome-extension://${extensionId}/options.html`);
 		await options.locator("#bff-origin").fill(bffUrl);
 		await options.getByRole("button", { name: "Save", exact: true }).click();
 		await expect(options.locator("output")).toContainText("Saved");
-		expect(
-			(await options.evaluate(() => chrome.commands.getAll())).map(
-				(command) => command.name,
-			),
-		).toEqual(
+		const registeredCommands = await options.evaluate(() =>
+			chrome.commands.getAll(),
+		);
+		expect(registeredCommands.map((command) => command.name)).toEqual(
 			expect.arrayContaining([
 				"toggle-recording",
 				"toggle-translation",
 				"start-meeting",
 			]),
 		);
+		expect(
+			registeredCommands.find((command) => command.name === "toggle-recording")
+				?.shortcut,
+		).toBeTruthy();
 		await options.locator("#default-microphone").selectOption({ index: 1 });
 		await options.getByRole("button", { name: "Save microphone" }).click();
 		await expect(options.locator("output")).toContainText("microphone");
@@ -272,6 +281,23 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 						});
 					}),
 			);
+		const terminalCaptureId = () =>
+			panel.evaluate(
+				() =>
+					new Promise<string | undefined>((resolve) => {
+						chrome.storage.session.get(
+							"didunyCaptureTerminalState",
+							(result) => {
+								const state = result.didunyCaptureTerminalState;
+								resolve(
+									state && typeof state.captureId === "string"
+										? state.captureId
+										: undefined,
+								);
+							},
+						);
+					}),
+			);
 		await dictate({ diarization: true });
 
 		await expect(fixture.locator("#target")).toHaveValue("Mock transcript", {
@@ -301,6 +327,9 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 			]);
 		expect(mock.transcriptions()).toHaveLength(0);
 		await expect.poll(savedTranscriptCount).toBe(1);
+		expect(await fixture.evaluate(() => navigator.clipboard.readText())).toBe(
+			"clipboard must remain unchanged",
+		);
 
 		const targetBeforeCaptureReplay = await fixture
 			.locator("#target")
@@ -308,17 +337,22 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 		const recordingsBeforeCaptureReplay = e2eLibrary.recordings().length;
 		const savedTranscriptCountBeforeCaptureReplay =
 			await savedTranscriptCount();
-		await panel.evaluate(() => {
+		const replayCaptureId = await terminalCaptureId();
+		if (!replayCaptureId)
+			throw new Error("Expected a completed capture id for replay");
+		await panel.evaluate((captureId) => {
 			chrome.runtime.sendMessage({
+				captureId,
 				source: "mic",
 				text: "Mock transcript",
 				type: "capture-complete",
 			});
 			chrome.runtime.sendMessage({
+				captureId,
 				source: "mic",
 				type: "capture-persisted",
 			});
-		});
+		}, replayCaptureId);
 		await expect(panel.getByText("Done")).toBeVisible();
 
 		await fixture.bringToFront();
