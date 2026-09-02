@@ -8,10 +8,7 @@ export function sendMessage(message: Message): Promise<void> {
 }
 
 export function onMessage(
-	handler: (
-		message: Message,
-		sender: chrome.runtime.MessageSender,
-	) => void | Promise<void>,
+	handler: (message: Message, sender: chrome.runtime.MessageSender) => unknown,
 ): () => void {
 	const listener = (
 		message: unknown,
@@ -19,8 +16,18 @@ export function onMessage(
 		sendResponse: () => void,
 	) => {
 		const result = handler(message as Message, sender);
-		if (!result) return false;
-		void result.finally(sendResponse);
+		if (!(result instanceof Promise)) return false;
+		void result.then(
+			(handled) => {
+				if (handled === true) sendResponse();
+			},
+			(error) => {
+				sendResponse();
+				queueMicrotask(() => {
+					throw error;
+				});
+			},
+		);
 		return true;
 	};
 	chrome.runtime.onMessage.addListener(listener);

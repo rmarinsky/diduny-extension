@@ -104,13 +104,17 @@ function timedSegments(tokens: readonly RealtimeToken[]): TranscriptSegment[] {
 	});
 }
 
-onMessage(async (msg) => {
+onMessage((msg) => {
 	if (msg.type === "start-capture") {
-		await startCapture(msg);
-	} else if (msg.type === "stop-capture") {
-		await stopCapture();
-	} else if (msg.type === "forceClose") {
-		await discardCapture();
+		void startCapture(msg);
+		return;
+	}
+	if (msg.type === "stop-capture") {
+		void stopCapture();
+		return;
+	}
+	if (msg.type === "forceClose") {
+		void discardCapture();
 	}
 });
 

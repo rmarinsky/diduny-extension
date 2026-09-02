@@ -122,7 +122,7 @@ function createBackgroundHarness({
 		(
 			message: unknown,
 			sender: chrome.runtime.MessageSender,
-			response: () => void,
+			response: (value?: unknown) => void,
 		) => boolean | undefined
 	> = [];
 	const backgroundMessages: Array<{ type?: string }> = [];
@@ -236,6 +236,23 @@ function createBackgroundHarness({
 				listener(message, {}, () => undefined),
 			);
 		},
+		async request(message: unknown) {
+			const replies: unknown[] = [];
+			for (const listener of runtimeListeners)
+				listener(message, {}, (value) => replies.push(value));
+			await waitFor(
+				() =>
+					replies.some(
+						(reply) =>
+							typeof reply === "object" &&
+							reply !== null &&
+							"authenticated" in reply,
+					),
+				"the BFF session response",
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			return replies;
+		},
 		async loadWorker() {
 			await import("../entrypoints/background");
 		},
@@ -247,6 +264,9 @@ function createBackgroundHarness({
 test("does not let delayed delivery from an older capture close a newer offscreen capture", async () => {
 	const harness = createBackgroundHarness({ delayTranscriptDelivery: true });
 	await harness.loadWorker();
+	expect(await harness.request({ type: "getBffSession" })).toEqual([
+		{ authenticated: true, email: "person@example.com" },
+	]);
 	const listenerResults = harness.dispatch({
 		source: "mic",
 		text: "Older transcript",

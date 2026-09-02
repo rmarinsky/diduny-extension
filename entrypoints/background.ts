@@ -223,15 +223,15 @@ export default defineBackground(() => {
 					msg.translation,
 					msg.targetTabId,
 				);
-				break;
+				return true;
 			}
 			case "stop-recording": {
 				await stopRecording();
-				break;
+				return true;
 			}
 			case "capture-ready": {
 				if (currentState === "starting") await setState("recording");
-				break;
+				return true;
 			}
 			case "capture-tokens": {
 				await sendMessage({
@@ -239,11 +239,11 @@ export default defineBackground(() => {
 					tokens: msg.tokens,
 					source: msg.source,
 				});
-				break;
+				return true;
 			}
 			case "capture-complete": {
 				const completion = await captureLifecycle.captureComplete(msg.source);
-				if (!completion.accepted) break;
+				if (!completion.accepted) return true;
 				await deliverTranscript(msg.text);
 				await sendMessage({
 					type: "transcription-complete",
@@ -256,21 +256,22 @@ export default defineBackground(() => {
 						msg.source,
 					),
 				);
-				break;
+				return true;
 			}
 			case "capture-persisted": {
 				await finishCapture(
 					await captureLifecycle.capturePersisted(msg.source),
 				);
-				break;
+				return true;
 			}
 			case "capture-error": {
 				await clearDeliveryStatus();
 				await closeOffscreen();
 				await setState("error", msg.error);
-				break;
+				return true;
 			}
 		}
+		return false;
 	});
 
 	// ── Recording helpers ───────────────────────────────────────────────────────
