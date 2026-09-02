@@ -101,19 +101,26 @@ export default defineBackground(() => {
 	});
 
 	// Recover state on SW restart from browser-owned session storage.
-	void captureLifecycle
+	const startupReady = captureLifecycle
 		.resume()
 		.then(async (terminal) => {
 			if (terminal?.shouldClose) {
 				await finishCapture(terminal);
 				return;
 			}
+			if (terminal?.pendingDelivery) {
+				await completeTranscriptDelivery(
+					terminal.captureId,
+					terminal.pendingDelivery.source,
+					terminal.pendingDelivery.text,
+				);
+			}
 			if (await chrome.offscreen.hasDocument()) {
 				currentState = "recording";
 				updateBadge("recording");
 			}
 		})
-		.catch(() => {});
+		.catch((error) => logError("bg:recovery", error));
 
 	// ── Auth message handler ────────────────────────────────────────────────────
 	// The raw chrome.runtime API keeps the response channel open for BFF calls.
@@ -169,6 +176,7 @@ export default defineBackground(() => {
 
 	// ── Keyboard shortcut ───────────────────────────────────────────────────────
 	chrome.commands.onCommand.addListener(async (command) => {
+		await startupReady;
 		if (currentState === "recording") {
 			await stopRecording();
 		} else if (
@@ -242,19 +250,15 @@ export default defineBackground(() => {
 				return true;
 			}
 			case "capture-complete": {
-				const completion = await captureLifecycle.captureComplete(msg.source);
+				const completion = await captureLifecycle.captureComplete(
+					msg.source,
+					msg.text,
+				);
 				if (!completion.accepted) return true;
-				await deliverTranscript(msg.text);
-				await sendMessage({
-					type: "transcription-complete",
-					text: msg.text,
-					source: msg.source,
-				});
-				await finishCapture(
-					await captureLifecycle.deliveryFinished(
-						completion.captureId,
-						msg.source,
-					),
+				await completeTranscriptDelivery(
+					completion.captureId,
+					msg.source,
+					msg.text,
 				);
 				return true;
 			}
@@ -288,6 +292,7 @@ export default defineBackground(() => {
 			"info",
 			`mode=${mode}, lang=${language}, diarization=${diarization}`,
 		);
+		await startupReady;
 		if (
 			currentState === "starting" ||
 			currentState === "recording" ||
@@ -352,6 +357,7 @@ export default defineBackground(() => {
 	}
 
 	async function stopRecording() {
+		await startupReady;
 		await setState("processing");
 		await sendDeliveryStatus("processing");
 		await sendMessage({ type: "stop-capture" });
@@ -411,7 +417,19 @@ export default defineBackground(() => {
 		}
 	}
 
-	async function deliverTranscript(text: string) {
+	async function completeTranscriptDelivery(
+		captureId: string,
+		source: Extract<Message, { type: "capture-complete" }>["source"],
+		text: string,
+	) {
+		await deliverTranscript(text, captureId);
+		await sendMessage({ type: "transcription-complete", text, source });
+		await finishCapture(
+			await captureLifecycle.deliveryFinished(captureId, source),
+		);
+	}
+
+	async function deliverTranscript(text: string, deliveryId: string) {
 		const session = await getDeliverySession();
 		if (!session) return;
 
@@ -427,12 +445,13 @@ export default defineBackground(() => {
 			if (text) {
 				let result =
 					session.editor === "quill"
-						? await deliverQuillTranscript(session, text)
+						? await deliverQuillTranscript(session, text, deliveryId)
 						: undefined;
 				if (result?.inserted !== true) {
 					result = await chrome.tabs.sendMessage(
 						session.tabId,
 						{
+							deliveryId,
 							type: "diduny:deliver-transcript",
 							text,
 						},
@@ -466,10 +485,11 @@ export default defineBackground(() => {
 	async function deliverQuillTranscript(
 		session: DeliverySession,
 		text: string,
+		deliveryId: string,
 	) {
 		try {
 			const [result] = await chrome.scripting.executeScript({
-				args: [text],
+				args: [text, deliveryId],
 				func: deliverToQuill,
 				target: { frameIds: [session.frameId], tabId: session.tabId },
 				world: "MAIN",

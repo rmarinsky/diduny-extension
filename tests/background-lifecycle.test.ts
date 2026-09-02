@@ -47,7 +47,10 @@ test("finishes a completed capture after the service worker restarts before pers
 	const capture = firstWorker.begin();
 	await capture.ready;
 
-	expect((await firstWorker.captureComplete("mic")).shouldClose).toBe(false);
+	expect(
+		(await firstWorker.captureComplete("mic", "Retry this transcript"))
+			.shouldClose,
+	).toBe(false);
 	expect(
 		(await firstWorker.deliveryFinished(capture.id, "mic")).shouldClose,
 	).toBe(false);
@@ -67,12 +70,66 @@ test("finishes a persisted capture after the service worker restarts before comp
 	expect((await firstWorker.capturePersisted("tab")).shouldClose).toBe(false);
 
 	const restartedWorker = createCaptureTerminalLifecycle(storageArea(session));
-	const completion = await restartedWorker.captureComplete("tab");
+	const completion = await restartedWorker.captureComplete(
+		"tab",
+		"Persist this transcript",
+	);
 	expect(completion.shouldClose).toBe(false);
 	expect(
 		(await restartedWorker.deliveryFinished(completion.captureId, "tab"))
 			.shouldClose,
 	).toBe(true);
+});
+
+test("restores an unfinished transcript delivery after the service worker restarts", async () => {
+	const session = new Map<string, unknown>();
+	const firstWorker = createCaptureTerminalLifecycle(storageArea(session));
+	const capture = firstWorker.begin();
+	await capture.ready;
+	await firstWorker.captureComplete("mic", "Retry after restart");
+
+	const restartedWorker = createCaptureTerminalLifecycle(storageArea(session));
+	expect(await restartedWorker.resume()).toMatchObject({
+		captureId: capture.id,
+		pendingDelivery: { source: "mic", text: "Retry after restart" },
+		shouldClose: false,
+	});
+});
+
+test("does not let queued recovery overwrite a newer capture", async () => {
+	const recoveryRead = deferred<void>();
+	const session = new Map<string, unknown>([
+		[
+			"didunyCaptureTerminalState",
+			{
+				captureId: "older-capture",
+				completedSources: ["mic"],
+				deliveredSources: ["mic"],
+				persistedSources: ["mic"],
+				terminal: true,
+			},
+		],
+	]);
+	const baseStorage = storageArea(session);
+	const lifecycle = createCaptureTerminalLifecycle({
+		...baseStorage,
+		async get(key) {
+			await recoveryRead.promise;
+			return baseStorage.get(key);
+		},
+	});
+
+	const recovery = lifecycle.resume();
+	const newerCapture = lifecycle.begin();
+	recoveryRead.resolve();
+	await recovery;
+	await newerCapture.ready;
+
+	expect(lifecycle.isCurrent(newerCapture.id)).toBe(true);
+	expect(session.get("didunyCaptureTerminalState")).toMatchObject({
+		captureId: newerCapture.id,
+		terminal: false,
+	});
 });
 
 async function waitFor(predicate: () => boolean, message: string) {
@@ -108,14 +165,31 @@ afterEach(() => {
 
 function createBackgroundHarness({
 	delayTranscriptDelivery = false,
-}: { delayTranscriptDelivery?: boolean } = {}) {
+	recoverPendingDelivery = false,
+}: {
+	delayTranscriptDelivery?: boolean;
+	recoverPendingDelivery?: boolean;
+} = {}) {
 	const local = new Map<string, unknown>([["micGranted", true]]);
 	const session = new Map<string, unknown>();
-	if (delayTranscriptDelivery) {
+	if (delayTranscriptDelivery || recoverPendingDelivery) {
 		session.set("didunyDeliverySession", {
 			frameId: 0,
 			origin: "https://target.test",
 			tabId: 1,
+		});
+	}
+	if (recoverPendingDelivery) {
+		session.set("didunyCaptureTerminalState", {
+			captureId: "older-capture",
+			completedSources: ["mic"],
+			deliveredSources: [],
+			pendingDelivery: {
+				source: "mic",
+				text: "Older transcript",
+			},
+			persistedSources: ["mic"],
+			terminal: false,
 		});
 	}
 	const runtimeListeners: Array<
@@ -126,11 +200,19 @@ function createBackgroundHarness({
 		) => boolean | undefined
 	> = [];
 	const backgroundMessages: Array<{ type?: string }> = [];
+	const transcriptDeliveryMessages: Array<{
+		deliveryId?: unknown;
+		text?: unknown;
+		type?: string;
+	}> = [];
 	const transcriptDelivery = deferred<{ inserted: boolean }>();
-	const transcriptDeliveryStarted = deferred<void>();
+	const startupRecovery = deferred<void>();
+	if (!recoverPendingDelivery) startupRecovery.resolve();
+	let transcriptDeliveryCalls = 0;
 	let closeDocumentCalls = 0;
 	let createDocumentCalls = 0;
 	let offscreenExists = true;
+	const baseSessionStorage = storageArea(session);
 
 	const chromeMock = {
 		action: {
@@ -186,7 +268,14 @@ function createBackgroundHarness({
 		sidePanel: { setPanelBehavior() {} },
 		storage: {
 			local: storageArea(local),
-			session: storageArea(session),
+			session: {
+				...baseSessionStorage,
+				async get(key: string | string[] | null) {
+					if (key === "didunyCaptureTerminalState")
+						await startupRecovery.promise;
+					return baseSessionStorage.get(key);
+				},
+			},
 		},
 		tabCapture: { getMediaStreamId() {} },
 		tabs: {
@@ -194,9 +283,13 @@ function createBackgroundHarness({
 				return [{ id: 1, url: "https://target.test/editor" }];
 			},
 			onRemoved: { addListener() {}, removeListener() {} },
-			async sendMessage(_tabId: number, message: { type?: string }) {
+			async sendMessage(
+				_tabId: number,
+				message: { deliveryId?: unknown; text?: unknown; type?: string },
+			) {
 				if (message.type !== "diduny:deliver-transcript") return;
-				transcriptDeliveryStarted.resolve();
+				transcriptDeliveryMessages.push(message);
+				transcriptDeliveryCalls += 1;
 				return delayTranscriptDelivery
 					? transcriptDelivery.promise
 					: { inserted: true };
@@ -256,39 +349,65 @@ function createBackgroundHarness({
 		async loadWorker() {
 			await import("../entrypoints/background");
 		},
+		releaseStartupRecovery() {
+			startupRecovery.resolve();
+		},
 		transcriptDelivery,
-		transcriptDeliveryStarted,
+		transcriptDeliveryCalls: () => transcriptDeliveryCalls,
+		transcriptDeliveryMessages,
 	};
 }
 
-test("does not let delayed delivery from an older capture close a newer offscreen capture", async () => {
-	const harness = createBackgroundHarness({ delayTranscriptDelivery: true });
+test("recovers delivery before accepting a new capture after worker restart", async () => {
+	const harness = createBackgroundHarness({
+		delayTranscriptDelivery: true,
+		recoverPendingDelivery: true,
+	});
 	await harness.loadWorker();
 	expect(await harness.request({ type: "getBffSession" })).toEqual([
 		{ authenticated: true, email: "person@example.com" },
 	]);
 	const listenerResults = harness.dispatch({
-		source: "mic",
-		text: "Older transcript",
-		type: "capture-complete",
-	});
-	expect(listenerResults).toContain(true);
-	await harness.transcriptDeliveryStarted.promise;
-	harness.dispatch({ source: "mic", type: "capture-persisted" });
-	await new Promise((resolve) => setTimeout(resolve, 0));
-	expect(harness.closeDocumentCalls()).toBe(0);
-	harness.dispatch({
 		diarization: false,
 		language: "uk",
 		mode: "voice",
 		type: "start-recording",
 	});
-	await new Promise((resolve) => setTimeout(resolve, 0));
-	expect(harness.createDocumentCalls()).toBe(0);
+	expect(listenerResults).toContain(true);
+	expect(
+		harness.backgroundMessages.some(
+			(message) => message.type === "start-capture",
+		),
+	).toBe(false);
+
+	harness.releaseStartupRecovery();
+	await waitFor(
+		() =>
+			harness.transcriptDeliveryCalls() === 1 ||
+			harness.backgroundMessages.some(
+				(message) => message.type === "start-capture",
+			),
+		"recovery delivery or an incorrect new capture",
+	);
+	expect(harness.transcriptDeliveryCalls()).toBe(1);
+	expect(harness.transcriptDeliveryMessages).toEqual([
+		{
+			deliveryId: "older-capture",
+			text: "Older transcript",
+			type: "diduny:deliver-transcript",
+		},
+	]);
+	expect(
+		harness.backgroundMessages.some(
+			(message) => message.type === "start-capture",
+		),
+	).toBe(false);
+	expect(harness.closeDocumentCalls()).toBe(0);
+
 	harness.transcriptDelivery.resolve({ inserted: true });
 	await waitFor(
 		() => harness.closeDocumentCalls() === 1,
-		"the older capture to finish after transcript delivery",
+		"the recovered capture to finish after transcript delivery",
 	);
 	harness.dispatch({
 		diarization: false,
@@ -297,8 +416,12 @@ test("does not let delayed delivery from an older capture close a newer offscree
 		type: "start-recording",
 	});
 	await waitFor(
-		() => harness.createDocumentCalls() === 1,
-		"the newer capture to create its offscreen document",
+		() =>
+			harness.createDocumentCalls() === 1 &&
+			harness.backgroundMessages.filter(
+				(message) => message.type === "start-capture",
+			).length === 1,
+		"the new capture to start after recovery",
 	);
 	await waitFor(
 		() =>

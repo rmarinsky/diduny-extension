@@ -15,6 +15,7 @@ export type CaptureRun = {
 export type CaptureTerminalDecision = {
 	accepted: boolean;
 	captureId: string;
+	pendingDelivery?: { source: AudioSource; text: string };
 	shouldClose: boolean;
 };
 
@@ -22,6 +23,7 @@ type CaptureTerminalState = {
 	captureId: string;
 	completedSources: AudioSource[];
 	deliveredSources: AudioSource[];
+	pendingDelivery?: { source: AudioSource; text: string };
 	persistedSources: AudioSource[];
 	terminal: boolean;
 };
@@ -44,7 +46,10 @@ function isTerminalState(value: unknown): value is CaptureTerminalState {
 		typeof state.terminal === "boolean" &&
 		sourceList(state.completedSources) !== undefined &&
 		sourceList(state.deliveredSources) !== undefined &&
-		sourceList(state.persistedSources) !== undefined
+		sourceList(state.persistedSources) !== undefined &&
+		(state.pendingDelivery === undefined ||
+			(isAudioSource(state.pendingDelivery.source) &&
+				typeof state.pendingDelivery.text === "string"))
 	);
 }
 
@@ -148,23 +153,23 @@ export function createCaptureTerminalLifecycle(
 	return {
 		begin(): CaptureRun {
 			const captureId = crypto.randomUUID();
-			activeCaptureId = captureId;
 			return {
 				id: captureId,
 				ready: serialize(async () => {
-					if (activeCaptureId !== captureId) return;
+					activeCaptureId = captureId;
 					await storage.set({
 						[CAPTURE_TERMINAL_STORAGE_KEY]: emptyState(captureId),
 					});
 				}),
 			};
 		},
-		captureComplete(source: AudioSource) {
+		captureComplete(source: AudioSource, text: string) {
 			const captureId = activeCaptureId;
 			return transition(captureId, (state) => {
 				if (state.terminal || state.completedSources.includes(source))
 					return ignored(state.captureId);
 				state.completedSources = addSource(state.completedSources, source);
+				state.pendingDelivery = { source, text };
 				return decision(state.captureId);
 			});
 		},
@@ -186,6 +191,8 @@ export function createCaptureTerminalLifecycle(
 				)
 					return ignored(state.captureId);
 				state.deliveredSources = addSource(state.deliveredSources, source);
+				if (state.pendingDelivery?.source === source)
+					state.pendingDelivery = undefined;
 				return finishIfReady(state);
 			});
 		},
@@ -194,7 +201,12 @@ export function createCaptureTerminalLifecycle(
 				const state = await storedState();
 				if (!state) return undefined;
 				activeCaptureId = state.captureId;
-				return decision(state.captureId, state.terminal);
+				return {
+					...decision(state.captureId, state.terminal),
+					...(state.pendingDelivery
+						? { pendingDelivery: state.pendingDelivery }
+						: {}),
+				};
 			});
 		},
 		isCurrent(candidate: string) {
