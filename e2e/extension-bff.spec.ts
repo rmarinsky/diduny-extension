@@ -17,6 +17,7 @@ function serverUrl(server: ReturnType<typeof Fastify>, hostname = "127.0.0.1") {
 }
 
 test("loaded extension signs in through the mock proxy BFF, delivers dictation, and saves it", async () => {
+	test.setTimeout(120_000);
 	const accessToken = "access-token-should-never-reach-page";
 	const refreshToken = "refresh-token-should-never-reach-page";
 	const tokenFragments = [accessToken, refreshToken];

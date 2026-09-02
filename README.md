@@ -51,6 +51,11 @@ Playwright with the built MV3 extension installed and active. Only after those
 checks pass does it create `.output/diduny-extension-<version>-chrome.zip` for
 the Chrome Web Store or a versioned GitHub release.
 
+Pushing the exact `extension-v<version>` tag runs the same gate in GitHub
+Actions. The workflow verifies that the tag matches `package.json`, then
+attaches that ZIP to the corresponding GitHub Release. A mismatched tag, a
+failed build, or a failed browser test publishes nothing.
+
 For a local installation, open `chrome://extensions`, enable **Developer
 mode**, choose **Load unpacked**, and select `.output/chrome-mv3`. End users
 install the versioned package through the Chrome Web Store after it is
