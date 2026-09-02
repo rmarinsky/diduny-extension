@@ -1,8 +1,8 @@
+import { bffExtensionWebSocketUrl } from "../bff/client";
 import type { RealtimeConfig, TranscriptionToken } from "../types";
-import { WS_URL } from "../types";
 
 export interface WSClientOptions {
-	accessToken: string;
+	bffOrigin: string;
 	config: RealtimeConfig;
 	onTokens: (tokens: TranscriptionToken[]) => void;
 	onComplete: (text: string) => void;
@@ -30,8 +30,7 @@ export class RealtimeWSClient {
 	}
 
 	connect(): void {
-		const url = `${WS_URL}/api/v1/realtime?token=${this.opts.accessToken}`;
-		this.ws = new WebSocket(url);
+		this.ws = new WebSocket(bffExtensionWebSocketUrl(this.opts.bffOrigin));
 
 		this.ws.onopen = () => {
 			this.lastError = null;

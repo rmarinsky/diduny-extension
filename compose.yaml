@@ -1,0 +1,21 @@
+services:
+  mock-proxy:
+    build: .
+    command: ["bun", "run", "start:mock-proxy"]
+    ports:
+      - "127.0.0.1:3910:3910"
+  diduny:
+    build: .
+    depends_on:
+      - mock-proxy
+    environment:
+      DATA_DIR: /data
+      DIDUNY_UPSTREAM_URL: http://mock-proxy:3910
+      HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - diduny-data:/data
+
+volumes:
+  diduny-data:

@@ -2,6 +2,7 @@ interface Props {
 	finalText: string;
 	interimText: string;
 	copied: boolean;
+	deliveryNotice: string | null;
 	onCopy: () => void;
 	onClear: () => void;
 }
@@ -10,6 +11,7 @@ export function TranscriptView({
 	finalText,
 	interimText,
 	copied,
+	deliveryNotice,
 	onCopy,
 	onClear,
 }: Props) {
@@ -18,6 +20,7 @@ export function TranscriptView({
 
 	return (
 		<div className="transcript">
+			{deliveryNotice && <p className="delivery-notice">{deliveryNotice}</p>}
 			<div className="transcript-header">
 				<h3>Transcript</h3>
 				<div>

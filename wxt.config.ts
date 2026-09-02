@@ -3,13 +3,16 @@ import { defineConfig } from "wxt";
 export default defineConfig({
 	modules: ["@wxt-dev/module-react"],
 	manifest: {
+		key: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA62KoXa1LqwFYRkOqshiZi6O6dfCDisx3otAqSASQGj+P366giF/4GsVSyOCzGExUntvo4jnhWvr1KX7I572nlGOWPj7ym1qtRDwe0BW0b10ylvCRwn/3yP4GzlM2JhOH6JTgrO1iUd6BlWh2sl2BWvYTyK5N9P8gDtU+SbrHECA0QKy4Xpvi9F6c6tcotjHCD84bmP8I85vPfamcZAf2sCBLGSiS94a2y/j2QvnI1GrUP4HbO5KmLaO6Q8oGNz/ol2kIYhGQdkBynK7Uw9a7Y5StA8+BBNnNW0/BvVqbfR0mjw3+SB9x7oOgF2lyjVc/Qm5heCQnEN1MI5+u38iZrQIDAQAB",
 		name: "Diduny",
 		description: "Voice dictation & meeting recording",
 		minimum_chrome_version: "116",
+		host_permissions: ["http://localhost/*"],
+		optional_host_permissions: ["http://*/*", "https://*/*"],
 		permissions: [
 			"activeTab",
 			"sidePanel",
-			"desktopCapture",
+			"tabCapture",
 			"offscreen",
 			"scripting",
 			"storage",
@@ -19,6 +22,10 @@ export default defineConfig({
 		side_panel: {
 			default_path: "sidepanel/index.html",
 		},
+		options_ui: {
+			open_in_tab: true,
+			page: "options/index.html",
+		},
 		commands: {
 			"toggle-recording": {
 				suggested_key: {
@@ -26,6 +33,20 @@ export default defineConfig({
 					mac: "Alt+Shift+D",
 				},
 				description: "Start/stop recording",
+			},
+			"toggle-translation": {
+				suggested_key: {
+					default: "Alt+Shift+T",
+					mac: "Alt+Shift+T",
+				},
+				description: "Start or stop translation dictation",
+			},
+			"start-meeting": {
+				suggested_key: {
+					default: "Alt+Shift+M",
+					mac: "Alt+Shift+M",
+				},
+				description: "Start or stop browser meeting recording",
 			},
 		},
 		action: {

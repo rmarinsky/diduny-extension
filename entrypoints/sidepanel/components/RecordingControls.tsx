@@ -10,11 +10,13 @@ interface Props {
 	state: RecordingState;
 	mode: RecordingMode;
 	language: string;
+	translationTargetLanguage: string;
 	diarization: boolean;
 	userEmail: string;
 	onToggleRecording: () => void;
 	onModeChange: (mode: RecordingMode) => void;
 	onLanguageChange: (lang: string) => void;
+	onTranslationTargetLanguageChange: (lang: string) => void;
 	onDiarizationChange: (val: boolean) => void;
 	onLogout: () => void;
 	error: string | null;
@@ -22,6 +24,7 @@ interface Props {
 
 const stateLabels: Record<RecordingState, string> = {
 	idle: "Ready",
+	starting: "Starting...",
 	recording: "Recording...",
 	processing: "Processing...",
 	success: "Done",
@@ -32,18 +35,21 @@ export function RecordingControls({
 	state,
 	mode,
 	language,
+	translationTargetLanguage,
 	diarization,
 	userEmail,
 	onToggleRecording,
 	onModeChange,
 	onLanguageChange,
+	onTranslationTargetLanguageChange,
 	onDiarizationChange,
 	onLogout,
 	error,
 }: Props) {
 	const isRecording = state === "recording";
+	const isStarting = state === "starting";
 	const isProcessing = state === "processing";
-	const canRecord = !isProcessing;
+	const canRecord = !isStarting && !isProcessing;
 	const [logs, setLogs] = useState<LogEntry[] | null>(null);
 
 	const toggleLogs = async () => {
@@ -59,6 +65,13 @@ export function RecordingControls({
 			<div className="controls-header">
 				<span className="user-email">{userEmail}</span>
 				<div>
+					<button
+						type="button"
+						className="btn btn-ghost"
+						onClick={() => void chrome.runtime.openOptionsPage()}
+					>
+						Settings
+					</button>
 					<button type="button" className="btn btn-ghost" onClick={toggleLogs}>
 						Logs
 					</button>
@@ -111,9 +124,17 @@ export function RecordingControls({
 			<div className="mode-toggle">
 				<button
 					type="button"
+					className={mode === "translation" ? "active" : ""}
+					onClick={() => onModeChange("translation")}
+					disabled={isRecording || isStarting || isProcessing}
+				>
+					Translate
+				</button>
+				<button
+					type="button"
 					className={mode === "voice" ? "active" : ""}
 					onClick={() => onModeChange("voice")}
-					disabled={isRecording || isProcessing}
+					disabled={isRecording || isStarting || isProcessing}
 				>
 					Voice
 				</button>
@@ -121,7 +142,7 @@ export function RecordingControls({
 					type="button"
 					className={mode === "meeting" ? "active" : ""}
 					onClick={() => onModeChange("meeting")}
-					disabled={isRecording || isProcessing}
+					disabled={isRecording || isStarting || isProcessing}
 				>
 					Meeting
 				</button>
@@ -131,12 +152,28 @@ export function RecordingControls({
 				<select
 					value={language}
 					onChange={(e) => onLanguageChange(e.target.value)}
-					disabled={isRecording || isProcessing}
+					disabled={isRecording || isStarting || isProcessing}
 				>
 					<option value="uk">Ukrainian</option>
 					<option value="en">English</option>
 					<option value="uk,en">UK + EN</option>
 				</select>
+
+				{mode === "translation" && (
+					<label>
+						To
+						<select
+							value={translationTargetLanguage}
+							onChange={(e) =>
+								onTranslationTargetLanguageChange(e.target.value)
+							}
+							disabled={isRecording || isStarting || isProcessing}
+						>
+							<option value="en">English</option>
+							<option value="uk">Ukrainian</option>
+						</select>
+					</label>
+				)}
 
 				{mode === "meeting" && (
 					<label>
@@ -144,7 +181,7 @@ export function RecordingControls({
 							type="checkbox"
 							checked={diarization}
 							onChange={(e) => onDiarizationChange(e.target.checked)}
-							disabled={isRecording || isProcessing}
+							disabled={isRecording || isStarting || isProcessing}
 						/>
 						Speakers
 					</label>
@@ -153,7 +190,8 @@ export function RecordingControls({
 
 			{mode === "meeting" && (
 				<div className="hint-text">
-					Choose a Chrome tab, app window, or full screen in the share picker.
+					Records the current browser tab and your microphone. Native meeting
+					apps and system audio are not available.
 				</div>
 			)}
 

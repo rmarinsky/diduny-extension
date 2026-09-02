@@ -10,6 +10,13 @@
 		"indentStyle": "tab"
 	},
 	"files": {
-		"ignore": [".wxt/", "node_modules/", "dist/", ".output/"]
+		"ignore": [
+			".wxt/",
+			"node_modules/",
+			"dist/",
+			".output/",
+			"playwright-report/",
+			"test-results/"
+		]
 	}
 }

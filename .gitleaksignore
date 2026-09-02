@@ -1,0 +1,4 @@
+# The MV3 manifest's public key is required to keep the extension ID stable.
+6d2e117213e5abf910604993f067af21034bbcb3:wxt.config.ts:generic-api-key:6
+# Removed MVP code contained a Supabase publishable client key, not a secret.
+fcdb5e487f732937c44055b642774e51bbb061ea:lib/auth/supabaseClient.ts:generic-api-key:13
