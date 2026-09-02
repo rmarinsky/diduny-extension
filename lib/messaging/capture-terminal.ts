@@ -1,4 +1,4 @@
-import { sendMessage, sendMessageUntilAcknowledged } from "./bridge";
+import { sendMessageUntilAcknowledged } from "./bridge";
 import type { AudioSource } from "./types";
 
 type FinalCaptureMessage =
@@ -7,5 +7,8 @@ type FinalCaptureMessage =
 
 export async function sendFinalCaptureMessage(message: FinalCaptureMessage) {
 	await sendMessageUntilAcknowledged(message);
-	await sendMessage({ captureId: message.captureId, type: "close-offscreen" });
+	await sendMessageUntilAcknowledged({
+		captureId: message.captureId,
+		type: "close-offscreen",
+	});
 }

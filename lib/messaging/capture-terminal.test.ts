@@ -33,7 +33,9 @@ for (const message of [
 				runtime: {
 					sendMessage(next: unknown) {
 						sent.push(next);
-						return sent.length === 1 ? acknowledgement : Promise.resolve();
+						return sent.length === 1
+							? acknowledgement
+							: Promise.resolve({ acknowledged: true });
 					},
 				},
 			},
@@ -51,3 +53,28 @@ for (const message of [
 		]);
 	});
 }
+
+test("retries the cleanup request until the background acknowledges it", async () => {
+	let cleanupAttempts = 0;
+	Object.defineProperty(globalThis, "chrome", {
+		configurable: true,
+		value: {
+			runtime: {
+				async sendMessage(message: { type?: string }) {
+					if (message.type !== "close-offscreen") return { acknowledged: true };
+					cleanupAttempts += 1;
+					if (cleanupAttempts === 1)
+						throw new Error("worker stopped before cleanup ACK");
+					return { acknowledged: true };
+				},
+			},
+		},
+	});
+
+	await sendFinalCaptureMessage({
+		captureId: "capture-with-interrupted-cleanup",
+		source: "mic",
+		type: "capture-persisted",
+	});
+	expect(cleanupAttempts).toBe(2);
+});
