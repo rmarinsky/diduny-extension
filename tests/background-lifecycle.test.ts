@@ -216,7 +216,8 @@ function createBackgroundHarness({
 		text?: unknown;
 		type?: string;
 	}> = [];
-	const transcriptDelivery = deferred<{ inserted: boolean }>();
+	let transcriptDelivery = deferred<{ inserted: boolean }>();
+	let transcriptDeliveryDelayed = delayTranscriptDelivery;
 	const startupRecovery = deferred<void>();
 	if (!recoverPendingDelivery) startupRecovery.resolve();
 	let transcriptDeliveryCalls = 0;
@@ -304,7 +305,7 @@ function createBackgroundHarness({
 				if (message.type !== "diduny:deliver-transcript") return;
 				transcriptDeliveryMessages.push(message);
 				transcriptDeliveryCalls += 1;
-				return delayTranscriptDelivery
+				return transcriptDeliveryDelayed
 					? transcriptDelivery.promise
 					: { inserted: true };
 			},
@@ -372,8 +373,16 @@ function createBackgroundHarness({
 		async loadWorker() {
 			await import("../entrypoints/background");
 		},
+		pauseTranscriptDelivery() {
+			transcriptDelivery = deferred<{ inserted: boolean }>();
+			transcriptDeliveryDelayed = true;
+		},
 		releaseStartupRecovery() {
 			startupRecovery.resolve();
+		},
+		releaseTranscriptDelivery() {
+			transcriptDeliveryDelayed = false;
+			transcriptDelivery.resolve({ inserted: true });
 		},
 		transcriptDelivery,
 		transcriptDeliveryCalls: () => transcriptDeliveryCalls,
@@ -430,21 +439,15 @@ test("recovers delivery before accepting a new capture after worker restart", as
 	harness.transcriptDelivery.resolve({ inserted: true });
 	await waitFor(
 		() => harness.closeDocumentCalls() === 1,
-		"stale terminal offscreen cleanup before the new capture",
+		"stale terminal offscreen cleanup before the queued new capture",
 	);
-	harness.dispatch({
-		diarization: false,
-		language: "uk",
-		mode: "voice",
-		type: "start-recording",
-	});
 	await waitFor(
 		() =>
 			harness.createDocumentCalls() === 1 &&
 			harness.backgroundMessages.filter(
 				(message) => message.type === "start-capture",
 			).length === 1,
-		"the new capture to start after recovery",
+		"the queued new capture to start after recovery",
 	);
 	await waitFor(
 		() =>
@@ -462,6 +465,17 @@ test("recovers delivery before accepting a new capture after worker restart", as
 	if (!latestStart || !("captureId" in latestStart))
 		throw new Error("Expected the background to start a named capture");
 	const captureId = String(latestStart.captureId);
+	harness.pauseTranscriptDelivery();
+	harness.dispatch({
+		captureId,
+		source: "mic",
+		text: "Deliver before replacing",
+		type: "capture-complete",
+	});
+	await waitFor(
+		() => harness.transcriptDeliveryCalls() === 2,
+		"the current transcript delivery to become pending",
+	);
 	const closeCountBeforeError = harness.closeDocumentCalls();
 	expect(
 		await harness.send({
@@ -476,6 +490,35 @@ test("recovers delivery before accepting a new capture after worker restart", as
 		type: "recording-state-changed",
 	});
 	expect(harness.closeDocumentCalls()).toBe(closeCountBeforeError);
+	expect(harness.deliverySession()).toBeDefined();
+	harness.dispatch({ captureId, type: "close-offscreen" });
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	expect(harness.closeDocumentCalls()).toBe(closeCountBeforeError);
+
+	const startsBeforeBlockedAttempt = harness.backgroundMessages.filter(
+		(message) => message.type === "start-capture",
+	).length;
+	harness.dispatch({
+		diarization: false,
+		language: "uk",
+		mode: "voice",
+		type: "start-recording",
+	});
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	expect(
+		harness.backgroundMessages.filter(
+			(message) => message.type === "start-capture",
+		),
+	).toHaveLength(startsBeforeBlockedAttempt);
+	expect(harness.closeDocumentCalls()).toBe(closeCountBeforeError);
+	expect(harness.deliverySession()).toBeDefined();
+
+	harness.releaseTranscriptDelivery();
+	await waitFor(
+		() => harness.closeDocumentCalls() === closeCountBeforeError + 1,
+		"deferred cleanup after pending delivery completes",
+	);
+	expect(harness.deliverySession()).toBeUndefined();
 
 	harness.dispatch({
 		diarization: false,
@@ -485,12 +528,12 @@ test("recovers delivery before accepting a new capture after worker restart", as
 	});
 	await waitFor(
 		() =>
-			harness.closeDocumentCalls() === closeCountBeforeError + 1 &&
 			harness.createDocumentCalls() === 2 &&
 			harness.backgroundMessages.filter(
 				(message) => message.type === "start-capture",
-			).length === 2,
-		"serialized stale cleanup before a newer capture starts",
+			).length ===
+				startsBeforeBlockedAttempt + 1,
+		"a newer capture after pending delivery completes",
 	);
 	const closeCountAfterNewStart = harness.closeDocumentCalls();
 	harness.dispatch({ captureId, type: "close-offscreen" });

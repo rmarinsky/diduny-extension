@@ -106,6 +106,8 @@ export default defineBackground(() => {
 		.then(async (terminal) => {
 			if (terminal?.shouldClose) {
 				await finishCapture(terminal);
+				if (terminal.cleanupRequested)
+					await captureLifecycle.cleanup(terminal.captureId, closeOffscreen);
 				return;
 			}
 			if (terminal?.pendingDelivery) {
@@ -314,6 +316,7 @@ export default defineBackground(() => {
 			return;
 
 		try {
+			const previousState = currentState;
 			await setState("starting");
 			const [session, bffOrigin, microphoneDeviceId] = await Promise.all([
 				getBffAuthSession(),
@@ -325,7 +328,10 @@ export default defineBackground(() => {
 				return;
 			}
 			const capture = captureLifecycle.begin(closeOffscreen);
-			await capture.ready;
+			if (!(await capture.ready)) {
+				await setState(previousState);
+				return;
+			}
 			await clearDeliveryStatus();
 			const delivery =
 				mode !== "meeting" ? await prepareDeliveryTarget() : undefined;
@@ -443,6 +449,8 @@ export default defineBackground(() => {
 			source,
 		);
 		await finishCapture(completion);
+		if (completion.cleanupRequested)
+			await captureLifecycle.cleanup(captureId, closeOffscreen);
 		return completion;
 	}
 
