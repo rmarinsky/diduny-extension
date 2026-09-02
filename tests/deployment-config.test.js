@@ -48,6 +48,9 @@ test("ships a container, mock proxy, Apache-2.0 license, and CI quality gates", 
 	expect(workflow).toContain("detect --source=/repo --redact --exit-code=1");
 	expect(workflow).toContain("--read-only");
 	expect(workflow).toContain('"$PWD:/repo:ro"');
+	expect(workflow).toContain("-e GIT_CONFIG_COUNT=1");
+	expect(workflow).toContain("-e GIT_CONFIG_KEY_0=safe.directory");
+	expect(workflow).toContain("-e GIT_CONFIG_VALUE_0=/repo");
 	expect(workflow).not.toContain("GITHUB_TOKEN:");
 	expect(hooks).toContain("ripsecrets --strict-ignore {staged_files}");
 	expect(hooks).toContain("gitleaks detect --source . --redact");
