@@ -41,7 +41,16 @@ test("ships a container, mock proxy, Apache-2.0 license, and CI quality gates", 
 	expect(workflow).toContain("bun run check:core");
 	expect(workflow).toContain("bun test");
 	expect(workflow).toContain("bun run build");
-	expect(workflow).toContain("gitleaks/gitleaks-action@v2");
+	expect(workflow).toContain(
+		"zricethezav/gitleaks@sha256:e1b35e12a8c6fa8901f060459cfb6b2fc4c484d3afbe3b029733a3bbfab07055",
+	);
+	expect(workflow).toContain("fetch-depth: 0");
+	expect(workflow).toContain(
+		"detect --source=/repo --redact --exit-code=1",
+	);
+	expect(workflow).toContain("--read-only");
+	expect(workflow).toContain('"$PWD:/repo:ro"');
+	expect(workflow).not.toContain("GITHUB_TOKEN:");
 	expect(hooks).toContain("ripsecrets --strict-ignore {staged_files}");
 	expect(hooks).toContain("gitleaks detect --source . --redact");
 	expect(packageJson).toContain('"check:build-security"');
