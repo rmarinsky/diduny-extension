@@ -48,6 +48,8 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 		initial.map((recording) => [recording.id, recording]),
 	);
 	const mediaHeaders = new Map<string, Uint8Array>();
+	const saveRecordingIds: Array<string | undefined> = [];
+	let shouldFailNextSave = false;
 	let settings: Settings = DEFAULT_SETTINGS;
 	const retention: Record<RetentionCategory, RetentionPolicy> = {
 		dictation: "forever",
@@ -99,6 +101,7 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 			recording: NewLibraryRecording,
 			stream: NodeJS.ReadableStream,
 			contentType: string,
+			recordingId?: string,
 		) {
 			let fileSizeBytes = 0;
 			const header = new Uint8Array(44);
@@ -118,7 +121,8 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 					headerBytes += next;
 				}
 			}
-			const id = crypto.randomUUID();
+			const id = recordingId ?? crypto.randomUUID();
+			saveRecordingIds.push(recordingId);
 			mediaHeaders.set(id, header.slice(0, headerBytes));
 			const createdAt = Date.now();
 			const detail: LibraryDetail = {
@@ -147,6 +151,10 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 				...(recording.segments ? { segments: recording.segments } : {}),
 			};
 			recordings.set(id, detail);
+			if (shouldFailNextSave) {
+				shouldFailNextSave = false;
+				throw new Error("Injected e2e library save failure after persistence");
+			}
 			return detail;
 		},
 		async setRetentionPolicy(category, policy) {
@@ -170,10 +178,14 @@ export function createE2eLibrary(initial: readonly LibraryDetail[] = []) {
 		},
 	};
 	return {
+		failNextSave: () => {
+			shouldFailNextSave = true;
+		},
 		library,
 		mediaHeader: (id: string) => mediaHeaders.get(id),
 		recordings: () => [...recordings.values()],
 		retention: () => ({ ...retention }),
+		saveRecordingIds: () => [...saveRecordingIds],
 		savedTexts: () =>
 			[...recordings.values()].map((recording) => recording.text),
 		settings: () => settings,

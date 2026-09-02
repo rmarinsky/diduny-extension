@@ -15,6 +15,7 @@ import { bffExtensionWebSocketUrl } from "../../lib/bff/client";
 import {
 	extensionRecordingStatus,
 	saveExtensionRecording,
+	saveRecoveredExtensionRecordings,
 } from "../../lib/bff/library";
 import { crashLog, logError } from "../../lib/crash-log";
 import { onMessage, sendMessage } from "../../lib/messaging/bridge";
@@ -245,6 +246,7 @@ async function startCapture(msg: StartCapture) {
 	const startupStreams: MediaStream[] = [];
 	const startupContexts: AudioContext[] = [];
 	try {
+		await queueScratchRecovery(msg.bffOrigin);
 		if (msg.mode === "meeting") {
 			if (!msg.streamId)
 				throw new Error("Could not capture the selected browser tab");
@@ -309,6 +311,19 @@ async function startCapture(msg: StartCapture) {
 	}
 }
 
+async function queueScratchRecovery(bffOrigin: string) {
+	const storage = createScratchStorage();
+	try {
+		const recovered = await storage.recover();
+		if (recovered.length > 0)
+			await saveRecoveredExtensionRecordings(recovered, storage, bffOrigin);
+	} catch (error) {
+		logError("offscreen:recovery", error);
+	} finally {
+		storage.close();
+	}
+}
+
 async function stopCapture(partiallyRecovered = false) {
 	const activePipelines = pipelines;
 	pipelines = [];
@@ -368,6 +383,7 @@ async function stopCapture(partiallyRecovered = false) {
 						type: pipeline.translation ? "translation" : pipeline.recordingType,
 					},
 					pipeline.bffOrigin,
+					recording.id,
 				);
 				await pipeline.scratch.discard();
 			} catch (cause) {

@@ -17,6 +17,14 @@ export interface LibrarySaveInput {
 	type: LibraryRecordingType;
 }
 
+export interface RecoveredExtensionRecording {
+	audio: Blob;
+	durationSeconds: number;
+	id: string;
+	text: string;
+	type?: LibraryRecordingType;
+}
+
 export function extensionRecordingStatus({
 	partiallyRecovered,
 	transcribed,
@@ -57,6 +65,7 @@ export async function saveLibraryRecording(
 	}: LibrarySaveInput,
 	path: string,
 	request: LibraryRequest,
+	idempotencyKey?: string,
 ) {
 	const created = await request(path, {
 		body: JSON.stringify({
@@ -67,7 +76,10 @@ export async function saveLibraryRecording(
 			type,
 		}),
 		credentials: "include",
-		headers: { "content-type": "application/json" },
+		headers: {
+			"content-type": "application/json",
+			...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}),
+		},
 		method: "POST",
 	});
 	if (!created.ok) throw errorFor(created);
@@ -79,6 +91,11 @@ export async function saveLibraryRecording(
 		typeof body.id !== "string"
 	) {
 		throw new DidunyError("request_rejected");
+	}
+	if ("saved" in body && body.saved === true) {
+		if (!idempotencyKey || body.id !== idempotencyKey)
+			throw new DidunyError("request_rejected");
+		return body;
 	}
 	const uploaded = await request(`${path}/${body.id}/media`, {
 		body: audio,
@@ -93,8 +110,37 @@ export async function saveLibraryRecording(
 export function saveExtensionRecording(
 	input: LibrarySaveInput,
 	bffOrigin: string,
+	idempotencyKey?: string,
 ) {
-	return saveLibraryRecording(input, "/bff/extension/library", (path, init) =>
-		bffFetch(path, init, bffOrigin),
+	return saveLibraryRecording(
+		input,
+		"/bff/extension/library",
+		(path, init) => bffFetch(path, init, bffOrigin),
+		idempotencyKey,
 	);
+}
+
+export async function saveRecoveredExtensionRecordings(
+	recordings: readonly RecoveredExtensionRecording[],
+	storage: { discard(id: string): Promise<void> },
+	bffOrigin: string,
+) {
+	for (const recording of recordings) {
+		try {
+			await saveExtensionRecording(
+				{
+					audio: recording.audio,
+					durationSeconds: recording.durationSeconds,
+					status: "partiallyRecovered",
+					text: recording.text,
+					type: recording.type ?? "voice",
+				},
+				bffOrigin,
+				recording.id,
+			);
+			await storage.discard(recording.id);
+		} catch {
+			// Keep failed scratch recordings for the next offscreen load.
+		}
+	}
 }

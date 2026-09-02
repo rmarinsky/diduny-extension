@@ -295,6 +295,175 @@ test("lets an extension session stream its capture into the local library", asyn
 	}
 });
 
+test("replays an extension capture idempotently after a BFF rebuild", async () => {
+	const dataDir = await mkdtemp(
+		join(tmpdir(), "diduny-extension-library-idempotency-"),
+	);
+	const library = await LibraryStore.open({ dataDir });
+	const sessions = new InMemorySessionStore();
+	const sessionId = await sessions.create({ accessToken: "server-only" });
+	const idempotencyKey = "22e4aed8-69f8-4204-94fd-359f5199c0d2";
+	const extensionHeaders = {
+		cookie: `diduny_extension_session=${sessionId}`,
+		"idempotency-key": idempotencyKey,
+		origin: defaultExtensionOrigin,
+	};
+	const recording = {
+		durationSeconds: 1,
+		status: "partiallyRecovered",
+		text: "Replay this recovered extension capture once",
+		type: "meeting",
+	};
+	let server = await buildServer({ library, sessions });
+	try {
+		const stagedBeforeRebuild = await server.inject({
+			headers: extensionHeaders,
+			method: "POST",
+			payload: recording,
+			url: "/bff/extension/library",
+		});
+		expect(stagedBeforeRebuild.statusCode).toBe(201);
+
+		await server.close();
+		server = await buildServer({ library, sessions });
+		const stagedAfterRebuild = await server.inject({
+			headers: extensionHeaders,
+			method: "POST",
+			payload: recording,
+			url: "/bff/extension/library",
+		});
+		expect(stagedAfterRebuild.statusCode).toBe(201);
+
+		const upload = await server.inject({
+			headers: {
+				cookie: extensionHeaders.cookie,
+				"content-type": "audio/webm",
+				origin: defaultExtensionOrigin,
+			},
+			method: "PUT",
+			payload: "recovered-extension-audio",
+			url: `/bff/extension/library/${stagedAfterRebuild.json().id}/media`,
+		});
+		expect(upload.statusCode).toBe(201);
+
+		const replayed = await server.inject({
+			headers: extensionHeaders,
+			method: "POST",
+			payload: recording,
+			url: "/bff/extension/library",
+		});
+		expect(replayed.statusCode).toBe(200);
+		expect(replayed.json()).toEqual(
+			expect.objectContaining({ id: idempotencyKey, saved: true }),
+		);
+
+		const recordings = await server.inject({
+			headers: { cookie: `diduny_session=${sessionId}` },
+			method: "GET",
+			url: "/bff/library",
+		});
+		expect(recordings.json().items).toHaveLength(1);
+	} finally {
+		await server.close();
+		await library.close();
+		await rm(dataDir, { force: true, recursive: true });
+	}
+});
+
+test("replays a persist-then-failed extension upload without saving the audio twice", async () => {
+	const dataDir = await mkdtemp(
+		join(tmpdir(), "diduny-extension-library-ambiguous-save-"),
+	);
+	const library = await LibraryStore.open({ dataDir });
+	const saveStream = library.saveStream.bind(library);
+	let saveStreamCalls = 0;
+	library.saveStream = async (...args) => {
+		saveStreamCalls += 1;
+		await saveStream(...args);
+		throw new Error("upload response was lost after the durable save");
+	};
+	const sessions = new InMemorySessionStore();
+	const sessionId = await sessions.create({ accessToken: "server-only" });
+	const idempotencyKey = "ca7d67ba-7d7c-4e10-95a2-bae80f25e77d";
+	const extensionHeaders = {
+		cookie: `diduny_extension_session=${sessionId}`,
+		"idempotency-key": idempotencyKey,
+		origin: defaultExtensionOrigin,
+	};
+	const recording = {
+		durationSeconds: 1,
+		status: "partiallyRecovered",
+		text: "Save this recovered extension capture exactly once",
+		type: "meeting",
+	};
+	const server = await buildServer({ library, sessions });
+	try {
+		const staged = await server.inject({
+			headers: extensionHeaders,
+			method: "POST",
+			payload: recording,
+			url: "/bff/extension/library",
+		});
+		expect(staged.statusCode).toBe(201);
+
+		const ambiguousUpload = await server.inject({
+			headers: {
+				cookie: extensionHeaders.cookie,
+				"content-type": "audio/webm",
+				origin: defaultExtensionOrigin,
+			},
+			method: "PUT",
+			payload: "persisted-extension-audio",
+			url: `/bff/extension/library/${staged.json().id}/media`,
+		});
+		expect(ambiguousUpload.statusCode).toBe(500);
+
+		const replayed = await server.inject({
+			headers: extensionHeaders,
+			method: "POST",
+			payload: recording,
+			url: "/bff/extension/library",
+		});
+		expect(replayed.statusCode).toBe(200);
+		expect(replayed.json()).toEqual(
+			expect.objectContaining({ id: idempotencyKey, saved: true }),
+		);
+		expect(saveStreamCalls).toBe(1);
+		const freshStages = await Promise.all(
+			Array.from({ length: 8 }, (_, index) =>
+				server.inject({
+					headers: {
+						cookie: extensionHeaders.cookie,
+						origin: defaultExtensionOrigin,
+					},
+					method: "POST",
+					payload: {
+						durationSeconds: 1,
+						status: "partiallyRecovered",
+						text: `Fresh capture after ambiguous save ${index}`,
+						type: "meeting",
+					},
+					url: "/bff/extension/library",
+				}),
+			),
+		);
+		expect(freshStages.map((response) => response.statusCode)).toEqual(
+			Array.from({ length: 8 }, () => 201),
+		);
+
+		const recordings = await server.inject({
+			headers: { cookie: `diduny_session=${sessionId}` },
+			method: "GET",
+			url: "/bff/library",
+		});
+		expect(recordings.json().items).toHaveLength(1);
+	} finally {
+		await server.close();
+		await library.close();
+		await rm(dataDir, { force: true, recursive: true });
+	}
+});
+
 test("saves a staged extension capture only once when duplicate uploads overlap", async () => {
 	const dataDir = await mkdtemp(
 		join(tmpdir(), "diduny-extension-library-race-"),

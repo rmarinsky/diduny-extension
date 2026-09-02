@@ -364,12 +364,16 @@ export function App() {
 		let didRecover = false;
 		for (const recording of recovered) {
 			try {
-				await saveToLibrary({
-					audio: recording.audio,
-					durationSeconds: recording.durationSeconds,
-					status: "partiallyRecovered",
-					text: recording.text || t("recovery.untitledText"),
-				});
+				await saveToLibrary(
+					{
+						audio: recording.audio,
+						durationSeconds: recording.durationSeconds,
+						status: "partiallyRecovered",
+						text: recording.text || t("recovery.untitledText"),
+					},
+					undefined,
+					recording.id,
+				);
 				await storage.discard(recording.id);
 				didRecover = true;
 			} catch {
@@ -458,6 +462,10 @@ export function App() {
 			setStatus(t("status.cancelled"));
 		}
 	}, [closeFloatingPanel, releaseRecordingLock, t]);
+	const cancelCaptureRef = useRef(cancelCapture);
+	useEffect(() => {
+		cancelCaptureRef.current = cancelCapture;
+	}, [cancelCapture]);
 
 	const finishCapture = useCallback(async () => {
 		stopHoldWhenReadyRef.current = false;
@@ -553,17 +561,21 @@ export function App() {
 			);
 			void completeScratch()
 				.then((recording) =>
-					saveToLibrary({
-						audio: recording.audio,
-						durationSeconds: recording.durationSeconds,
-						...(translationMode
-							? {
-									status: "translated" as const,
-									type: "translation" as const,
-								}
-							: {}),
-						text: transcriptionText,
-					}),
+					saveToLibrary(
+						{
+							audio: recording.audio,
+							durationSeconds: recording.durationSeconds,
+							...(translationMode
+								? {
+										status: "translated" as const,
+										type: "translation" as const,
+									}
+								: {}),
+							text: transcriptionText,
+						},
+						undefined,
+						recording.id,
+					),
 				)
 				.then(async () => {
 					await capture.scratch.discard();
@@ -825,9 +837,9 @@ export function App() {
 
 	useEffect(
 		() => () => {
-			void cancelCapture();
+			void cancelCaptureRef.current();
 		},
-		[cancelCapture],
+		[],
 	);
 
 	async function sendOtp(event: FormEvent<HTMLFormElement>) {

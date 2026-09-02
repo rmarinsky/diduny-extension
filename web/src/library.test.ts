@@ -40,6 +40,38 @@ test("saves dictation metadata first and streams the Blob through the BFF upload
 	});
 });
 
+test("forwards a scratch id and accepts a saved BFF replay without upload", async () => {
+	const calls: Array<{ init?: RequestInit; path: string }> = [];
+	const scratchId = "8cb2a9ec-c17e-438d-bb0e-7dba1e84c176";
+	const request: LibraryRequest = async (path, init) => {
+		calls.push({ init, path: String(path) });
+		return Response.json({ id: scratchId, saved: true }, { status: 200 });
+	};
+
+	await saveToLibrary(
+		{
+			audio: new Blob(["recovered audio"], { type: "audio/webm" }),
+			durationSeconds: 2,
+			status: "partiallyRecovered",
+			text: "Persist this scratch once",
+		},
+		request,
+		scratchId,
+	);
+
+	expect(calls).toHaveLength(1);
+	expect(calls[0]).toMatchObject({
+		init: expect.objectContaining({
+			headers: expect.objectContaining({
+				"content-type": "application/json",
+				"idempotency-key": scratchId,
+			}),
+			method: "POST",
+		}),
+		path: "/bff/library",
+	});
+});
+
 test("saves translated dictation with its translation type and completed status", async () => {
 	const calls: Array<{ init?: RequestInit; path: string }> = [];
 	const request: LibraryRequest = async (path, init) => {

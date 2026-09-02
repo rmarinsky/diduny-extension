@@ -91,11 +91,25 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 	const upstreamUrl = serverUrl(mock.server, "localhost");
 	const fixtureUrl = serverUrl(fixtureServer, "localhost");
 	const e2eLibrary = createE2eLibrary();
+	const extensionLibraryPosts: Array<{
+		idempotencyKey: string | undefined;
+		status: number;
+	}> = [];
 
 	const bff = await buildServer({
 		library: e2eLibrary.library,
 		staticDir: resolve("web/dist"),
 		upstreamUrl,
+	});
+	bff.addHook("onResponse", async (request, reply) => {
+		if (request.method !== "POST" || request.url !== "/bff/extension/library")
+			return;
+		const idempotencyKey = request.headers["idempotency-key"];
+		extensionLibraryPosts.push({
+			idempotencyKey:
+				typeof idempotencyKey === "string" ? idempotencyKey : undefined,
+			status: reply.statusCode,
+		});
 	});
 	await bff.listen({ host: "localhost", port: 0 });
 	const bffUrl = serverUrl(bff, "localhost");
@@ -245,6 +259,19 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 			});
 			await expect(panel.getByText("Done")).toBeVisible();
 		};
+		const savedTranscriptCount = () =>
+			panel.evaluate(
+				() =>
+					new Promise<number>((resolve) => {
+						chrome.storage.local.get("diduny_transcripts", (result) => {
+							resolve(
+								Array.isArray(result.diduny_transcripts)
+									? result.diduny_transcripts.length
+									: 0,
+							);
+						});
+					}),
+			);
 		await dictate({ diarization: true });
 
 		await expect(fixture.locator("#target")).toHaveValue("Mock transcript", {
@@ -273,6 +300,26 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 				{ endMs: 480, speaker: "1", startMs: 0, text: "Mock transcript" },
 			]);
 		expect(mock.transcriptions()).toHaveLength(0);
+		await expect.poll(savedTranscriptCount).toBe(1);
+
+		const targetBeforeCaptureReplay = await fixture
+			.locator("#target")
+			.inputValue();
+		const recordingsBeforeCaptureReplay = e2eLibrary.recordings().length;
+		const savedTranscriptCountBeforeCaptureReplay =
+			await savedTranscriptCount();
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({
+				source: "mic",
+				text: "Mock transcript",
+				type: "capture-complete",
+			});
+			chrome.runtime.sendMessage({
+				source: "mic",
+				type: "capture-persisted",
+			});
+		});
+		await expect(panel.getByText("Done")).toBeVisible();
 
 		await fixture.bringToFront();
 		await fixture.locator("#target").focus();
@@ -291,9 +338,15 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 		});
 		await expect(panel.getByText("Done")).toBeVisible();
 		await expect(fixture.locator("#target")).toHaveValue(
-			"Mock transcriptMock transcript",
+			`${targetBeforeCaptureReplay}Mock transcript`,
 		);
 		await expect(fixture.locator("#disabled-target")).toHaveValue("");
+		await expect
+			.poll(() => e2eLibrary.recordings().length)
+			.toBe(recordingsBeforeCaptureReplay + 1);
+		await expect
+			.poll(savedTranscriptCount)
+			.toBe(savedTranscriptCountBeforeCaptureReplay + 1);
 
 		const recordingsBeforeDuplicateStart = e2eLibrary.recordings().length;
 		const targetBeforeDuplicateStart = await fixture
@@ -398,9 +451,105 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 			`${targetBeforeWorkerTermination}Mock transcript`,
 		);
 
+		const recordingsBeforeAmbiguousLibraryFailure =
+			e2eLibrary.recordings().length;
+		const librarySaveIdsBeforeAmbiguousLibraryFailure =
+			e2eLibrary.saveRecordingIds().length;
+		const libraryPostsBeforeAmbiguousLibraryFailure =
+			extensionLibraryPosts.length;
+		const binaryRealtimeFramesBeforeAmbiguousLibraryFailure = mock
+			.realtimeFrames()
+			.filter((frame) => frame.isBinary && frame.data.length > 0).length;
+		e2eLibrary.failNextSave();
+		await fixture.bringToFront();
+		await fixture.locator("#target").focus();
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({
+				diarization: false,
+				language: "uk",
+				mode: "voice",
+				type: "start-recording",
+			});
+		});
+		await expect(panel.getByText("Recording...")).toBeVisible();
+		await expect
+			.poll(
+				() =>
+					mock
+						.realtimeFrames()
+						.filter((frame) => frame.isBinary && frame.data.length > 0).length,
+				{ timeout: 10_000 },
+			)
+			.toBeGreaterThan(binaryRealtimeFramesBeforeAmbiguousLibraryFailure);
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({ type: "stop-recording" });
+		});
+		await expect(panel.getByText("Error", { exact: true })).toBeVisible();
+		await expect
+			.poll(() => e2eLibrary.recordings().length)
+			.toBe(recordingsBeforeAmbiguousLibraryFailure + 1);
+		const failedRecording = e2eLibrary.recordings().at(-1);
+		if (!failedRecording)
+			throw new Error("Expected the ambiguous library save to persist a row");
+		expect(
+			e2eLibrary
+				.saveRecordingIds()
+				.slice(librarySaveIdsBeforeAmbiguousLibraryFailure),
+		).toEqual([failedRecording.id]);
+		expect(
+			extensionLibraryPosts
+				.slice(libraryPostsBeforeAmbiguousLibraryFailure)
+				.filter((post) => post.idempotencyKey === failedRecording.id),
+		).toEqual([{ idempotencyKey: failedRecording.id, status: 201 }]);
+
+		await fixture.bringToFront();
+		await fixture.locator("#target").focus();
+		await dictate();
+		await expect
+			.poll(() => e2eLibrary.recordings().length)
+			.toBe(recordingsBeforeAmbiguousLibraryFailure + 2);
+		await expect
+			.poll(
+				() =>
+					extensionLibraryPosts
+						.slice(libraryPostsBeforeAmbiguousLibraryFailure)
+						.filter((post) => post.idempotencyKey === failedRecording.id)
+						.length,
+			)
+			.toBe(2);
+		const recoveryRows = e2eLibrary
+			.recordings()
+			.slice(recordingsBeforeAmbiguousLibraryFailure);
+		expect(
+			recoveryRows.filter((row) => row.id === failedRecording.id),
+		).toHaveLength(1);
+		expect(
+			recoveryRows.find((row) => row.id === failedRecording.id),
+		).toMatchObject({ status: "transcribed" });
+		expect(new Set(recoveryRows.map((row) => row.id)).size).toBe(2);
+		expect(
+			extensionLibraryPosts
+				.slice(libraryPostsBeforeAmbiguousLibraryFailure)
+				.filter((post) => post.idempotencyKey === failedRecording.id),
+		).toEqual([
+			{ idempotencyKey: failedRecording.id, status: 201 },
+			{ idempotencyKey: failedRecording.id, status: 200 },
+		]);
+		expect(
+			e2eLibrary
+				.saveRecordingIds()
+				.slice(librarySaveIdsBeforeAmbiguousLibraryFailure)
+				.filter((id) => id === failedRecording.id),
+		).toHaveLength(1);
+
 		await fixture.bringToFront();
 		await fixture.locator("#target").focus();
 		await dictate({ mode: "translation" });
+		expect(
+			extensionLibraryPosts
+				.slice(libraryPostsBeforeAmbiguousLibraryFailure)
+				.filter((post) => post.idempotencyKey === failedRecording.id),
+		).toHaveLength(2);
 		const transcription = mock.transcriptions().at(-1);
 		if (!transcription) throw new Error("Expected extension transcription");
 		expect(transcription).toMatchObject({

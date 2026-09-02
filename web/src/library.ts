@@ -43,11 +43,13 @@ const bffRequest: LibraryRequest = async (path, init) => {
 export async function saveToLibrary(
 	input: WebLibrarySaveInput,
 	request: LibraryRequest = bffRequest,
+	idempotencyKey?: string,
 ) {
 	return saveLibraryRecording(
 		{ ...input, type: input.type ?? "voice" },
 		"/bff/library",
 		request,
+		idempotencyKey,
 	);
 }
 

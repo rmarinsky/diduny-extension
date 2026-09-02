@@ -38,6 +38,7 @@ import { INPUT_TIMING } from "../src/core/constants";
 export default defineBackground(() => {
 	let currentState: RecordingState = "idle";
 	const completedSources = new Set<"mic" | "tab">();
+	const finishedSources = new Set<"mic" | "tab">();
 	const persistedSources = new Set<"mic" | "tab">();
 	const KEEPALIVE_ALARM = "recording-keepalive";
 	const DELIVERY_SESSION_STORAGE_KEY = "didunyDeliverySession";
@@ -233,41 +234,50 @@ export default defineBackground(() => {
 				break;
 			}
 			case "capture-complete": {
+				if (completedSources.has(msg.source) || finishedSources.has(msg.source))
+					break;
+				completedSources.add(msg.source);
 				await deliverTranscript(msg.text);
 				await sendMessage({
 					type: "transcription-complete",
 					text: msg.text,
 					source: msg.source,
 				});
-				completedSources.add(msg.source);
+				if (finishedSources.has(msg.source)) break;
 				if (persistedSources.has(msg.source)) {
 					completedSources.delete(msg.source);
 					persistedSources.delete(msg.source);
+					finishedSources.add(msg.source);
 				}
-				if (completedSources.size === 0) {
-					await setState("success");
+				if (completedSources.size === 0 && persistedSources.size === 0) {
 					await closeOffscreen();
+					await setState("success");
 				}
 				break;
 			}
 			case "capture-persisted": {
+				if (persistedSources.has(msg.source) || finishedSources.has(msg.source))
+					break;
+				persistedSources.add(msg.source);
 				if (completedSources.has(msg.source)) {
 					completedSources.delete(msg.source);
-				} else {
-					persistedSources.add(msg.source);
+					persistedSources.delete(msg.source);
+					finishedSources.add(msg.source);
 				}
 				if (completedSources.size === 0 && persistedSources.size === 0) {
-					await setState("success");
 					await closeOffscreen();
+					await setState("success");
 				}
 				break;
 			}
 			case "capture-error": {
+				for (const source of [...completedSources, ...persistedSources])
+					finishedSources.add(source);
 				completedSources.clear();
 				persistedSources.clear();
 				await clearDeliveryStatus();
-				await setState("error", msg.error);
 				await closeOffscreen();
+				await setState("error", msg.error);
 				break;
 			}
 		}
@@ -306,6 +316,7 @@ export default defineBackground(() => {
 				return;
 			}
 			completedSources.clear();
+			finishedSources.clear();
 			persistedSources.clear();
 			await clearDeliveryStatus();
 			const delivery =

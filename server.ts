@@ -74,6 +74,7 @@ export interface BffLibrary {
 		recording: NewLibraryRecording,
 		stream: NodeJS.ReadableStream,
 		contentType: string,
+		recordingId?: string,
 	): Promise<LibraryDetail | null>;
 	setRetentionPolicy(
 		category: RetentionCategory,
@@ -929,7 +930,7 @@ export async function buildServer({
 			await library.setRetentionPolicy(settings.category, settings.policy);
 			return library.getRetentionPolicies();
 		});
-		const stageLibrarySave = (
+		const stageLibrarySave = async (
 			request: FastifyRequest,
 			reply: FastifyReply,
 			sessionId: string,
@@ -937,6 +938,26 @@ export async function buildServer({
 			const recording = parseLibraryRecording(request.body);
 			if (!recording) {
 				return reply.code(400).send({ error: "invalid_recording" });
+			}
+			const idempotencyKey = request.headers["idempotency-key"];
+			if (
+				idempotencyKey !== undefined &&
+				(typeof idempotencyKey !== "string" ||
+					!validRecordingId(idempotencyKey))
+			) {
+				return reply.code(400).send({ error: "invalid_idempotency_key" });
+			}
+			if (idempotencyKey) {
+				if (await library.open(idempotencyKey)) {
+					pendingLibrarySaves.delete(idempotencyKey);
+					return reply.code(200).send({ id: idempotencyKey, saved: true });
+				}
+				const pending = pendingLibrarySaves.get(idempotencyKey);
+				if (pending) {
+					return pending.sessionId === sessionId
+						? reply.code(201).send({ id: idempotencyKey })
+						: reply.code(409).send({ error: "idempotency_key_conflict" });
+				}
 			}
 			const now = Date.now();
 			let pendingForSession = 0;
@@ -948,7 +969,7 @@ export async function buildServer({
 			if (pendingForSession >= maxPendingLibrarySavesPerSession) {
 				return reply.code(429).send({ error: "too_many_pending_recordings" });
 			}
-			const id = crypto.randomUUID();
+			const id = idempotencyKey ?? crypto.randomUUID();
 			pendingLibrarySaves.set(id, {
 				createdAt: now,
 				recording,
@@ -990,6 +1011,7 @@ export async function buildServer({
 					pending.recording,
 					request.body,
 					contentType,
+					id,
 				);
 				pendingLibrarySaves.delete(id);
 				return reply.code(201).send(saved ?? { saved: false });
