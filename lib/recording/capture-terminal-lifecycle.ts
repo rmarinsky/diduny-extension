@@ -9,7 +9,7 @@ export type CaptureLifecycleStorage = {
 
 export type CaptureRun = {
 	id: string;
-	ready: Promise<void>;
+	ready: Promise<boolean>;
 };
 
 export type CaptureTerminalOutcome =
@@ -19,6 +19,7 @@ export type CaptureTerminalOutcome =
 export type CaptureTerminalDecision = {
 	accepted: boolean;
 	captureId: string;
+	cleanupRequested?: boolean;
 	outcome?: CaptureTerminalOutcome;
 	pendingDelivery?: { source: AudioSource; text: string };
 	shouldClose: boolean;
@@ -27,6 +28,7 @@ export type CaptureTerminalDecision = {
 type CaptureTerminalState = {
 	captureId: string;
 	completedSources: AudioSource[];
+	cleanupRequested?: boolean;
 	deliveredSources: AudioSource[];
 	cleanupComplete?: boolean;
 	outcome?: CaptureTerminalOutcome;
@@ -60,6 +62,8 @@ function isTerminalState(value: unknown): value is CaptureTerminalState {
 		typeof state.captureId === "string" &&
 		state.captureId.length > 0 &&
 		typeof state.terminal === "boolean" &&
+		(state.cleanupRequested === undefined ||
+			typeof state.cleanupRequested === "boolean") &&
 		(state.cleanupComplete === undefined ||
 			typeof state.cleanupComplete === "boolean") &&
 		(state.outcome === undefined || isOutcome(state.outcome)) &&
@@ -79,6 +83,7 @@ function normalizedState(value: unknown): CaptureTerminalState | undefined {
 	return {
 		captureId: value.captureId,
 		completedSources: sourceList(value.completedSources) ?? [],
+		...(value.cleanupRequested ? { cleanupRequested: true } : {}),
 		deliveredSources: sourceList(value.deliveredSources) ?? [],
 		...(value.cleanupComplete ? { cleanupComplete: true } : {}),
 		...(outcome ? { outcome } : {}),
@@ -128,6 +133,9 @@ function decision(state: CaptureTerminalState): CaptureTerminalDecision {
 	return {
 		accepted: true,
 		captureId: state.captureId,
+		...(state.cleanupRequested && !state.cleanupComplete
+			? { cleanupRequested: true }
+			: {}),
 		...(state.outcome ? { outcome: state.outcome } : {}),
 		...(state.pendingDelivery
 			? { pendingDelivery: state.pendingDelivery }
@@ -195,12 +203,14 @@ export function createCaptureTerminalLifecycle(
 				id: captureId,
 				ready: serialize(async () => {
 					const stored = await storedState();
+					if (stored?.pendingDelivery) return false;
 					if (stored?.outcome && !stored.cleanupComplete)
 						await closeStaleTerminal?.();
 					activeCaptureId = captureId;
 					await storage.set({
 						[CAPTURE_TERMINAL_STORAGE_KEY]: emptyState(captureId),
 					});
+					return true;
 				}),
 			};
 		},
@@ -259,10 +269,15 @@ export function createCaptureTerminalLifecycle(
 					!state ||
 					state.captureId !== captureId ||
 					!state.outcome ||
-					state.pendingDelivery ||
 					state.cleanupComplete
 				)
 					return ignored(captureId);
+				if (state.pendingDelivery) {
+					if (state.cleanupRequested) return ignored(captureId);
+					state.cleanupRequested = true;
+					await storage.set({ [CAPTURE_TERMINAL_STORAGE_KEY]: state });
+					return decision(state);
+				}
 				await closeCallback();
 				state.cleanupComplete = true;
 				await storage.set({ [CAPTURE_TERMINAL_STORAGE_KEY]: state });

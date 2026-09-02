@@ -31,7 +31,7 @@ function storageArea(values: Map<string, unknown>) {
 	};
 }
 
-test("durably records an error before its acknowledgement and retains a pending transcript", async () => {
+test("durably records an error, its cleanup intent, and a pending transcript", async () => {
 	const values = new Map<string, unknown>();
 	const baseStorage = storageArea(values);
 	const errorWriteStarted = deferred<void>();
@@ -76,9 +76,14 @@ test("durably records an error before its acknowledgement and retains a pending 
 		await lifecycle.cleanup(capture.id, async () => {
 			cleanupCalls += 1;
 		}),
-	).toMatchObject({ accepted: false, captureId: capture.id });
+	).toMatchObject({
+		accepted: true,
+		captureId: capture.id,
+		cleanupRequested: true,
+		shouldClose: false,
+	});
 	expect(cleanupCalls).toBe(0);
-	const writeCountAfterFailure = writes;
+	const writeCountAfterCleanupRequest = writes;
 
 	expect(
 		await lifecycle.captureFailed(capture.id, "A later error"),
@@ -92,19 +97,41 @@ test("durably records an error before its acknowledgement and retains a pending 
 		accepted: false,
 		captureId: "stale-capture",
 	});
-	expect(writes).toBe(writeCountAfterFailure);
+	expect(writes).toBe(writeCountAfterCleanupRequest);
 
 	const restartedLifecycle = createCaptureTerminalLifecycle(baseStorage);
 	expect(await restartedLifecycle.resume()).toMatchObject({
 		captureId: capture.id,
+		cleanupRequested: true,
 		outcome: { error: "Library save failed", kind: "error" },
 		pendingDelivery: { source: "mic", text: "Keep this transcript" },
 		shouldClose: false,
 	});
 	expect(values.get(CAPTURE_TERMINAL_STORAGE_KEY)).toMatchObject({
+		cleanupRequested: true,
 		outcome: { error: "Library save failed", kind: "error" },
 		pendingDelivery: { source: "mic", text: "Keep this transcript" },
 	});
+	expect(
+		await restartedLifecycle.deliveryFinished(capture.id, "mic"),
+	).toMatchObject({
+		accepted: true,
+		captureId: capture.id,
+		cleanupRequested: true,
+		outcome: { error: "Library save failed", kind: "error" },
+		shouldClose: true,
+	});
+	expect(
+		await restartedLifecycle.cleanup(capture.id, async () => {
+			cleanupCalls += 1;
+		}),
+	).toMatchObject({ accepted: true, captureId: capture.id });
+	expect(
+		await restartedLifecycle.cleanup(capture.id, async () => {
+			cleanupCalls += 1;
+		}),
+	).toMatchObject({ accepted: false, captureId: capture.id });
+	expect(cleanupCalls).toBe(1);
 });
 
 test("serializes terminal cleanup with a new capture so an old close cannot affect it", async () => {
@@ -152,4 +179,54 @@ test("serializes terminal cleanup with a new capture so an old close cannot affe
 		}),
 	).toMatchObject({ accepted: false, captureId: next.id });
 	expect(currentCleanupCalls).toBe(1);
+});
+
+test("does not replace a pending terminal delivery when a new capture begins", async () => {
+	const lifecycle = createCaptureTerminalLifecycle(storageArea(new Map()));
+	const previous = lifecycle.begin();
+	await previous.ready;
+	await lifecycle.captureComplete(
+		previous.id,
+		"mic",
+		"Deliver before replacing",
+	);
+	await lifecycle.captureFailed(previous.id, "Library save failed");
+
+	let staleCloseCalls = 0;
+	const blocked = lifecycle.begin(async () => {
+		staleCloseCalls += 1;
+	});
+	expect(await blocked.ready).toBe(false);
+	expect(staleCloseCalls).toBe(0);
+	expect(lifecycle.isCurrent(previous.id)).toBe(true);
+	expect(await lifecycle.resume()).toMatchObject({
+		captureId: previous.id,
+		pendingDelivery: { source: "mic", text: "Deliver before replacing" },
+	});
+
+	await lifecycle.deliveryFinished(previous.id, "mic");
+	const replacement = lifecycle.begin(async () => {
+		staleCloseCalls += 1;
+	});
+	expect(await replacement.ready).toBe(true);
+	expect(staleCloseCalls).toBe(1);
+	expect(lifecycle.isCurrent(replacement.id)).toBe(true);
+});
+
+test("replaces an orphaned nonterminal capture when no transcript delivery is pending", async () => {
+	const lifecycle = createCaptureTerminalLifecycle(storageArea(new Map()));
+	const orphaned = lifecycle.begin();
+	await orphaned.ready;
+
+	let staleCloseCalls = 0;
+	const replacement = lifecycle.begin(async () => {
+		staleCloseCalls += 1;
+	});
+	expect(await replacement.ready).toBe(true);
+	expect(staleCloseCalls).toBe(0);
+	expect(lifecycle.isCurrent(replacement.id)).toBe(true);
+	expect(await lifecycle.resume()).toMatchObject({
+		captureId: replacement.id,
+		shouldClose: false,
+	});
 });
