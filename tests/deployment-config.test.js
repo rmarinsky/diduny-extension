@@ -40,7 +40,8 @@ test("ships a container, mock proxy, Apache-2.0 license, and CI quality gates", 
 	expect(workflow).toContain("bun run lint");
 	expect(workflow).toContain("bun run typecheck");
 	expect(workflow).toContain("bun run check:core");
-	expect(workflow).toContain("bun test");
+	expect(workflow).toMatch(/- run: bun run test$/m);
+	expect(workflow).not.toMatch(/- run: bun test$/m);
 	expect(workflow).toContain("bun run build");
 	expect(workflow).toContain(
 		"zricethezav/gitleaks@sha256:e1b35e12a8c6fa8901f060459cfb6b2fc4c484d3afbe3b029733a3bbfab07055",
