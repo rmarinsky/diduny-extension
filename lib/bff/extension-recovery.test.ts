@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import type { TranscriptSegment } from "../../src/core/models";
 import type { ScratchRecording } from "../../web/src/scratch-storage";
 import { saveRecoveredExtensionRecordings } from "./library";
 
@@ -6,12 +7,22 @@ test("replays recovered extension scratch independently and leaves failed record
 	const firstId = "2c602e2c-5afb-4a7b-bf58-6e314da22183";
 	const failedId = "28748509-baed-43c0-b900-54b776630e7a";
 	const thirdId = "e53055d0-342f-46f4-b3c5-ed7a794e2838";
+	const recoveredMeetingSegments: readonly TranscriptSegment[] = [
+		{
+			endMs: 3_000,
+			speaker: "1",
+			startMs: 0,
+			text: "Keep this recovered meeting segment",
+		},
+	];
 	const recovered = [
 		{
 			audio: new Blob(["first recovered audio"], { type: "audio/wav" }),
 			durationSeconds: 3,
 			id: firstId,
+			segments: recoveredMeetingSegments,
 			text: "First recovered extension capture",
+			type: "meeting" as const,
 		},
 		{
 			audio: new Blob(["failed recovered audio"], { type: "audio/wav" }),
@@ -58,9 +69,27 @@ test("replays recovered extension scratch independently and leaves failed record
 	expect(
 		posts.map((call) => new Headers(call.init?.headers).get("idempotency-key")),
 	).toEqual([firstId, failedId, thirdId]);
-	expect(
-		posts.map((call) => JSON.parse(String(call.init?.body)).status),
-	).toEqual(["partiallyRecovered", "partiallyRecovered", "partiallyRecovered"]);
+	expect(posts.map((call) => JSON.parse(String(call.init?.body)))).toEqual([
+		{
+			durationSeconds: 3,
+			segments: recoveredMeetingSegments,
+			status: "partiallyRecovered",
+			text: "First recovered extension capture",
+			type: "meeting",
+		},
+		{
+			durationSeconds: 4,
+			status: "partiallyRecovered",
+			text: "Retry this recovered extension capture later",
+			type: "voice",
+		},
+		{
+			durationSeconds: 5,
+			status: "partiallyRecovered",
+			text: "Continue after another recovery failure",
+			type: "voice",
+		},
+	]);
 	expect(calls.filter((call) => call.init?.method === "PUT")).toHaveLength(2);
 	expect(discarded).toEqual([firstId, thirdId]);
 });

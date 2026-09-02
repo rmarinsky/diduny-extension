@@ -21,6 +21,7 @@ export interface RecoveredExtensionRecording {
 	audio: Blob;
 	durationSeconds: number;
 	id: string;
+	segments?: readonly TranscriptSegment[];
 	text: string;
 	type?: LibraryRecordingType;
 }
@@ -131,6 +132,9 @@ export async function saveRecoveredExtensionRecordings(
 				{
 					audio: recording.audio,
 					durationSeconds: recording.durationSeconds,
+					...(recording.segments?.length
+						? { segments: recording.segments }
+						: {}),
 					status: "partiallyRecovered",
 					text: recording.text,
 					type: recording.type ?? "voice",

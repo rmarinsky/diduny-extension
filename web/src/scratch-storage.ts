@@ -1,17 +1,34 @@
 import { AUDIO_FORMAT } from "../../src/core/constants";
+import type { RecordingType, TranscriptSegment } from "../../src/core/models";
 import scratchStorageWorkerUrl from "./scratch-storage.worker.ts?worker&url";
 
 export interface ScratchRecording {
 	audio: Blob;
 	durationSeconds: number;
 	id: string;
+	segments?: readonly TranscriptSegment[];
 	text: string;
+	type?: RecordingType;
+}
+
+export interface ScratchMetadata {
+	segments?: readonly TranscriptSegment[];
+	text: string;
+	type: RecordingType;
 }
 
 type WorkerCommand =
 	| { id: string; type: "append-encoded"; bytes: ArrayBuffer }
 	| { id: string; type: "append-pcm"; bytes: ArrayBuffer }
 	| { id: string; text: string; type: "set-text" }
+	| {
+			id: string;
+			recordingType: RecordingType;
+			requestId: number;
+			segments?: readonly TranscriptSegment[];
+			text: string;
+			type: "set-metadata";
+	  }
 	| { id: string; requestId: number; type: "complete" | "discard" | "flush" }
 	| {
 			id: string;
@@ -19,6 +36,7 @@ type WorkerCommand =
 			sampleRate: number;
 			channels: number;
 			createdAt: number;
+			recordingType?: RecordingType;
 			type: "start";
 	  }
 	| { requestId: number; type: "recover" };
@@ -30,9 +48,17 @@ type WorkerResult =
 type WorkerRequestCommand =
 	| { id: string; type: "complete" | "discard" | "flush" }
 	| {
+			id: string;
+			recordingType: RecordingType;
+			segments?: readonly TranscriptSegment[];
+			text: string;
+			type: "set-metadata";
+	  }
+	| {
 			channels: number;
 			createdAt: number;
 			id: string;
+			recordingType?: RecordingType;
 			sampleRate: number;
 			type: "start";
 	  }
@@ -60,7 +86,8 @@ export interface ScratchStorage {
 	close(): void;
 	discard(id: string): Promise<void>;
 	recover(): Promise<readonly ScratchRecording[]>;
-	start(): Promise<ScratchCapture>;
+	start(recordingType?: RecordingType): Promise<ScratchCapture>;
+	updateMetadata(id: string, metadata: ScratchMetadata): Promise<void>;
 }
 
 function browserWorker(): ScratchWorker {
@@ -93,16 +120,27 @@ class BrowserScratchStorage implements ScratchStorage {
 		});
 	}
 
-	async start(): Promise<ScratchCapture> {
+	async start(recordingType?: RecordingType): Promise<ScratchCapture> {
 		const id = crypto.randomUUID();
 		await this.request({
 			channels: AUDIO_FORMAT.channels,
 			createdAt: Date.now(),
 			id,
+			...(recordingType ? { recordingType } : {}),
 			sampleRate: AUDIO_FORMAT.sampleRate,
 			type: "start",
 		});
 		return new BrowserScratchCapture(this, id);
+	}
+
+	updateMetadata(id: string, metadata: ScratchMetadata) {
+		return this.request({
+			id,
+			recordingType: metadata.type,
+			...(metadata.segments ? { segments: metadata.segments } : {}),
+			text: metadata.text,
+			type: "set-metadata",
+		}) as Promise<void>;
 	}
 
 	recover() {

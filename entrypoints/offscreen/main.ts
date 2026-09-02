@@ -141,7 +141,9 @@ async function createPipeline({
 	let pcm: PcmCapture | undefined;
 	let realtime: WebRealtimeSession | undefined;
 	try {
-		const scratch = await scratchStorage.start();
+		const scratch = await scratchStorage.start(
+			translation ? "translation" : recordingType,
+		);
 		const recorderRef: { value?: MediaRecorder } = {};
 		const realtimeSegments: TranscriptSegment[] = [];
 		realtime = startWebRealtime({
@@ -369,6 +371,14 @@ async function stopCapture(partiallyRecovered = false) {
 					cause instanceof Error ? cause : new Error("Transcription failed");
 			}
 			try {
+				const type = pipeline.translation
+					? "translation"
+					: pipeline.recordingType;
+				await pipeline.scratchStorage.updateMetadata(recording.id, {
+					...(segments.length ? { segments } : {}),
+					text,
+					type,
+				});
 				await saveExtensionRecording(
 					{
 						audio: recording.audio,
@@ -380,7 +390,7 @@ async function stopCapture(partiallyRecovered = false) {
 							translation: Boolean(pipeline.translation),
 						}),
 						text,
-						type: pipeline.translation ? "translation" : pipeline.recordingType,
+						type,
 					},
 					pipeline.bffOrigin,
 					recording.id,

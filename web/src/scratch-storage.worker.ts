@@ -1,4 +1,5 @@
 import { LONG_RECORDING } from "../../src/core/constants";
+import type { RecordingType, TranscriptSegment } from "../../src/core/models";
 import { wavHeader } from "./wav";
 
 interface SyncAccessHandle {
@@ -31,7 +32,9 @@ interface ScratchManifest {
 	createdAt: number;
 	id: string;
 	sampleRate: number;
+	segments?: TranscriptSegment[];
 	text: string;
+	type?: RecordingType;
 	version: number;
 }
 
@@ -46,6 +49,14 @@ type WorkerCommand =
 	| { id: string; type: "append-encoded"; bytes: ArrayBuffer }
 	| { id: string; type: "append-pcm"; bytes: ArrayBuffer }
 	| { id: string; text: string; type: "set-text" }
+	| {
+			id: string;
+			recordingType: RecordingType;
+			requestId: number;
+			segments?: readonly TranscriptSegment[];
+			text: string;
+			type: "set-metadata";
+	  }
 	| { id: string; requestId: number; type: "complete" | "discard" | "flush" }
 	| {
 			id: string;
@@ -53,6 +64,7 @@ type WorkerCommand =
 			sampleRate: number;
 			channels: number;
 			createdAt: number;
+			recordingType?: RecordingType;
 			type: "start";
 	  }
 	| { requestId: number; type: "recover" };
@@ -71,6 +83,30 @@ const scratchDirectoryName = "diduny-scratch";
 function validId(value: string) {
 	return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
 		value,
+	);
+}
+
+function validRecordingType(value: unknown): value is RecordingType {
+	return (
+		value === "fileTranscription" ||
+		value === "meeting" ||
+		value === "meetingTranslation" ||
+		value === "translation" ||
+		value === "voice"
+	);
+}
+
+function validSegment(value: unknown): value is TranscriptSegment {
+	if (!value || typeof value !== "object") return false;
+	const segment = value as Partial<TranscriptSegment>;
+	return (
+		Number.isSafeInteger(segment.startMs) &&
+		Number.isSafeInteger(segment.endMs) &&
+		(segment.startMs ?? -1) >= 0 &&
+		(segment.endMs ?? -1) >= (segment.startMs ?? 0) &&
+		typeof segment.text === "string" &&
+		(segment.speaker === undefined || typeof segment.speaker === "string") &&
+		(segment.language === undefined || typeof segment.language === "string")
 	);
 }
 
@@ -166,7 +202,10 @@ function validManifest(value: unknown): value is ScratchManifest {
 		typeof record.channels === "number" &&
 		Number.isFinite(record.channels) &&
 		record.channels > 0 &&
-		typeof record.text === "string"
+		typeof record.text === "string" &&
+		(record.type === undefined || validRecordingType(record.type)) &&
+		(record.segments === undefined ||
+			(Array.isArray(record.segments) && record.segments.every(validSegment)))
 	);
 }
 
@@ -177,7 +216,9 @@ function toRecoveredRecording(manifest: ScratchManifest, pcm: File) {
 		audio: new Blob([wavHeader(pcm.size), pcm], { type: "audio/wav" }),
 		durationSeconds,
 		id: manifest.id,
+		...(manifest.segments?.length ? { segments: manifest.segments } : {}),
 		text: manifest.text,
+		...(manifest.type ? { type: manifest.type } : {}),
 	};
 }
 
@@ -190,6 +231,7 @@ async function start(command: Extract<WorkerCommand, { type: "start" }>) {
 		id: command.id,
 		sampleRate: command.sampleRate,
 		text: "",
+		...(command.recordingType ? { type: command.recordingType } : {}),
 		version: LONG_RECORDING.manifestVersion,
 	};
 	const [manifestFile, pcmFile, encodedFile] = await Promise.all([
@@ -234,7 +276,11 @@ async function complete(id: string) {
 						(capture.manifest.sampleRate * capture.manifest.channels * 2)
 					: Math.max(0, (Date.now() - capture.manifest.createdAt) / 1000),
 			id,
+			...(capture.manifest.segments?.length
+				? { segments: capture.manifest.segments }
+				: {}),
 			text: capture.manifest.text,
+			...(capture.manifest.type ? { type: capture.manifest.type } : {}),
 		};
 	}
 	if (!pcm.size) throw new Error("Scratch recording has no audio");
@@ -271,6 +317,41 @@ async function recover() {
 	return recovered.sort((left, right) => left.id.localeCompare(right.id));
 }
 
+async function setMetadata(
+	command: Extract<WorkerCommand, { type: "set-metadata" }>,
+) {
+	const openCapture = captures.get(command.id);
+	if (openCapture) {
+		openCapture.manifest.text = command.text;
+		openCapture.manifest.type = command.recordingType;
+		openCapture.manifest.segments = command.segments
+			? [...command.segments]
+			: undefined;
+		writeManifest(openCapture);
+		await openCapture.manifestHandle.flush();
+		return;
+	}
+
+	const fileHandle = await (await directory()).getFileHandle(
+		manifestName(command.id),
+	);
+	const value: unknown = JSON.parse(await (await fileHandle.getFile()).text());
+	if (!validManifest(value))
+		throw new Error("Invalid scratch recording manifest");
+	value.text = command.text;
+	value.type = command.recordingType;
+	value.segments = command.segments ? [...command.segments] : undefined;
+	const handle = await fileHandle.createSyncAccessHandle();
+	try {
+		const data = encoder.encode(JSON.stringify(value));
+		writeAll(handle, data);
+		handle.truncate(data.byteLength);
+		await handle.flush();
+	} finally {
+		await handle.close();
+	}
+}
+
 async function handle(command: WorkerCommand) {
 	switch (command.type) {
 		case "append-pcm":
@@ -290,6 +371,8 @@ async function handle(command: WorkerCommand) {
 			}
 			return undefined;
 		}
+		case "set-metadata":
+			return setMetadata(command);
 		case "flush": {
 			const capture = captures.get(command.id);
 			if (capture) {
