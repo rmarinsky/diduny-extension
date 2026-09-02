@@ -19,14 +19,15 @@ export function deliverToQuill(
 		getSelection?: (focus?: boolean) => { index?: number } | null;
 		insertText?: (index: number, value: string, source?: string) => void;
 	};
-	const stateHost = globalThis as typeof globalThis & {
-		__didunyQuillDeliveryId?: string;
-	};
-	if (deliveryId && stateHost.__didunyQuillDeliveryId === deliveryId)
-		return { inserted: true };
 	const target = document.querySelector<HTMLElement>(
 		'[data-diduny-delivery-target="quill"]',
 	);
+	const deliveryIdAttribute = "data-diduny-delivery-id";
+	if (
+		deliveryId &&
+		document.documentElement?.getAttribute(deliveryIdAttribute) === deliveryId
+	)
+		return { inserted: true };
 	const container = target?.closest(".ql-container") as
 		| (Element & { __quill?: QuillEditor })
 		| null;
@@ -43,7 +44,8 @@ export function deliverToQuill(
 				);
 	try {
 		quill.insertText(index, text, "user");
-		if (deliveryId) stateHost.__didunyQuillDeliveryId = deliveryId;
+		if (deliveryId)
+			document.documentElement?.setAttribute(deliveryIdAttribute, deliveryId);
 		return { inserted: true };
 	} catch {
 		return { inserted: false, reason: "target-unavailable" };
@@ -62,7 +64,6 @@ export function installDeliveryBridge(): DeliveryPreparation {
 	type EditorAdapter = DeliveryEditor;
 	type BridgeState = {
 		editor?: EditorAdapter;
-		lastDeliveryId?: string;
 		range?: Range;
 		selectionEnd: number;
 		selectionStart: number;
@@ -73,6 +74,7 @@ export function installDeliveryBridge(): DeliveryPreparation {
 		__didunyDeliveryBridge?: BridgeState;
 	};
 	const pageOrigin = globalThis.location?.origin ?? "";
+	const deliveryIdAttribute = "data-diduny-delivery-id";
 	const statusId = "__diduny-delivery-status";
 	const targetAttribute = "data-diduny-delivery-target";
 	let state = stateHost.__didunyDeliveryBridge;
@@ -182,7 +184,6 @@ export function installDeliveryBridge(): DeliveryPreparation {
 	}
 
 	function updateTarget(target: DeliveryTarget, editor?: EditorAdapter) {
-		const lastDeliveryId = stateHost.__didunyDeliveryBridge?.lastDeliveryId;
 		const previousTarget = stateHost.__didunyDeliveryBridge?.target as
 			| (DeliveryTarget & { removeAttribute?: (name: string) => void })
 			| undefined;
@@ -204,7 +205,6 @@ export function installDeliveryBridge(): DeliveryPreparation {
 					: undefined;
 			state = {
 				editor,
-				...(lastDeliveryId ? { lastDeliveryId } : {}),
 				range,
 				selectionEnd: 0,
 				selectionStart: 0,
@@ -222,7 +222,6 @@ export function installDeliveryBridge(): DeliveryPreparation {
 			// Some text-like controls, such as email inputs, have no selection API.
 		}
 		state = {
-			...(lastDeliveryId ? { lastDeliveryId } : {}),
 			selectionEnd: end,
 			selectionStart: start,
 			target,
@@ -404,11 +403,12 @@ export function installDeliveryBridge(): DeliveryPreparation {
 				typeof payload.deliveryId === "string" ? payload.deliveryId : undefined;
 			const result =
 				deliveryId &&
-				stateHost.__didunyDeliveryBridge?.lastDeliveryId === deliveryId
+				document.documentElement?.getAttribute(deliveryIdAttribute) ===
+					deliveryId
 					? { inserted: true as const }
 					: insertText(payload.text);
-			if (result.inserted && deliveryId && stateHost.__didunyDeliveryBridge)
-				stateHost.__didunyDeliveryBridge.lastDeliveryId = deliveryId;
+			if (result.inserted && deliveryId)
+				document.documentElement?.setAttribute(deliveryIdAttribute, deliveryId);
 			if (!result.inserted) {
 				setStatus("Diduny could not insert into the original text field");
 			}

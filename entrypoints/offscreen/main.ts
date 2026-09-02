@@ -18,7 +18,11 @@ import {
 	saveRecoveredExtensionRecordings,
 } from "../../lib/bff/library";
 import { crashLog, logError } from "../../lib/crash-log";
-import { onMessage, sendMessage } from "../../lib/messaging/bridge";
+import {
+	onMessage,
+	sendMessage,
+	sendMessageUntilAcknowledged,
+} from "../../lib/messaging/bridge";
 import type {
 	AudioSource,
 	DictationTranslation,
@@ -408,23 +412,26 @@ async function stopCapture(partiallyRecovered = false) {
 						: new Error("Could not save the recording to the library");
 			}
 			if (transcribed) {
-				await sendMessage({
+				await sendMessageUntilAcknowledged({
 					type: "capture-complete",
 					text,
 					source: pipeline.source,
 				});
 			}
 			if (error) {
-				await sendMessage({ type: "capture-error", error: error.message });
+				await sendMessageUntilAcknowledged({
+					type: "capture-error",
+					error: error.message,
+				});
 			} else {
-				await sendMessage({
+				await sendMessageUntilAcknowledged({
 					type: "capture-persisted",
 					source: pipeline.source,
 				});
 			}
 		} catch (error) {
 			logError("offscreen:stop", error);
-			await sendMessage({
+			await sendMessageUntilAcknowledged({
 				type: "capture-error",
 				error: error instanceof Error ? error.message : "Transcription failed",
 			});
