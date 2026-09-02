@@ -29,6 +29,10 @@ import type {
 	DictationTranslation,
 	StartCapture,
 } from "../../lib/messaging/types";
+import {
+	type CapturePhase,
+	shouldReportGlobalCaptureError,
+} from "../../lib/recording/capture-phase";
 import { AUDIO_FORMAT } from "../../src/core/constants";
 import type { TranscriptSegment } from "../../src/core/models";
 import type { RealtimeToken } from "../../src/core/realtime-session";
@@ -67,6 +71,7 @@ interface AudioPipeline {
 
 let pipelines: AudioPipeline[] = [];
 let currentCaptureId: string | undefined;
+let capturePhase: CapturePhase = "idle";
 
 function reportCaptureError(captureId: string, error: string) {
 	return sendFinalCaptureMessage({ captureId, error, type: "capture-error" });
@@ -246,7 +251,7 @@ self.addEventListener("error", (event) => {
 		message,
 		event.error instanceof Error ? event.error.stack : undefined,
 	);
-	if (pipelines.length === 0 && currentCaptureId) {
+	if (shouldReportGlobalCaptureError(capturePhase) && currentCaptureId) {
 		void reportCaptureError(currentCaptureId, message);
 	}
 });
@@ -262,13 +267,14 @@ self.addEventListener("unhandledrejection", (event) => {
 		message,
 		event.reason instanceof Error ? event.reason.stack : undefined,
 	);
-	if (pipelines.length === 0 && currentCaptureId) {
+	if (shouldReportGlobalCaptureError(capturePhase) && currentCaptureId) {
 		void reportCaptureError(currentCaptureId, message);
 	}
 });
 
 async function startCapture(msg: StartCapture) {
 	currentCaptureId = msg.captureId;
+	capturePhase = "starting";
 	const startupStreams: MediaStream[] = [];
 	const startupContexts: AudioContext[] = [];
 	try {
@@ -328,10 +334,12 @@ async function startCapture(msg: StartCapture) {
 			];
 			startupStreams.length = 0;
 		}
+		capturePhase = "recording";
 		await sendMessage({ captureId: msg.captureId, type: "capture-ready" });
 	} catch (error) {
 		await releaseCaptureResources(startupStreams, startupContexts);
 		logError("offscreen:startCapture", error);
+		capturePhase = "idle";
 		await reportCaptureError(
 			msg.captureId,
 			error instanceof Error ? error.message : "Failed to start capture",
@@ -353,6 +361,7 @@ async function queueScratchRecovery(bffOrigin: string) {
 }
 
 async function stopCapture(partiallyRecovered = false) {
+	capturePhase = "finalizing";
 	const activePipelines = pipelines;
 	pipelines = [];
 	for (const pipeline of activePipelines) {
@@ -456,12 +465,15 @@ async function stopCapture(partiallyRecovered = false) {
 			pipeline.scratchStorage.close();
 		}
 	}
+	capturePhase = "idle";
 }
 
 async function discardCapture() {
+	capturePhase = "finalizing";
 	const activePipelines = pipelines;
 	pipelines = [];
 	await Promise.all(activePipelines.map(stopAndDiscard));
+	capturePhase = "idle";
 }
 
 async function stopAndCollect(

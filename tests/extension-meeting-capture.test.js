@@ -30,3 +30,20 @@ test("uses tabCapture with durable recovery instead of a screen picker", async (
 	expect(capture).toContain("closeAudioContexts");
 	expect(mixer).toContain("tabGain.connect(context.destination)");
 });
+
+test("classifies finalization before clearing active pipelines", async () => {
+	const offscreen = await readFile("entrypoints/offscreen/main.ts", "utf8");
+	const stopCapture = offscreen.indexOf("async function stopCapture");
+	const finalizing = offscreen.indexOf(
+		'capturePhase = "finalizing"',
+		stopCapture,
+	);
+	const clearPipelines = offscreen.indexOf("pipelines = [];", stopCapture);
+
+	expect(stopCapture).toBeGreaterThan(-1);
+	expect(finalizing).toBeGreaterThan(stopCapture);
+	expect(finalizing).toBeLessThan(clearPipelines);
+	expect(
+		offscreen.match(/shouldReportGlobalCaptureError\(capturePhase\)/g),
+	).toHaveLength(2);
+});
