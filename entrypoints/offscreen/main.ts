@@ -232,7 +232,10 @@ self.addEventListener("error", (event) => {
 		event.error instanceof Error ? event.error.stack : undefined,
 	);
 	if (pipelines.length === 0) {
-		sendMessage({ type: "capture-error", error: message });
+		void sendMessageUntilAcknowledged({
+			type: "capture-error",
+			error: message,
+		});
 	}
 });
 
@@ -248,7 +251,10 @@ self.addEventListener("unhandledrejection", (event) => {
 		event.reason instanceof Error ? event.reason.stack : undefined,
 	);
 	if (pipelines.length === 0) {
-		sendMessage({ type: "capture-error", error: message });
+		void sendMessageUntilAcknowledged({
+			type: "capture-error",
+			error: message,
+		});
 	}
 });
 
@@ -314,7 +320,7 @@ async function startCapture(msg: StartCapture) {
 	} catch (error) {
 		await releaseCaptureResources(startupStreams, startupContexts);
 		logError("offscreen:startCapture", error);
-		sendMessage({
+		await sendMessageUntilAcknowledged({
 			type: "capture-error",
 			error: error instanceof Error ? error.message : "Failed to start capture",
 		});

@@ -6,10 +6,10 @@ const originalChrome = Object.getOwnPropertyDescriptor(globalThis, "chrome");
 afterEach(() => {
 	if (originalChrome)
 		Object.defineProperty(globalThis, "chrome", originalChrome);
-	else (globalThis as Record<string, unknown>).chrome = undefined;
+	else Reflect.deleteProperty(globalThis, "chrome");
 });
 
-test("retries a terminal message until the background explicitly acknowledges it", async () => {
+test("retries an interrupted-start error until the background acknowledges it", async () => {
 	let attempts = 0;
 	Object.defineProperty(globalThis, "chrome", {
 		configurable: true,
@@ -25,7 +25,7 @@ test("retries a terminal message until the background explicitly acknowledges it
 	});
 
 	await sendMessageUntilAcknowledged(
-		{ source: "mic", type: "capture-persisted" },
+		{ error: "Could not start microphone capture", type: "capture-error" },
 		0,
 	);
 	expect(attempts).toBe(3);
