@@ -109,11 +109,12 @@ export default defineBackground(() => {
 				return;
 			}
 			if (terminal?.pendingDelivery) {
-				await completeTranscriptDelivery(
+				const completion = await completeTranscriptDelivery(
 					terminal.captureId,
 					terminal.pendingDelivery.source,
 					terminal.pendingDelivery.text,
 				);
+				if (completion.shouldClose) return;
 			}
 			if (await chrome.offscreen.hasDocument()) {
 				currentState = "recording";
@@ -238,10 +239,12 @@ export default defineBackground(() => {
 				return true;
 			}
 			case "capture-ready": {
+				if (!captureLifecycle.isCurrent(msg.captureId)) return true;
 				if (currentState === "starting") await setState("recording");
 				return true;
 			}
 			case "capture-tokens": {
+				if (!captureLifecycle.isCurrent(msg.captureId)) return true;
 				await sendMessage({
 					type: "realtime-tokens",
 					tokens: msg.tokens,
@@ -251,6 +254,7 @@ export default defineBackground(() => {
 			}
 			case "capture-complete": {
 				const completion = await captureLifecycle.captureComplete(
+					msg.captureId,
 					msg.source,
 					msg.text,
 				);
@@ -264,14 +268,23 @@ export default defineBackground(() => {
 			}
 			case "capture-persisted": {
 				await finishCapture(
-					await captureLifecycle.capturePersisted(msg.source),
+					await captureLifecycle.capturePersisted(msg.captureId, msg.source),
 				);
 				return true;
 			}
 			case "capture-error": {
-				await clearDeliveryStatus();
-				await closeOffscreen();
-				await setState("error", msg.error);
+				const failure = await captureLifecycle.captureFailed(
+					msg.captureId,
+					msg.error,
+				);
+				if (!failure.accepted) return true;
+				stopKeepalive();
+				if (!failure.pendingDelivery) await clearDeliveryStatus();
+				await finishCapture(failure);
+				return true;
+			}
+			case "close-offscreen": {
+				await captureLifecycle.cleanup(msg.captureId, closeOffscreen);
 				return true;
 			}
 		}
@@ -311,7 +324,7 @@ export default defineBackground(() => {
 				await setState("error", "Not authenticated");
 				return;
 			}
-			const capture = captureLifecycle.begin();
+			const capture = captureLifecycle.begin(closeOffscreen);
 			await capture.ready;
 			await clearDeliveryStatus();
 			const delivery =
@@ -338,6 +351,7 @@ export default defineBackground(() => {
 			startKeepalive();
 			await sendToOffscreenWithRetry({
 				type: "start-capture",
+				captureId: capture.id,
 				mode,
 				bffOrigin,
 				language,
@@ -424,9 +438,12 @@ export default defineBackground(() => {
 	) {
 		await deliverTranscript(text, captureId);
 		await sendMessage({ type: "transcription-complete", text, source });
-		await finishCapture(
-			await captureLifecycle.deliveryFinished(captureId, source),
+		const completion = await captureLifecycle.deliveryFinished(
+			captureId,
+			source,
 		);
+		await finishCapture(completion);
+		return completion;
 	}
 
 	async function deliverTranscript(text: string, deliveryId: string) {
@@ -656,13 +673,10 @@ export default defineBackground(() => {
 	}
 
 	async function finishCapture(decision: CaptureTerminalDecision) {
-		if (
-			!decision.shouldClose ||
-			!captureLifecycle.isCurrent(decision.captureId)
-		)
+		if (!decision.outcome || !captureLifecycle.isCurrent(decision.captureId))
 			return;
-		await closeOffscreen();
-		if (captureLifecycle.isCurrent(decision.captureId))
-			await setState("success");
+		if (decision.outcome.kind === "error")
+			await setState("error", decision.outcome.error);
+		else await setState("success");
 	}
 });

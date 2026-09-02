@@ -25,7 +25,11 @@ test("retries an interrupted-start error until the background acknowledges it", 
 	});
 
 	await sendMessageUntilAcknowledged(
-		{ error: "Could not start microphone capture", type: "capture-error" },
+		{
+			captureId: "capture-1",
+			error: "Could not start microphone capture",
+			type: "capture-error",
+		},
 		0,
 	);
 	expect(attempts).toBe(3);
@@ -70,7 +74,11 @@ test("terminal sender waits for durable handler work before accepting its ACK", 
 	});
 
 	const delivery = sendMessageUntilAcknowledged(
-		{ error: "Could not start microphone capture", type: "capture-error" },
+		{
+			captureId: "capture-1",
+			error: "Could not start microphone capture",
+			type: "capture-error",
+		},
 		0,
 	);
 	void delivery.then(() => {

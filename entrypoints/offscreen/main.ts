@@ -23,6 +23,7 @@ import {
 	sendMessage,
 	sendMessageUntilAcknowledged,
 } from "../../lib/messaging/bridge";
+import { sendFinalCaptureMessage } from "../../lib/messaging/capture-terminal";
 import type {
 	AudioSource,
 	DictationTranslation,
@@ -45,6 +46,7 @@ import {
 
 interface AudioPipeline {
 	bffOrigin: string;
+	captureId: string;
 	cleanupContexts: AudioContext[];
 	diarization: boolean;
 	language: string;
@@ -64,6 +66,11 @@ interface AudioPipeline {
 }
 
 let pipelines: AudioPipeline[] = [];
+let currentCaptureId: string | undefined;
+
+function reportCaptureError(captureId: string, error: string) {
+	return sendFinalCaptureMessage({ captureId, error, type: "capture-error" });
+}
 
 async function getMicrophoneStream(deviceId: string | null | undefined) {
 	return navigator.mediaDevices.getUserMedia({
@@ -126,6 +133,7 @@ console.log("[offscreen] loaded");
 
 async function createPipeline({
 	bffOrigin,
+	captureId,
 	cleanupContexts = [],
 	diarization,
 	language,
@@ -136,6 +144,7 @@ async function createPipeline({
 	translation,
 }: {
 	bffOrigin: string;
+	captureId: string;
 	cleanupContexts?: AudioContext[];
 	diarization: boolean;
 	language: string;
@@ -170,7 +179,12 @@ async function createPipeline({
 				const message = messageTokens(tokens);
 				realtimeSegments.push(...timedSegments(tokens));
 				if (message.length)
-					void sendMessage({ type: "capture-tokens", source, tokens: message });
+					void sendMessage({
+						captureId,
+						type: "capture-tokens",
+						source,
+						tokens: message,
+					});
 			},
 		});
 		pcm = await createPcmCapture({
@@ -189,6 +203,7 @@ async function createPipeline({
 		recorderRef.value = recorder;
 		const pipeline: AudioPipeline = {
 			bffOrigin,
+			captureId,
 			cleanupContexts,
 			diarization,
 			language,
@@ -231,11 +246,8 @@ self.addEventListener("error", (event) => {
 		message,
 		event.error instanceof Error ? event.error.stack : undefined,
 	);
-	if (pipelines.length === 0) {
-		void sendMessageUntilAcknowledged({
-			type: "capture-error",
-			error: message,
-		});
+	if (pipelines.length === 0 && currentCaptureId) {
+		void reportCaptureError(currentCaptureId, message);
 	}
 });
 
@@ -250,15 +262,13 @@ self.addEventListener("unhandledrejection", (event) => {
 		message,
 		event.reason instanceof Error ? event.reason.stack : undefined,
 	);
-	if (pipelines.length === 0) {
-		void sendMessageUntilAcknowledged({
-			type: "capture-error",
-			error: message,
-		});
+	if (pipelines.length === 0 && currentCaptureId) {
+		void reportCaptureError(currentCaptureId, message);
 	}
 });
 
 async function startCapture(msg: StartCapture) {
+	currentCaptureId = msg.captureId;
 	const startupStreams: MediaStream[] = [];
 	const startupContexts: AudioContext[] = [];
 	try {
@@ -282,6 +292,7 @@ async function startCapture(msg: StartCapture) {
 			await mixerContext.resume();
 			const pipeline = await createPipeline({
 				bffOrigin: msg.bffOrigin,
+				captureId: msg.captureId,
 				cleanupContexts: [mixerContext],
 				diarization: msg.diarization,
 				language: msg.language,
@@ -305,6 +316,7 @@ async function startCapture(msg: StartCapture) {
 			pipelines = [
 				await createPipeline({
 					bffOrigin: msg.bffOrigin,
+					captureId: msg.captureId,
 					diarization: msg.diarization,
 					language: msg.language,
 					recordingType: "voice",
@@ -316,14 +328,14 @@ async function startCapture(msg: StartCapture) {
 			];
 			startupStreams.length = 0;
 		}
-		await sendMessage({ type: "capture-ready" });
+		await sendMessage({ captureId: msg.captureId, type: "capture-ready" });
 	} catch (error) {
 		await releaseCaptureResources(startupStreams, startupContexts);
 		logError("offscreen:startCapture", error);
-		await sendMessageUntilAcknowledged({
-			type: "capture-error",
-			error: error instanceof Error ? error.message : "Failed to start capture",
-		});
+		await reportCaptureError(
+			msg.captureId,
+			error instanceof Error ? error.message : "Failed to start capture",
+		);
 	}
 }
 
@@ -419,28 +431,27 @@ async function stopCapture(partiallyRecovered = false) {
 			}
 			if (transcribed) {
 				await sendMessageUntilAcknowledged({
+					captureId: pipeline.captureId,
 					type: "capture-complete",
 					text,
 					source: pipeline.source,
 				});
 			}
 			if (error) {
-				await sendMessageUntilAcknowledged({
-					type: "capture-error",
-					error: error.message,
-				});
+				await reportCaptureError(pipeline.captureId, error.message);
 			} else {
-				await sendMessageUntilAcknowledged({
+				await sendFinalCaptureMessage({
+					captureId: pipeline.captureId,
 					type: "capture-persisted",
 					source: pipeline.source,
 				});
 			}
 		} catch (error) {
 			logError("offscreen:stop", error);
-			await sendMessageUntilAcknowledged({
-				type: "capture-error",
-				error: error instanceof Error ? error.message : "Transcription failed",
-			});
+			await reportCaptureError(
+				pipeline.captureId,
+				error instanceof Error ? error.message : "Transcription failed",
+			);
 		} finally {
 			pipeline.scratchStorage.close();
 		}

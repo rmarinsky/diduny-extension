@@ -48,17 +48,22 @@ test("finishes a completed capture after the service worker restarts before pers
 	await capture.ready;
 
 	expect(
-		(await firstWorker.captureComplete("mic", "Retry this transcript"))
-			.shouldClose,
+		(
+			await firstWorker.captureComplete(
+				capture.id,
+				"mic",
+				"Retry this transcript",
+			)
+		).shouldClose,
 	).toBe(false);
 	expect(
 		(await firstWorker.deliveryFinished(capture.id, "mic")).shouldClose,
 	).toBe(false);
 
 	const restartedWorker = createCaptureTerminalLifecycle(storageArea(session));
-	expect((await restartedWorker.capturePersisted("mic")).shouldClose).toBe(
-		true,
-	);
+	expect(
+		(await restartedWorker.capturePersisted(capture.id, "mic")).shouldClose,
+	).toBe(true);
 });
 
 test("finishes a persisted capture after the service worker restarts before completion arrives", async () => {
@@ -67,10 +72,13 @@ test("finishes a persisted capture after the service worker restarts before comp
 	const capture = firstWorker.begin();
 	await capture.ready;
 
-	expect((await firstWorker.capturePersisted("tab")).shouldClose).toBe(false);
+	expect(
+		(await firstWorker.capturePersisted(capture.id, "tab")).shouldClose,
+	).toBe(false);
 
 	const restartedWorker = createCaptureTerminalLifecycle(storageArea(session));
 	const completion = await restartedWorker.captureComplete(
+		capture.id,
 		"tab",
 		"Persist this transcript",
 	);
@@ -86,7 +94,7 @@ test("restores an unfinished transcript delivery after the service worker restar
 	const firstWorker = createCaptureTerminalLifecycle(storageArea(session));
 	const capture = firstWorker.begin();
 	await capture.ready;
-	await firstWorker.captureComplete("mic", "Retry after restart");
+	await firstWorker.captureComplete(capture.id, "mic", "Retry after restart");
 
 	const restartedWorker = createCaptureTerminalLifecycle(storageArea(session));
 	expect(await restartedWorker.resume()).toMatchObject({
@@ -199,7 +207,10 @@ function createBackgroundHarness({
 			response: (value?: unknown) => void,
 		) => boolean | undefined
 	> = [];
-	const backgroundMessages: Array<{ type?: string }> = [];
+	const backgroundMessages: Array<{
+		[key: string]: unknown;
+		type?: string;
+	}> = [];
 	const transcriptDeliveryMessages: Array<{
 		deliveryId?: unknown;
 		text?: unknown;
@@ -251,7 +262,10 @@ function createBackgroundHarness({
 					runtimeListeners.push(listener);
 				},
 			},
-			sendMessage: async (message: { type?: string }) => {
+			sendMessage: async (message: {
+				[key: string]: unknown;
+				type?: string;
+			}) => {
 				backgroundMessages.push(message);
 			},
 		},
@@ -346,6 +360,15 @@ function createBackgroundHarness({
 			await new Promise((resolve) => setTimeout(resolve, 0));
 			return replies;
 		},
+		send(message: unknown) {
+			return new Promise<unknown>((resolve, reject) => {
+				const handled = runtimeListeners.some(
+					(listener) => listener(message, {}, resolve) === true,
+				);
+				if (!handled)
+					reject(new Error("No background listener handled message"));
+			});
+		},
 		async loadWorker() {
 			await import("../entrypoints/background");
 		},
@@ -407,7 +430,7 @@ test("recovers delivery before accepting a new capture after worker restart", as
 	harness.transcriptDelivery.resolve({ inserted: true });
 	await waitFor(
 		() => harness.closeDocumentCalls() === 1,
-		"the recovered capture to finish after transcript delivery",
+		"stale terminal offscreen cleanup before the new capture",
 	);
 	harness.dispatch({
 		diarization: false,
@@ -432,4 +455,62 @@ test("recovers delivery before accepting a new capture after worker restart", as
 	);
 	expect(harness.closeDocumentCalls()).toBe(1);
 	expect(harness.deliverySession()).toBeDefined();
+
+	const latestStart = harness.backgroundMessages.findLast(
+		(message) => message.type === "start-capture",
+	);
+	if (!latestStart || !("captureId" in latestStart))
+		throw new Error("Expected the background to start a named capture");
+	const captureId = String(latestStart.captureId);
+	const closeCountBeforeError = harness.closeDocumentCalls();
+	expect(
+		await harness.send({
+			captureId,
+			error: "Could not start microphone capture",
+			type: "capture-error",
+		}),
+	).toEqual({ acknowledged: true });
+	expect(harness.backgroundMessages).toContainEqual({
+		error: "Could not start microphone capture",
+		state: "error",
+		type: "recording-state-changed",
+	});
+	expect(harness.closeDocumentCalls()).toBe(closeCountBeforeError);
+
+	harness.dispatch({
+		diarization: false,
+		language: "uk",
+		mode: "voice",
+		type: "start-recording",
+	});
+	await waitFor(
+		() =>
+			harness.closeDocumentCalls() === closeCountBeforeError + 1 &&
+			harness.createDocumentCalls() === 2 &&
+			harness.backgroundMessages.filter(
+				(message) => message.type === "start-capture",
+			).length === 2,
+		"serialized stale cleanup before a newer capture starts",
+	);
+	const closeCountAfterNewStart = harness.closeDocumentCalls();
+	harness.dispatch({ captureId, type: "close-offscreen" });
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	expect(harness.closeDocumentCalls()).toBe(closeCountAfterNewStart);
+
+	const newerStart = harness.backgroundMessages.findLast(
+		(message) => message.type === "start-capture",
+	);
+	if (!newerStart || !("captureId" in newerStart))
+		throw new Error("Expected the background to start a newer named capture");
+	const newerCaptureId = String(newerStart.captureId);
+	await harness.send({
+		captureId: newerCaptureId,
+		error: "New capture failed",
+		type: "capture-error",
+	});
+	harness.dispatch({ captureId: newerCaptureId, type: "close-offscreen" });
+	await waitFor(
+		() => harness.closeDocumentCalls() === closeCountAfterNewStart + 1,
+		"current terminal offscreen cleanup",
+	);
 });
