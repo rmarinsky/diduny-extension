@@ -17,7 +17,7 @@
 		"test:e2e:extension": "bun run build && playwright test",
 		"check:core": "bun scripts/check-core-boundary.ts",
 		"check:build-security": "bun scripts/check-build-security.ts",
-		"typecheck": "tsc --noEmit",
+		"typecheck": "wxt prepare && tsc --noEmit",
 		"lint": "biome check . && bun scripts/check-web-i18n.ts",
 		"lint:fix": "biome check --write .",
 		"validate": "bun run lint && bun run typecheck && bun run check:core && bun run test"
