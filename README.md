@@ -40,6 +40,22 @@ accepts its browser-controlled originless Fetch Metadata combination. Set
 `DIDUNY_EXTENSION_ORIGIN` only when deploying a separately signed package with
 a different Chrome extension ID.
 
+## Release an installable extension
+
+```sh
+bun run release:extension
+```
+
+This command runs the full validation suite, then launches Chromium through
+Playwright with the built MV3 extension installed and active. Only after those
+checks pass does it create `.output/diduny-extension-<version>-chrome.zip` for
+the Chrome Web Store or a versioned GitHub release.
+
+For a local installation, open `chrome://extensions`, enable **Developer
+mode**, choose **Load unpacked**, and select `.output/chrome-mv3`. End users
+install the versioned package through the Chrome Web Store after it is
+published; Chrome does not support drag-installing a ZIP on macOS or Windows.
+
 ## Verification
 
 ```sh
