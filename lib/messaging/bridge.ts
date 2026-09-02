@@ -8,16 +8,20 @@ export function sendMessage(message: Message): Promise<void> {
 }
 
 export function onMessage(
-	handler: (message: Message, sender: chrome.runtime.MessageSender) => void,
+	handler: (
+		message: Message,
+		sender: chrome.runtime.MessageSender,
+	) => void | Promise<void>,
 ): () => void {
 	const listener = (
 		message: unknown,
 		sender: chrome.runtime.MessageSender,
 		sendResponse: () => void,
 	) => {
-		handler(message as Message, sender);
-		// Return false to indicate synchronous handling (no async response)
-		return false;
+		const result = handler(message as Message, sender);
+		if (!result) return false;
+		void result.finally(sendResponse);
+		return true;
 	};
 	chrome.runtime.onMessage.addListener(listener);
 	return () => chrome.runtime.onMessage.removeListener(listener);

@@ -32,16 +32,20 @@ import {
 import { isDeliveryEnabled } from "../lib/delivery/site-settings";
 import { onMessage, sendMessage } from "../lib/messaging/bridge";
 import type { DictationTranslation, Message } from "../lib/messaging/types";
+import {
+	type CaptureTerminalDecision,
+	createCaptureTerminalLifecycle,
+} from "../lib/recording/capture-terminal-lifecycle";
 import type { RecordingMode, RecordingState } from "../lib/types";
 import { INPUT_TIMING } from "../src/core/constants";
 
 export default defineBackground(() => {
 	let currentState: RecordingState = "idle";
-	const completedSources = new Set<"mic" | "tab">();
-	const finishedSources = new Set<"mic" | "tab">();
-	const persistedSources = new Set<"mic" | "tab">();
 	const KEEPALIVE_ALARM = "recording-keepalive";
 	const DELIVERY_SESSION_STORAGE_KEY = "didunyDeliverySession";
+	const captureLifecycle = createCaptureTerminalLifecycle(
+		chrome.storage.session,
+	);
 	let deliverySession: DeliverySession | undefined;
 	let commandPress: CommandPress | undefined;
 	let commandPressTimer: ReturnType<typeof setTimeout> | undefined;
@@ -96,11 +100,15 @@ export default defineBackground(() => {
 		}
 	});
 
-	// Recover state on SW restart: if offscreen doc exists, we were recording
-	chrome.offscreen
-		.hasDocument()
-		.then((exists) => {
-			if (exists) {
+	// Recover state on SW restart from browser-owned session storage.
+	void captureLifecycle
+		.resume()
+		.then(async (terminal) => {
+			if (terminal?.shouldClose) {
+				await finishCapture(terminal);
+				return;
+			}
+			if (await chrome.offscreen.hasDocument()) {
 				currentState = "recording";
 				updateBadge("recording");
 			}
@@ -234,47 +242,29 @@ export default defineBackground(() => {
 				break;
 			}
 			case "capture-complete": {
-				if (completedSources.has(msg.source) || finishedSources.has(msg.source))
-					break;
-				completedSources.add(msg.source);
+				const completion = await captureLifecycle.captureComplete(msg.source);
+				if (!completion.accepted) break;
 				await deliverTranscript(msg.text);
 				await sendMessage({
 					type: "transcription-complete",
 					text: msg.text,
 					source: msg.source,
 				});
-				if (finishedSources.has(msg.source)) break;
-				if (persistedSources.has(msg.source)) {
-					completedSources.delete(msg.source);
-					persistedSources.delete(msg.source);
-					finishedSources.add(msg.source);
-				}
-				if (completedSources.size === 0 && persistedSources.size === 0) {
-					await closeOffscreen();
-					await setState("success");
-				}
+				await finishCapture(
+					await captureLifecycle.deliveryFinished(
+						completion.captureId,
+						msg.source,
+					),
+				);
 				break;
 			}
 			case "capture-persisted": {
-				if (persistedSources.has(msg.source) || finishedSources.has(msg.source))
-					break;
-				persistedSources.add(msg.source);
-				if (completedSources.has(msg.source)) {
-					completedSources.delete(msg.source);
-					persistedSources.delete(msg.source);
-					finishedSources.add(msg.source);
-				}
-				if (completedSources.size === 0 && persistedSources.size === 0) {
-					await closeOffscreen();
-					await setState("success");
-				}
+				await finishCapture(
+					await captureLifecycle.capturePersisted(msg.source),
+				);
 				break;
 			}
 			case "capture-error": {
-				for (const source of [...completedSources, ...persistedSources])
-					finishedSources.add(source);
-				completedSources.clear();
-				persistedSources.clear();
 				await clearDeliveryStatus();
 				await closeOffscreen();
 				await setState("error", msg.error);
@@ -315,9 +305,8 @@ export default defineBackground(() => {
 				await setState("error", "Not authenticated");
 				return;
 			}
-			completedSources.clear();
-			finishedSources.clear();
-			persistedSources.clear();
+			const capture = captureLifecycle.begin();
+			await capture.ready;
 			await clearDeliveryStatus();
 			const delivery =
 				mode !== "meeting" ? await prepareDeliveryTarget() : undefined;
@@ -643,5 +632,16 @@ export default defineBackground(() => {
 		if (existing) {
 			await chrome.offscreen.closeDocument();
 		}
+	}
+
+	async function finishCapture(decision: CaptureTerminalDecision) {
+		if (
+			!decision.shouldClose ||
+			!captureLifecycle.isCurrent(decision.captureId)
+		)
+			return;
+		await closeOffscreen();
+		if (captureLifecycle.isCurrent(decision.captureId))
+			await setState("success");
 	}
 });
