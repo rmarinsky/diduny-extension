@@ -469,6 +469,22 @@ test("saves a staged extension capture only once when duplicate uploads overlap"
 		join(tmpdir(), "diduny-extension-library-race-"),
 	);
 	const library = await LibraryStore.open({ dataDir });
+	const saveStream = library.saveStream.bind(library);
+	let saveStreamCalls = 0;
+	let markSaveStarted;
+	const saveStarted = new Promise((resolve) => {
+		markSaveStarted = resolve;
+	});
+	let releaseSave;
+	const saveReleased = new Promise((resolve) => {
+		releaseSave = resolve;
+	});
+	library.saveStream = async (...args) => {
+		saveStreamCalls += 1;
+		markSaveStarted();
+		await saveReleased;
+		return saveStream(...args);
+	};
 	const sessions = new InMemorySessionStore();
 	const sessionId = await sessions.create({ accessToken: "server-only" });
 	const server = await buildServer({ library, sessions });
@@ -490,19 +506,24 @@ test("saves a staged extension capture only once when duplicate uploads overlap"
 		});
 		expect(created.statusCode).toBe(201);
 
-		const uploads = await Promise.all(
-			Array.from({ length: 2 }, () =>
-				server.inject({
-					headers: { ...extensionHeaders, "content-type": "audio/webm" },
-					method: "PUT",
-					payload: "one-capture-upload",
-					url: `/bff/extension/library/${created.json().id}/media`,
-				}),
-			),
-		);
-		expect(
-			uploads.filter((response) => response.statusCode === 201),
-		).toHaveLength(1);
+		const uploadOptions = {
+			headers: { ...extensionHeaders, "content-type": "audio/webm" },
+			method: "PUT",
+			payload: "one-capture-upload",
+			url: `/bff/extension/library/${created.json().id}/media`,
+		};
+		const firstUpload = server.inject(uploadOptions);
+		await saveStarted;
+		const overlappingUpload = await server.inject(uploadOptions);
+		expect(overlappingUpload.statusCode).toBe(409);
+		expect(overlappingUpload.json()).toEqual({
+			error: "recording_upload_in_progress",
+		});
+
+		releaseSave();
+		const firstUploadResult = await firstUpload;
+		expect(firstUploadResult.statusCode).toBe(201);
+		expect(saveStreamCalls).toBe(1);
 
 		const recordings = await server.inject({
 			headers: { cookie: `diduny_session=${sessionId}` },
@@ -511,6 +532,7 @@ test("saves a staged extension capture only once when duplicate uploads overlap"
 		});
 		expect(recordings.json().items).toHaveLength(1);
 	} finally {
+		releaseSave();
 		await server.close();
 		await library.close();
 		await rm(dataDir, { force: true, recursive: true });
