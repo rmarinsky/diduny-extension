@@ -31,12 +31,30 @@ test("retries an interrupted-start error until the background acknowledges it", 
 	expect(attempts).toBe(3);
 });
 
-test("acknowledges an async message only after its handler finishes", async () => {
+test("terminal sender waits for durable handler work before accepting its ACK", async () => {
 	let listener!: Parameters<typeof chrome.runtime.onMessage.addListener>[0];
+	let finishHandler!: (handled: boolean) => void;
+	let markHandlerStarted!: () => void;
+	let responseSent = false;
+	let deliveryFinished = false;
+	const handlerStarted = new Promise<void>((resolve) => {
+		markHandlerStarted = resolve;
+	});
+	const handlerFinished = new Promise<boolean>((resolve) => {
+		finishHandler = resolve;
+	});
 	Object.defineProperty(globalThis, "chrome", {
 		configurable: true,
 		value: {
 			runtime: {
+				sendMessage(message: unknown) {
+					return new Promise((resolve) => {
+						listener(message, {}, (response) => {
+							responseSent = true;
+							resolve(response);
+						});
+					});
+				},
 				onMessage: {
 					addListener(value: typeof listener) {
 						listener = value;
@@ -46,10 +64,26 @@ test("acknowledges an async message only after its handler finishes", async () =
 			},
 		},
 	});
-	onMessage(async () => true);
+	onMessage(async () => {
+		markHandlerStarted();
+		return handlerFinished;
+	});
 
-	const response = new Promise((resolve) =>
-		listener({ type: "capture-persisted" }, {}, resolve),
+	const delivery = sendMessageUntilAcknowledged(
+		{ error: "Could not start microphone capture", type: "capture-error" },
+		0,
 	);
-	expect(await response).toEqual({ acknowledged: true });
+	void delivery.then(() => {
+		deliveryFinished = true;
+	});
+
+	await handlerStarted;
+	await Promise.resolve();
+	expect(responseSent).toBeFalse();
+	expect(deliveryFinished).toBeFalse();
+
+	finishHandler(true);
+	await delivery;
+	expect(responseSent).toBeTrue();
+	expect(deliveryFinished).toBeTrue();
 });
