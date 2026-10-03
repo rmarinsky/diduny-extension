@@ -6,10 +6,16 @@
  *
  * Auth state is derived by asking the SW for the current session on mount.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { crashLog } from "../../../lib/crash-log";
+import { onMessage } from "../../../lib/messaging/bridge";
 
 type AuthStep = "unauthenticated" | "authenticated";
+
+export const SESSION_ENDED_MESSAGE =
+	"Your Diduny session has ended. Sign in again in the Diduny web app, then press 'I signed in'.";
+export const NO_SESSION_MESSAGE =
+	"No Diduny session found. Sign in in the Diduny web app first, then press 'I signed in'.";
 
 interface AuthUser {
 	email: string;
@@ -32,6 +38,8 @@ export function useAuth() {
 	const [user, setUser] = useState<AuthUser | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const stepRef = useRef(step);
+	stepRef.current = step;
 
 	// Check the BFF-owned session on mount.
 	useEffect(() => {
@@ -50,6 +58,39 @@ export function useAuth() {
 			.finally(() => setLoading(false));
 	}, []);
 
+	// Signing out on the web ends this session too; return to the sign-in view
+	// when a start finds no session, or when the panel is looked at again.
+	useEffect(() => {
+		const endSession = () => {
+			setUser(null);
+			setStep("unauthenticated");
+			setError(SESSION_ENDED_MESSAGE);
+		};
+		const recheck = () => {
+			if (
+				document.visibilityState !== "visible" ||
+				stepRef.current !== "authenticated"
+			)
+				return;
+			sendToBackground<{ authenticated: boolean }>({ type: "getBffSession" })
+				.then((res) => {
+					if (!res.authenticated && stepRef.current === "authenticated")
+						endSession();
+				})
+				.catch(() => {});
+		};
+		const stopListening = onMessage((msg) => {
+			if (msg.type === "session-ended") endSession();
+		});
+		window.addEventListener("focus", recheck);
+		document.addEventListener("visibilitychange", recheck);
+		return () => {
+			stopListening();
+			window.removeEventListener("focus", recheck);
+			document.removeEventListener("visibilitychange", recheck);
+		};
+	}, []);
+
 	const refresh = useCallback(async () => {
 		setLoading(true);
 		setError(null);
@@ -63,6 +104,7 @@ export function useAuth() {
 				setStep("authenticated");
 			} else {
 				setStep("unauthenticated");
+				setError(NO_SESSION_MESSAGE);
 			}
 		} catch (err) {
 			crashLog(

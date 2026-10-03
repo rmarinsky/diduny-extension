@@ -1,14 +1,18 @@
-export const DEFAULT_DICTATION_SHORTCUT = "Alt+Shift+D";
+export const DEFAULT_DICTATION_SHORTCUT = "Alt+Shift+V";
 
 export interface ShortcutEvent {
 	altKey: boolean;
+	/** Physical key, e.g. "KeyD"; macOS Option rewrites `key` (Option+D is "∂"). */
+	code?: string;
 	ctrlKey: boolean;
 	key: string;
 	metaKey: boolean;
 	shiftKey: boolean;
 }
 
-const modifierNames = ["Ctrl", "Alt", "Shift", "Meta"] as const;
+export const shortcutModifiers = ["Ctrl", "Alt", "Shift", "Meta"] as const;
+export type ShortcutModifier = (typeof shortcutModifiers)[number];
+const modifierNames = shortcutModifiers;
 const reservedShortcuts = new Set([
 	"Ctrl+L",
 	"Ctrl+R",
@@ -28,6 +32,23 @@ function keyName(value: string) {
 	if (/^[a-z0-9]$/i.test(key)) return key.toUpperCase();
 	if (/^f(?:[1-9]|1[0-2])$/i.test(key)) return key.toUpperCase();
 	return key.toLowerCase() === "space" ? "Space" : null;
+}
+
+function keyNameFromCode(code: string | undefined) {
+	if (!code) return null;
+	const match = /^(?:Key([A-Z])|Digit([0-9])|(F(?:[1-9]|1[0-2])))$/.exec(code);
+	if (match) return match[1] ?? match[2] ?? match[3] ?? null;
+	return code === "Space" ? "Space" : null;
+}
+
+/**
+ * The shortcut key an event produced. The printed key wins (AZERTY "A" is code
+ * KeyQ); the physical key covers macOS Option ("∂") and Cyrillic layouts ("в").
+ */
+export function shortcutKeyFromEvent(
+	event: Pick<ShortcutEvent, "code" | "key">,
+) {
+	return keyName(event.key) ?? keyNameFromCode(event.code);
 }
 
 export function normalizeShortcut(value: unknown): string | null {
@@ -60,12 +81,20 @@ export function isReservedShortcut(value: string) {
 	return shortcut !== null && reservedShortcuts.has(shortcut);
 }
 
+/** Ctrl, Alt, and Meta chords type nothing, so they may fire while a text field has focus. */
+export function firesInTextFields(value: string) {
+	const shortcut = normalizeShortcut(value);
+	if (!shortcut) return false;
+	const modifiers = shortcut.split("+").slice(0, -1);
+	return ["Ctrl", "Alt", "Meta"].some((name) => modifiers.includes(name));
+}
+
 export function matchesShortcut(event: ShortcutEvent, shortcut: string) {
 	const normalized = normalizeShortcut(shortcut);
 	if (!normalized) return false;
 	const parts = normalized.split("+");
 	const key = parts.at(-1);
-	if (!key || keyName(event.key) !== key) return false;
+	if (!key || shortcutKeyFromEvent(event) !== key) return false;
 	return (
 		event.ctrlKey === parts.includes("Ctrl") &&
 		event.altKey === parts.includes("Alt") &&

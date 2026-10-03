@@ -1,6 +1,6 @@
 {
 	"name": "diduny-extension",
-	"version": "0.1.1",
+	"version": "1.0.0",
 	"private": true,
 	"type": "module",
 	"scripts": {
@@ -14,7 +14,9 @@
 		"build:web": "vite build --config web/vite.config.ts",
 		"zip": "wxt zip",
 		"test": "bun test ./tests ./lib ./web/src",
-		"test:e2e:extension": "bun run build && playwright test",
+		"test:e2e:extension": "bun run build && playwright test --project=e2e",
+		"test:e2e:charters": "bun run build && playwright test --project=charters",
+		"test:e2e:os": "bun run build && playwright test --project=os-input",
 		"check:core": "bun scripts/check-core-boundary.ts",
 		"check:build-security": "bun scripts/check-build-security.ts",
 		"typecheck": "wxt prepare && tsc --noEmit",

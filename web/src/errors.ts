@@ -22,7 +22,7 @@ function errorCode(value: unknown) {
 export function errorFromResponse(status: number, body: unknown) {
 	const code = errorCode(body);
 	if (status === 401 || code === "unauthenticated")
-		return new DidunyError("authentication_failed", { status });
+		return new DidunyError("authentication_failed", { body, status });
 	if (status === 402) {
 		const fields = body && typeof body === "object" ? body : {};
 		return new DidunyError("quota_exhausted", {
@@ -34,6 +34,23 @@ export function errorFromResponse(status: number, body: unknown) {
 	if (status === 502 && code === "upstream_unreachable")
 		return new DidunyError("proxy_unreachable", { status });
 	return new DidunyError("request_rejected", { body, status });
+}
+
+export function isInvalidEmailError(error: unknown) {
+	return (
+		isDidunyError(error) &&
+		error.details.status === 400 &&
+		errorCode(error.details.body) === "invalid_email"
+	);
+}
+
+/** The sign-in service refused the code: wrong, expired, or already used. */
+export function isIncorrectOtpError(error: unknown) {
+	return (
+		isDidunyError(error) &&
+		error.details.status === 401 &&
+		errorCode(error.details.body) === "otp_verification_failed"
+	);
 }
 
 export function localProcessUnavailable(error: unknown) {
@@ -66,4 +83,17 @@ export function userErrorMessage(error: unknown, t: Translate) {
 	if (code === "remote_acquisition_unavailable_on_web")
 		return t("errors.remoteAcquisitionUnavailableOnWeb");
 	return t("errors.requestRejected");
+}
+
+/** Paste-in translation failures, worded for the paste panel. */
+export function pastedTranslationErrorMessage(error: unknown, t: Translate) {
+	const code = typedCode(error);
+	if (code === "empty_result") return t("status.translationNoText");
+	if (
+		code === undefined ||
+		code === "local_process_unreachable" ||
+		code === "request_rejected"
+	)
+		return t("status.couldNotTranslate");
+	return userErrorMessage(error, t);
 }

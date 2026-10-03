@@ -100,6 +100,14 @@ export function installDeliveryBridge(): DeliveryPreparation {
 		return nested ? editableNode(nested) : null;
 	}
 
+	/** Only the focused editor counts, never some other box elsewhere on the page. */
+	function holdsFocus(target: ContentEditable, focused: Element) {
+		const node = target as ContentEditable & {
+			contains?: (other: Element) => boolean;
+		};
+		return target === focused || node.contains?.(focused) === true;
+	}
+
 	function supportedEditorTarget(
 		element: Element | null,
 	): { editor: EditorAdapter; target: ContentEditable } | null {
@@ -116,12 +124,14 @@ export function installDeliveryBridge(): DeliveryPreparation {
 			["quill", '.ql-editor[contenteditable="true"]'],
 		] as const) {
 			const target = editableNode(candidate.closest?.(selector) ?? null);
-			if (target) return { editor, target };
+			if (target && holdsFocus(target, element)) return { editor, target };
 		}
 		const target = editableNode(
 			candidate.closest?.('[contenteditable="true"]') ?? candidate,
 		);
-		return target ? { editor: "contenteditable", target } : null;
+		return target && holdsFocus(target, element)
+			? { editor: "contenteditable", target }
+			: null;
 	}
 
 	function isCanvasEditor(element: Element | null) {
@@ -253,10 +263,18 @@ export function installDeliveryBridge(): DeliveryPreparation {
 	): DeliveryResult {
 		if (!target.isConnected)
 			return { inserted: false, reason: "target-unavailable" };
+		const selection = document.getSelection?.();
+		// Text typed while recording moved the caret; the range saved at Start would land before it.
+		// Read it before focus(), which can move the caret.
+		const current =
+			selection &&
+			selection.rangeCount > 0 &&
+			target.contains(selection.anchorNode)
+				? selection.getRangeAt(0).cloneRange()
+				: undefined;
 		target.focus?.();
 		if (!dispatchBeforeInput(target, text)) return { inserted: true };
-		const selection = document.getSelection?.();
-		let insertionRange = range;
+		let insertionRange = current ?? range;
 		if (!insertionRange || !target.contains(insertionRange.startContainer)) {
 			insertionRange = document.createRange();
 			insertionRange.selectNodeContents(target);
@@ -289,16 +307,34 @@ export function installDeliveryBridge(): DeliveryPreparation {
 		if (!target || !target.isConnected) {
 			return { inserted: false, reason: "target-unavailable" };
 		}
-		if (!isTextControl(target))
+		if (!isTextControl(target)) {
+			// A field that turned disabled or read-only since Start is no longer
+			// one to type into; the contenteditable path would claim success.
+			if (target.tagName === "TEXTAREA" || target.tagName === "INPUT")
+				return { inserted: false, reason: "target-unavailable" };
 			return insertContentEditable(target, text, currentState.range);
+		}
 
 		const value = target.value;
-		const selectionStart = Math.min(
-			Math.max(currentState.selectionStart, 0),
-			value.length,
-		);
+		// A field keeps its selection while unfocused, so text typed during the
+		// recording stays before the result. The caret saved at Start is only a
+		// fallback for controls without a selection API, such as email inputs.
+		let caretStart = currentState.selectionStart;
+		let caretEnd = currentState.selectionEnd;
+		try {
+			if (
+				typeof target.selectionStart === "number" &&
+				typeof target.selectionEnd === "number"
+			) {
+				caretStart = target.selectionStart;
+				caretEnd = target.selectionEnd;
+			}
+		} catch {
+			// No selection API on this control.
+		}
+		const selectionStart = Math.min(Math.max(caretStart, 0), value.length);
 		const selectionEnd = Math.min(
-			Math.max(currentState.selectionEnd, selectionStart),
+			Math.max(caretEnd, selectionStart),
 			value.length,
 		);
 		const nextValue = `${value.slice(0, selectionStart)}${text}${value.slice(selectionEnd)}`;

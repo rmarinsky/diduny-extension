@@ -8,21 +8,34 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { isValidEmail, isValidOtp } from "../../src/core/auth-validation";
-import { AUDIO_FORMAT, WEB_LATENCY_TARGET_MS } from "../../src/core/constants";
-import type { RetentionPolicy } from "../../src/core/ports";
+import {
+	isValidEmail,
+	isValidOtp,
+	normalizeEmail,
+	normalizeOtp,
+} from "../../src/core/auth-validation";
+import {
+	AUDIO_FORMAT,
+	TRANSCRIPTION_UPLOAD_TIMEOUT,
+	WEB_LATENCY_TARGET_MS,
+} from "../../src/core/constants";
 import type { RealtimeToken } from "../../src/core/realtime-session";
+import { DEFAULT_SETTINGS } from "../../src/core/settings";
 import { createSpeechPreCheckAccumulator } from "../../src/core/speech-precheck";
 import { CommandPalette } from "./CommandPalette";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { LibraryPane } from "./LibraryPane";
 import {
-	Onboarding,
+	AboutDelivery,
+	StartPage,
 	onboardingCompletedStorageKey,
-	pendingRetentionStorageKey,
 } from "./Onboarding";
 import { SettingsPane } from "./SettingsPane";
+import { AppBar, ThemeToggle } from "./ThemeToggle";
+import { TranslationLanguages } from "./TranslationLanguages";
 import {
 	audioCaptureConstraints,
+	microphoneStartFailureKey,
 	savedMicrophoneUnavailable,
 } from "./audio-devices";
 import {
@@ -32,19 +45,31 @@ import {
 import { createPcmCapture } from "./capture";
 import {
 	DEFAULT_SHORTCUT,
+	EXTENSION_DICTATION_EVENT,
 	appendTranscript,
+	firesInTextFields,
 	isEditableTarget,
 	matchesCommandPaletteShortcut,
 	matchesDictationShortcut,
 } from "./dictation";
 import {
 	errorFromResponse,
+	isIncorrectOtpError,
+	isInvalidEmailError,
 	localProcessUnavailable,
+	pastedTranslationErrorMessage,
 	userErrorMessage,
 } from "./errors";
-import i18n, { setUiLocale } from "./i18n";
+import i18n, { setUiLocale, supportedUiLocales } from "./i18n";
 import { createWorkspaceInvalidationBus } from "./invalidation";
+import { dictationLanguages, ownLanguageName } from "./languages";
 import { saveToLibrary } from "./library";
+import {
+	type PendingChoices,
+	parsePendingChoices,
+	pendingChoicesStorageKey,
+	pendingSettingsChanges,
+} from "./onboarding-choices";
 import {
 	copyDocumentStyles,
 	documentPictureInPictureApi,
@@ -57,9 +82,20 @@ import {
 	type ScratchStorage,
 	createScratchStorage,
 } from "./scratch-storage";
-import { getWorkspaceSettings, updateRetentionPolicy } from "./settings";
+import {
+	getWorkspaceSettings,
+	updateRetentionPolicy,
+	updateWorkspaceSettings,
+} from "./settings";
+import {
+	displayShortcut,
+	parseShortcut,
+	shortcutPlatform,
+} from "./shortcut-editor";
+import type { TranslationPair } from "./translation";
 import {
 	buildTranscriptionConfig,
+	translationChunks,
 	translationResultText,
 	translationUrl,
 } from "./translation";
@@ -67,7 +103,7 @@ import "./style.css";
 
 type AuthState = "checking" | "otp-sent" | "signed-in" | "signed-out";
 type CaptureState = "idle" | "recording" | "sending";
-type WorkspaceView = "dictation" | "library" | "settings";
+type WorkspaceView = "about" | "dictation" | "library" | "settings";
 
 interface ActiveCapture {
 	audioContext: AudioContext;
@@ -127,6 +163,40 @@ function realtimeResultWithinBudget(result: Promise<string>) {
 			},
 		);
 	});
+}
+
+const draftStorageKey = "diduny.dictation.document";
+
+/** The document survives a reload and Back/Forward in this tab. */
+function readDraft() {
+	try {
+		return sessionStorage.getItem(draftStorageKey) ?? "";
+	} catch {
+		return "";
+	}
+}
+
+function saveDraft(text: string) {
+	try {
+		if (text) sessionStorage.setItem(draftStorageKey, text);
+		else sessionStorage.removeItem(draftStorageKey);
+	} catch {
+		// Storage can be unavailable (private mode, quota); the document stays in memory.
+	}
+}
+
+/** Each view has a history entry, so browser Back and Forward move between views. */
+function viewFromLocation(): WorkspaceView {
+	const view = window.location.hash.replace(/^#/, "");
+	return view === "about" || view === "library" || view === "settings"
+		? view
+		: "dictation";
+}
+
+function viewUrl(view: WorkspaceView) {
+	return view === "dictation"
+		? `${window.location.pathname}${window.location.search}`
+		: `#${view}`;
 }
 
 function releaseCapture(capture: ActiveCapture) {
@@ -197,11 +267,13 @@ export function App() {
 	const [authState, setAuthState] = useState<AuthState>("checking");
 	const [announceLiveTranscript, setAnnounceLiveTranscript] = useState(false);
 	const [captureState, setCaptureState] = useState<CaptureState>("idle");
-	const [documentText, setDocumentText] = useState("");
+	const [confirmingSignOut, setConfirmingSignOut] = useState(false);
+	const [documentText, setDocumentText] = useState(readDraft);
 	const [dictationShortcut, setDictationShortcut] = useState(DEFAULT_SHORTCUT);
 	const [email, setEmail] = useState("");
+	const [emailError, setEmailError] = useState("");
 	const [elapsed, setElapsed] = useState(0);
-	const [language, setLanguage] = useState("uk");
+	const [holding, setHolding] = useState(false);
 	const [level, setLevel] = useState(0);
 	const [liveFinalText, setLiveFinalText] = useState("");
 	const [liveProvisionalText, setLiveProvisionalText] = useState("");
@@ -215,7 +287,17 @@ export function App() {
 		() => localStorage.getItem(onboardingCompletedStorageKey) !== "1",
 	);
 	const [otp, setOtp] = useState("");
+	const [otpError, setOtpError] = useState("");
+	const [pasteMessage, setPasteMessage] = useState<{
+		failed: boolean;
+		text: string;
+	} | null>(null);
+	const [pasteOpen, setPasteOpen] = useState(false);
+	const [settingsLoaded, setSettingsLoaded] = useState(false);
 	const [signedInEmail, setSignedInEmail] = useState("");
+	const [speechLanguageHints, setSpeechLanguageHints] = useState<
+		readonly string[]
+	>(DEFAULT_SETTINGS.speechLanguageHints);
 	const [status, setStatus] = useState(() => t("app.checkingSession"));
 	const [translationMode, setTranslationMode] = useState(false);
 	const [translationResult, setTranslationResult] = useState("");
@@ -224,13 +306,22 @@ export function App() {
 	const [translationTargetLanguage, setTranslationTargetLanguage] =
 		useState("en");
 	const [translationText, setTranslationText] = useState("");
-	const [view, setView] = useState<WorkspaceView>("dictation");
+	const [translating, setTranslating] = useState(false);
+	const [uploading, setUploading] = useState(false);
+	const [view, setView] = useState<WorkspaceView>(viewFromLocation);
 	const [workspaceRevision, setWorkspaceRevision] = useState(0);
+	const busyRef = useRef(false);
 	const captureRef = useRef<ActiveCapture | null>(null);
+	const controlsRef = useRef<HTMLDivElement>(null);
 	const documentInput = useRef<HTMLTextAreaElement>(null);
+	const emailInput = useRef<HTMLInputElement>(null);
+	const focusEmailAfterSignOut = useRef(false);
+	const pasteRequest = useRef(0);
+	const uploadRef = useRef<AbortController | null>(null);
 	const holdCaptureRef = useRef(false);
-	const onboardingReturnFocus = useRef<HTMLButtonElement>(null);
+	const aboutReturnFocus = useRef<HTMLButtonElement>(null);
 	const paletteReturnFocus = useRef<HTMLElement | null>(null);
+	const signOutReturnFocus = useRef<HTMLButtonElement>(null);
 	const pictureInPictureWindow = useRef<Window | null>(null);
 	const recordingLockReleaseRef = useRef<(() => void) | null>(null);
 	const recoveryAttemptedRef = useRef(false);
@@ -336,6 +427,31 @@ export function App() {
 		return () => document.removeEventListener("visibilitychange", flushScratch);
 	}, []);
 
+	useEffect(() => saveDraft(documentText), [documentText]);
+
+	useEffect(() => {
+		busyRef.current = captureState !== "idle";
+	}, [captureState]);
+
+	useEffect(() => {
+		const onPopState = () => {
+			// Switching views while recording or transcribing would hide it, as the nav buttons do; stay on Dictation.
+			if (busyRef.current) {
+				window.history.pushState(null, "", viewUrl("dictation"));
+				return;
+			}
+			setView(viewFromLocation());
+		};
+		window.addEventListener("popstate", onPopState);
+		return () => window.removeEventListener("popstate", onPopState);
+	}, []);
+
+	useEffect(() => {
+		if (authState !== "signed-out" || !focusEmailAfterSignOut.current) return;
+		focusEmailAfterSignOut.current = false;
+		emailInput.current?.focus();
+	}, [authState]);
+
 	const refreshSession = useCallback(async () => {
 		try {
 			const session = await bffJson<SessionResponse>("/bff/auth/session");
@@ -381,15 +497,29 @@ export function App() {
 
 	useEffect(() => {
 		if (authState !== "signed-in") return;
-		const policy = localStorage.getItem(pendingRetentionStorageKey);
-		if (policy !== "never") return;
-		void updateRetentionPolicy("dictation", "never")
+		const pending = parsePendingChoices(
+			localStorage.getItem(pendingChoicesStorageKey),
+		);
+		if (Object.keys(pending).length === 0) return;
+		void getWorkspaceSettings()
+			.then(({ retention: current }) => {
+				const { retention, settings } = pendingSettingsChanges(
+					pending,
+					current.dictation,
+				);
+				return Promise.all([
+					retention ? updateRetentionPolicy("dictation", retention) : undefined,
+					Object.keys(settings).length > 0
+						? updateWorkspaceSettings(settings)
+						: undefined,
+				]);
+			})
 			.then(() => {
-				localStorage.removeItem(pendingRetentionStorageKey);
+				localStorage.removeItem(pendingChoicesStorageKey);
 				invalidateWorkspace();
 			})
 			.catch(() => {
-				// Keep the preference for the next authenticated session.
+				// Keep the choices for the next authenticated session.
 			});
 	}, [authState, invalidateWorkspace]);
 
@@ -405,10 +535,23 @@ export function App() {
 
 	useEffect(() => {
 		void workspaceRevision;
+		// "Ready to dictate." was set before the saved interface language arrived; say it again in that language.
+		const retranslateIdleStatus = () =>
+			setStatus((current) => {
+				for (const key of ["status.ready", "status.signIn"]) {
+					const spoken = supportedUiLocales.some(
+						(locale) => i18n.t(key, { lng: locale }) === current,
+					);
+					if (spoken) return i18n.t(key);
+				}
+				return current;
+			});
 		if (authState !== "signed-in") {
+			setSettingsLoaded(false);
 			setAnnounceLiveTranscript(false);
 			setDictationShortcut(DEFAULT_SHORTCUT);
 			setMicrophoneDeviceId(null);
+			setSpeechLanguageHints(DEFAULT_SETTINGS.speechLanguageHints);
 			setTranslationSourceLanguage("uk");
 			setTranslationTargetLanguage("en");
 			void setUiLocale("en");
@@ -419,23 +562,28 @@ export function App() {
 				setAnnounceLiveTranscript(settings.announceLiveTranscript);
 				setDictationShortcut(settings.dictationShortcut);
 				setMicrophoneDeviceId(settings.microphoneDeviceId);
+				setSpeechLanguageHints(settings.speechLanguageHints);
 				setTranslationSourceLanguage(settings.translationSourceLanguage);
 				setTranslationTargetLanguage(settings.translationTargetLanguage);
-				void setUiLocale(settings.uiLocale);
+				setSettingsLoaded(true);
+				void setUiLocale(settings.uiLocale).then(retranslateIdleStatus);
 			})
 			.catch(() => {
 				setAnnounceLiveTranscript(false);
 				setDictationShortcut(DEFAULT_SHORTCUT);
 				setMicrophoneDeviceId(null);
+				setSpeechLanguageHints(DEFAULT_SETTINGS.speechLanguageHints);
 				setTranslationSourceLanguage("uk");
 				setTranslationTargetLanguage("en");
-				void setUiLocale("en");
+				setSettingsLoaded(true);
+				void setUiLocale("en").then(retranslateIdleStatus);
 			});
 	}, [authState, workspaceRevision]);
 
 	const cancelCapture = useCallback(async () => {
 		holdCaptureRef.current = false;
 		stopHoldWhenReadyRef.current = false;
+		setHolding(false);
 		const capture = captureRef.current;
 		if (!capture) {
 			releaseRecordingLock();
@@ -464,6 +612,19 @@ export function App() {
 		const capture = captureRef.current;
 		if (!capture) return;
 		captureRef.current = null;
+		// Stop (or Hold) is disabled while transcribing, which would drop focus to the page; keep typing in the document.
+		const focused = document.activeElement;
+		const input = documentInput.current;
+		if (
+			input &&
+			(!focused ||
+				focused === document.body ||
+				controlsRef.current?.contains(focused))
+		) {
+			input.focus();
+			input.setSelectionRange(input.value.length, input.value.length);
+		}
+		let upload: AbortController | undefined;
 		setCaptureState("sending");
 		setStatus(t("status.transcribing"));
 		try {
@@ -506,10 +667,7 @@ export function App() {
 				);
 				const languageHints = translationMode
 					? [translationSourceLanguage]
-					: language
-							.split(",")
-							.map((value) => value.trim())
-							.filter(Boolean);
+					: speechLanguageHints;
 				form.append(
 					"config",
 					new Blob(
@@ -531,11 +689,28 @@ export function App() {
 						{ type: "text/plain" },
 					),
 				);
-				const result = await bffJson<TranscriptionResponse>(
-					"/bff/api/transcriptions",
-					{ body: form, method: "POST" },
+				// Without a time limit a request that never answers would leave every control disabled.
+				upload = new AbortController();
+				const activeUpload = upload;
+				uploadRef.current = activeUpload;
+				setUploading(true);
+				const timeout = window.setTimeout(
+					() => activeUpload.abort("timeout"),
+					TRANSCRIPTION_UPLOAD_TIMEOUT.baseMs +
+						recording.durationSeconds *
+							TRANSCRIPTION_UPLOAD_TIMEOUT.perRecordedSecondMs,
 				);
-				transcriptionText = result.text;
+				try {
+					const result = await bffJson<TranscriptionResponse>(
+						"/bff/api/transcriptions",
+						{ body: form, method: "POST", signal: activeUpload.signal },
+					);
+					transcriptionText = result.text;
+				} finally {
+					window.clearTimeout(timeout);
+					uploadRef.current = null;
+					setUploading(false);
+				}
 			}
 			if (!transcriptionText?.trim()) {
 				setStatus(t("status.noText"));
@@ -575,7 +750,16 @@ export function App() {
 					}
 				});
 		} catch (error) {
-			setStatus(userErrorMessage(error, t));
+			if (upload?.signal.reason === "cancel") {
+				await capture.scratch.discard().catch(() => undefined);
+				setStatus(t("status.transcriptionCancelled"));
+				return;
+			}
+			setStatus(
+				upload?.signal.reason === "timeout"
+					? t("status.transcriptionTimedOut")
+					: userErrorMessage(error, t),
+			);
 			queueMicrotask(() => statusElement.current?.focus());
 		} finally {
 			releaseCapture(capture);
@@ -583,6 +767,7 @@ export function App() {
 			closeFloatingPanel();
 			setCaptureState("idle");
 			setElapsed(0);
+			setHolding(false);
 			setLevel(0);
 			setLiveFinalText("");
 			setLiveProvisionalText("");
@@ -590,13 +775,18 @@ export function App() {
 	}, [
 		closeFloatingPanel,
 		invalidateWorkspace,
-		language,
 		releaseRecordingLock,
+		speechLanguageHints,
 		translationMode,
 		translationSourceLanguage,
 		translationTargetLanguage,
 		t,
 	]);
+
+	/** Escape or Cancel while the completed recording is being transcribed. */
+	const cancelTranscription = useCallback(() => {
+		uploadRef.current?.abort("cancel");
+	}, []);
 
 	const startCapture = useCallback(async () => {
 		if (captureRef.current || captureState === "sending") return;
@@ -609,6 +799,21 @@ export function App() {
 		let realtime: WebRealtimeSession | undefined;
 		let scratch: ScratchCapture | undefined;
 		let fallbackDeviceName: string | undefined;
+		// The browser's reason the microphone did not open, so the message can say what to do.
+		let microphoneError: unknown;
+		const openMicrophone = (deviceId: string | null) =>
+			navigator.mediaDevices
+				.getUserMedia({ audio: audioCaptureConstraints(deviceId) })
+				.then(
+					(opened) => {
+						microphoneError = undefined;
+						return opened;
+					},
+					(error: unknown) => {
+						microphoneError = error;
+						throw error;
+					},
+				);
 		try {
 			const release = await acquireRecordingLock();
 			if (!release) {
@@ -617,15 +822,11 @@ export function App() {
 			}
 			recordingLockReleaseRef.current = release;
 			try {
-				stream = await navigator.mediaDevices.getUserMedia({
-					audio: audioCaptureConstraints(microphoneDeviceId),
-				});
+				stream = await openMicrophone(microphoneDeviceId);
 			} catch (error) {
 				if (!microphoneDeviceId || !savedMicrophoneUnavailable(error))
 					throw error;
-				stream = await navigator.mediaDevices.getUserMedia({
-					audio: audioCaptureConstraints(null),
-				});
+				stream = await openMicrophone(null);
 				fallbackDeviceName =
 					stream.getAudioTracks()[0]?.label || "another available microphone";
 			}
@@ -637,10 +838,7 @@ export function App() {
 			let recoveryText = "";
 			const languageHints = translationMode
 				? [translationSourceLanguage]
-				: language
-						.split(",")
-						.map((value) => value.trim())
-						.filter(Boolean);
+				: speechLanguageHints;
 			realtime = startWebRealtime({
 				config: {
 					audio_format: AUDIO_FORMAT.wireFormat,
@@ -736,17 +934,25 @@ export function App() {
 			for (const track of stream?.getTracks() ?? []) track.stop();
 			void pipeline?.audioContext.close();
 			await scratch?.discard().catch(() => undefined);
+			holdCaptureRef.current = false;
 			stopHoldWhenReadyRef.current = false;
+			setHolding(false);
 			releaseRecordingLock();
-			setStatus(t("status.couldNotStartMicrophone"));
+			setStatus(
+				t(
+					microphoneError
+						? microphoneStartFailureKey(microphoneError)
+						: "status.couldNotStartMicrophone",
+				),
+			);
 		}
 	}, [
 		captureState,
 		finishCapture,
-		language,
 		microphoneDeviceId,
 		releaseRecordingLock,
 		scratchStorage,
+		speechLanguageHints,
 		translationMode,
 		translationSourceLanguage,
 		translationTargetLanguage,
@@ -754,7 +960,12 @@ export function App() {
 	]);
 
 	useEffect(() => {
+		const toggleFromShortcut = () => {
+			if (captureRef.current) void finishCapture();
+			else void startCapture();
+		};
 		const onShortcut = (event: KeyboardEvent) => {
+			if (confirmingSignOut) return;
 			if (event.key === "Escape" && isCommandPaletteOpen) {
 				event.preventDefault();
 				closeCommandPalette();
@@ -771,21 +982,39 @@ export function App() {
 				void cancelCapture();
 				return;
 			}
+			if (event.key === "Escape" && uploadRef.current) {
+				event.preventDefault();
+				cancelTranscription();
+				return;
+			}
 			if (
 				event.repeat ||
 				!matchesDictationShortcut(event, dictationShortcut) ||
-				isEditableTarget(event.target)
+				(isEditableTarget(event.target) &&
+					!firesInTextFields(dictationShortcut))
 			)
 				return;
 			event.preventDefault();
-			if (captureRef.current) void finishCapture();
-			else void startCapture();
+			toggleFromShortcut();
+		};
+		const onExtensionShortcut = () => {
+			if (confirmingSignOut || isCommandPaletteOpen) return;
+			toggleFromShortcut();
 		};
 		window.addEventListener("keydown", onShortcut);
-		return () => window.removeEventListener("keydown", onShortcut);
+		window.addEventListener(EXTENSION_DICTATION_EVENT, onExtensionShortcut);
+		return () => {
+			window.removeEventListener("keydown", onShortcut);
+			window.removeEventListener(
+				EXTENSION_DICTATION_EVENT,
+				onExtensionShortcut,
+			);
+		};
 	}, [
 		cancelCapture,
+		cancelTranscription,
 		closeCommandPalette,
+		confirmingSignOut,
 		dictationShortcut,
 		finishCapture,
 		isCommandPaletteOpen,
@@ -801,12 +1030,14 @@ export function App() {
 		if (event.button !== 0 || captureRef.current || captureState !== "idle")
 			return;
 		holdCaptureRef.current = true;
+		setHolding(true);
 		void startCapture();
 	}
 
 	const stopHoldCapture = useCallback(() => {
 		if (!holdCaptureRef.current) return;
 		holdCaptureRef.current = false;
+		setHolding(false);
 		if (captureRef.current) {
 			void finishCapture();
 		} else {
@@ -830,53 +1061,151 @@ export function App() {
 		[cancelCapture],
 	);
 
+	function clearSignInFields() {
+		setEmail("");
+		setEmailError("");
+		setOtp("");
+		setOtpError("");
+	}
+
 	async function sendOtp(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		if (!isValidEmail(email)) {
-			setStatus(t("errors.requestRejected"));
+		const address = normalizeEmail(email);
+		if (!isValidEmail(address)) {
+			setEmailError(t("auth.invalidEmail"));
+			setStatus("");
 			return;
 		}
+		setEmail(address);
+		setEmailError("");
 		setStatus(t("auth.sendingCode"));
 		try {
 			await bffJson("/bff/auth/send-otp", {
-				body: JSON.stringify({ email }),
+				body: JSON.stringify({ email: address }),
 				headers: { "content-type": "application/json" },
 				method: "POST",
 			});
+			setOtp("");
+			setOtpError("");
 			setAuthState("otp-sent");
 			setStatus(t("auth.checkInbox"));
 		} catch (error) {
+			if (isInvalidEmailError(error)) {
+				setEmailError(t("auth.invalidEmail"));
+				setStatus("");
+				return;
+			}
 			setStatus(userErrorMessage(error, t));
 		}
 	}
 
 	async function verifyOtp(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		if (!isValidEmail(email) || !isValidOtp(otp)) {
+		const code = normalizeOtp(otp);
+		if (!isValidOtp(code)) {
+			setOtpError(t("auth.invalidCode"));
+			setStatus("");
+			return;
+		}
+		setOtp(code);
+		setOtpError("");
+		if (!isValidEmail(email)) {
 			setStatus(t("errors.requestRejected"));
 			return;
 		}
 		setStatus(t("auth.signingIn"));
 		try {
 			await bffJson("/bff/auth/verify-otp", {
-				body: JSON.stringify({ email, otp }),
+				body: JSON.stringify({ email, otp: code }),
 				headers: { "content-type": "application/json" },
 				method: "POST",
 			});
+			clearSignInFields();
 			await refreshSession();
 		} catch (error) {
+			if (isIncorrectOtpError(error)) {
+				setOtpError(t("auth.incorrectCode"));
+				setStatus("");
+				return;
+			}
 			setStatus(userErrorMessage(error, t));
 		}
 	}
 
+	function chooseAnotherEmail() {
+		clearSignInFields();
+		setAuthState("signed-out");
+		setStatus(t("status.signIn"));
+	}
+
 	async function signOut() {
+		setConfirmingSignOut(false);
 		await fetch("/bff/auth/logout", {
 			credentials: "same-origin",
 			method: "POST",
 		});
+		clearSignInFields();
+		window.history.replaceState(null, "", viewUrl("dictation"));
+		setView("dictation");
+		focusEmailAfterSignOut.current = true;
 		setAuthState("signed-out");
 		setSignedInEmail("");
 		setStatus(t("auth.signedOut"));
+	}
+
+	function showView(next: WorkspaceView) {
+		if (next === view) return;
+		window.history.pushState(null, "", viewUrl(next));
+		setView(next);
+	}
+
+	function cancelSignOut() {
+		setConfirmingSignOut(false);
+		queueMicrotask(() => signOutReturnFocus.current?.focus());
+	}
+
+	function closeAboutDelivery() {
+		showView("dictation");
+		queueMicrotask(() => aboutReturnFocus.current?.focus());
+	}
+
+	async function changeTranslationLanguages(pair: TranslationPair) {
+		const previous = {
+			sourceLanguage: translationSourceLanguage,
+			targetLanguage: translationTargetLanguage,
+		};
+		setTranslationSourceLanguage(pair.sourceLanguage);
+		setTranslationTargetLanguage(pair.targetLanguage);
+		try {
+			const settings = await updateWorkspaceSettings({
+				translationSourceLanguage: pair.sourceLanguage,
+				translationTargetLanguage: pair.targetLanguage,
+			});
+			setTranslationSourceLanguage(settings.translationSourceLanguage);
+			setTranslationTargetLanguage(settings.translationTargetLanguage);
+			broadcastWorkspaceChange();
+		} catch (error) {
+			setTranslationSourceLanguage(previous.sourceLanguage);
+			setTranslationTargetLanguage(previous.targetLanguage);
+			setStatus(userErrorMessage(error, t));
+		}
+	}
+
+	async function toggleLanguageHint(code: string, checked: boolean) {
+		const previous = speechLanguageHints;
+		const others = previous.filter((language) => language !== code);
+		const next = checked ? [...others, code] : others;
+		setSpeechLanguageHints(next);
+		try {
+			const settings = await updateWorkspaceSettings({
+				speechLanguageHints: next,
+			});
+			setSpeechLanguageHints(settings.speechLanguageHints);
+			broadcastWorkspaceChange();
+		} catch (error) {
+			setSpeechLanguageHints(previous);
+			setStatus(userErrorMessage(error, t));
+		}
 	}
 
 	async function copyDocument() {
@@ -888,36 +1217,55 @@ export function App() {
 		}
 	}
 
+	function clearDocument() {
+		const input = documentInput.current;
+		input?.focus();
+		input?.select();
+		// Deleting through the browser's editing command keeps its undo history, so Ctrl+Z brings the text back.
+		if (!input || !document.execCommand("delete")) setDocumentText("");
+		setStatus(t("status.documentCleared"));
+	}
+
 	async function translatePastedText() {
 		if (!translationText.trim()) {
-			setStatus(t("status.pasteBeforeTranslate"));
+			setPasteMessage({ failed: true, text: t("status.pasteBeforeTranslate") });
 			return;
 		}
-		setStatus(t("status.translatingPasted"));
+		const request = ++pasteRequest.current;
+		const pair = {
+			sourceLanguage: translationSourceLanguage,
+			targetLanguage: translationTargetLanguage,
+		};
+		// The old result must not pass for the translation of the new text.
+		setTranslationResult("");
+		setTranslating(true);
+		setPasteMessage({ failed: false, text: t("status.translatingPasted") });
 		try {
-			const result = await bffJson<unknown>(
-				translationUrl(translationText, {
-					sourceLanguage: translationSourceLanguage,
-					targetLanguage: translationTargetLanguage,
-				}),
-			);
-			const text = translationResultText(result);
-			if (!text) {
-				setStatus(t("status.translationNoText"));
-				return;
+			// Long text goes in parts: each request carries its text in the URL.
+			let translated = "";
+			for (const chunk of translationChunks(translationText)) {
+				const result = await bffJson<unknown>(translationUrl(chunk.text, pair));
+				if (request !== pasteRequest.current) return;
+				translated += translationResultText(result) + chunk.gap;
 			}
-			setTranslationResult(text);
-			setStatus(t("status.pastedTranslated"));
+			setTranslationResult(translated.trim());
+			setPasteMessage({ failed: false, text: t("status.pastedTranslated") });
 		} catch (error) {
-			setStatus(userErrorMessage(error, t));
+			if (request !== pasteRequest.current) return;
+			setPasteMessage({
+				failed: true,
+				text: pastedTranslationErrorMessage(error, t),
+			});
+		} finally {
+			if (request === pasteRequest.current) setTranslating(false);
 		}
 	}
 
-	function completeOnboarding(retention: RetentionPolicy) {
+	function completeOnboarding(choices: PendingChoices) {
 		localStorage.setItem(onboardingCompletedStorageKey, "1");
-		if (retention === "never")
-			localStorage.setItem(pendingRetentionStorageKey, retention);
-		else localStorage.removeItem(pendingRetentionStorageKey);
+		if (Object.keys(choices).length > 0)
+			localStorage.setItem(pendingChoicesStorageKey, JSON.stringify(choices));
+		else localStorage.removeItem(pendingChoicesStorageKey);
 		setOnboardingOpen(false);
 	}
 
@@ -927,66 +1275,121 @@ export function App() {
 
 	if (onboardingOpen && authState !== "signed-in") {
 		return (
-			<Onboarding initialStep="microphone" onComplete={completeOnboarding} />
+			<StartPage
+				initialChoices={parsePendingChoices(
+					localStorage.getItem(pendingChoicesStorageKey),
+				)}
+				onContinue={completeOnboarding}
+			/>
 		);
 	}
 
 	if (authState !== "signed-in") {
 		return (
 			<main className="shell auth">
-				<h1>{t("app.title")}</h1>
+				<AppBar />
 				<p>{t("auth.description")}</p>
+				{/* Keys stop React reusing the "Use another email" button as the email form submit mid-click, which submitted an empty address. */}
 				{authState === "otp-sent" ? (
-					<form onSubmit={verifyOtp}>
+					// noValidate: a malformed or refused code is explained inline below the field, not in a browser tooltip.
+					<form key="otp" noValidate onSubmit={verifyOtp}>
 						<label htmlFor="otp">{t("auth.oneTimeCode")}</label>
 						<input
+							aria-describedby={otpError ? "otp-error" : undefined}
+							aria-invalid={otpError ? true : undefined}
 							autoComplete="one-time-code"
 							id="otp"
 							inputMode="numeric"
-							onChange={(event) => setOtp(event.target.value)}
+							onChange={(event) => {
+								setOtp(event.target.value);
+								setOtpError("");
+							}}
 							pattern="[0-9]{6}"
 							required
 							value={otp}
 						/>
+						{otpError ? (
+							<p className="field-error" id="otp-error">
+								{otpError}
+							</p>
+						) : null}
 						<button type="submit">{t("auth.signIn")}</button>
-						<button onClick={() => setAuthState("signed-out")} type="button">
+						<button
+							className="secondary"
+							onClick={chooseAnotherEmail}
+							type="button"
+						>
 							{t("auth.useAnotherEmail")}
 						</button>
 					</form>
 				) : (
-					<form onSubmit={sendOtp}>
+					// noValidate: the browser's type=email rule refuses international addresses; isValidEmail decides.
+					<form key="email" noValidate onSubmit={sendOtp}>
 						<label htmlFor="email">{t("auth.email")}</label>
 						<input
+							aria-describedby={emailError ? "email-error" : undefined}
+							aria-invalid={emailError ? true : undefined}
+							autoCapitalize="off"
 							autoComplete="email"
 							id="email"
-							onChange={(event) => setEmail(event.target.value)}
+							inputMode="email"
+							onChange={(event) => {
+								setEmail(event.target.value);
+								setEmailError("");
+							}}
+							ref={emailInput}
 							required
-							type="email"
+							spellCheck={false}
+							type="text"
 							value={email}
 						/>
+						{emailError ? (
+							<p className="field-error" id="email-error">
+								{emailError}
+							</p>
+						) : null}
 						<button type="submit">{t("auth.sendCode")}</button>
 					</form>
 				)}
 				<p aria-live="polite" className="status">
 					{status}
 				</p>
+				<button
+					className="secondary"
+					onClick={() => setOnboardingOpen(true)}
+					type="button"
+				>
+					{t("app.nav.aboutDelivery")}
+				</button>
 			</main>
 		);
 	}
 
 	const isRecording = captureState === "recording";
+	const translationPair = {
+		sourceLanguage: translationSourceLanguage,
+		targetLanguage: translationTargetLanguage,
+	};
 	return (
 		<main className="shell workspace">
 			<header>
-				<div>
-					<h1>{t("app.title")}</h1>
-					<p>{signedInEmail}</p>
+				<div className="brand-block">
+					<h1>
+						<button
+							className="brand"
+							onClick={() => showView("dictation")}
+							type="button"
+						>
+							{t("app.title")}
+						</button>
+					</h1>
+					<p className="account">{signedInEmail}</p>
 				</div>
 				<div className="workspace-actions">
 					<nav aria-label={t("app.workspace")}>
 						<button
 							aria-current={view === "dictation" ? "page" : undefined}
-							onClick={() => setView("dictation")}
+							onClick={() => showView("dictation")}
 							type="button"
 						>
 							{t("app.nav.dictation")}
@@ -994,7 +1397,7 @@ export function App() {
 						<button
 							aria-current={view === "library" ? "page" : undefined}
 							disabled={captureState !== "idle"}
-							onClick={() => setView("library")}
+							onClick={() => showView("library")}
 							type="button"
 						>
 							{t("app.nav.library")}
@@ -1002,40 +1405,51 @@ export function App() {
 						<button
 							aria-current={view === "settings" ? "page" : undefined}
 							disabled={captureState !== "idle"}
-							onClick={() => setView("settings")}
+							onClick={() => showView("settings")}
 							type="button"
 						>
 							{t("app.nav.settings")}
 						</button>
 					</nav>
 					<button
+						aria-current={view === "about" ? "page" : undefined}
 						disabled={captureState !== "idle"}
-						onClick={() => setOnboardingOpen(true)}
-						ref={onboardingReturnFocus}
+						onClick={() => showView("about")}
+						ref={aboutReturnFocus}
 						type="button"
 					>
 						{t("app.nav.aboutDelivery")}
 					</button>
-					<button onClick={() => void signOut()} type="button">
+					<button
+						disabled={captureState !== "idle"}
+						onClick={() => setConfirmingSignOut(true)}
+						ref={signOutReturnFocus}
+						type="button"
+					>
 						{t("app.nav.signOut")}
 					</button>
+					<ThemeToggle />
 				</div>
 			</header>
-			{onboardingOpen ? (
-				<Onboarding
-					asDialog
-					initialStep="delivery"
-					onClose={() => {
-						setOnboardingOpen(false);
-						queueMicrotask(() => onboardingReturnFocus.current?.focus());
-					}}
-					onComplete={completeOnboarding}
+			{confirmingSignOut ? (
+				<ConfirmDialog
+					body={t("auth.signOutConfirm.body")}
+					cancelLabel={t("auth.signOutConfirm.cancel")}
+					confirmLabel={t("auth.signOutConfirm.confirm")}
+					onCancel={cancelSignOut}
+					onConfirm={() => void signOut()}
+					title={t("auth.signOutConfirm.title")}
 				/>
 			) : null}
 			{isCommandPaletteOpen ? (
 				<CommandPalette onClose={closeCommandPalette} onCopied={setStatus} />
 			) : null}
-			{view === "library" ? (
+			{view === "about" ? (
+				<AboutDelivery
+					onBack={closeAboutDelivery}
+					onSettingsChanged={invalidateWorkspace}
+				/>
+			) : view === "library" ? (
 				<LibraryPane
 					onLibraryChanged={broadcastWorkspaceChange}
 					revision={workspaceRevision}
@@ -1046,68 +1460,85 @@ export function App() {
 					revision={workspaceRevision}
 				/>
 			) : (
-				<>
-					<label className="language" htmlFor="language">
-						{t("dictation.languageHints")}
-						<input
-							id="language"
-							onChange={(event) => setLanguage(event.target.value)}
-							value={language}
-						/>
-					</label>
-					<label className="checkbox" htmlFor="translation-mode">
-						<input
-							checked={translationMode}
-							disabled={captureState !== "idle"}
-							id="translation-mode"
-							onChange={(event) => setTranslationMode(event.target.checked)}
-							type="checkbox"
-						/>
-						{t("dictation.translationMode")}
-					</label>
-					{translationMode ? (
-						<p>
-							{t("dictation.translates", {
-								source: translationSourceLanguage,
-								target: translationTargetLanguage,
-							})}
+				<div className="dictation">
+					<fieldset
+						aria-describedby="language-hints-hint"
+						className="language-hints"
+						disabled={captureState !== "idle" || translationMode}
+					>
+						<legend>{t("dictation.languages")}</legend>
+						{dictationLanguages.map((code) => (
+							<label
+								className="checkbox pill"
+								htmlFor={`language-hint-${code}`}
+								key={code}
+							>
+								<input
+									checked={speechLanguageHints.includes(code)}
+									id={`language-hint-${code}`}
+									onChange={(event) =>
+										void toggleLanguageHint(code, event.target.checked)
+									}
+									type="checkbox"
+								/>
+								<span lang={code}>{ownLanguageName(code)}</span>
+							</label>
+						))}
+						<p className="hint" id="language-hints-hint">
+							{translationMode
+								? t("dictation.languagesInTranslation", {
+										source: ownLanguageName(translationSourceLanguage),
+									})
+								: t("dictation.languagesHint")}
 						</p>
-					) : null}
+					</fieldset>
+					<div className="translation-row">
+						<label className="checkbox" htmlFor="translation-mode">
+							<input
+								checked={translationMode}
+								disabled={captureState !== "idle"}
+								id="translation-mode"
+								onChange={(event) => setTranslationMode(event.target.checked)}
+								type="checkbox"
+							/>
+							{t("dictation.translationMode")}
+						</label>
+						<TranslationLanguages
+							disabled={captureState !== "idle"}
+							idPrefix="dictation-translation"
+							label={t("dictation.translationLanguages")}
+							onChange={(pair) => void changeTranslationLanguages(pair)}
+							pair={translationPair}
+						/>
+					</div>
 					<textarea
 						aria-label={t("dictation.document")}
+						className="document"
 						ref={documentInput}
 						onChange={(event) => setDocumentText(event.target.value)}
 						placeholder={t("dictation.documentPlaceholder")}
 						value={documentText}
 					/>
-					{captureState !== "idle" && !pictureInPictureContainer ? (
-						<LiveTranscriptPanel
-							announceLiveTranscript={announceLiveTranscript}
-							liveFinalText={liveFinalText}
-							liveProvisionalText={liveProvisionalText}
-						/>
-					) : null}
-					{pictureInPictureContainer
-						? createPortal(
-								<LiveTranscriptPanel
-									announceLiveTranscript={announceLiveTranscript}
-									liveFinalText={liveFinalText}
-									liveProvisionalText={liveProvisionalText}
-									onReturnToPage={closeFloatingPanel}
-								/>,
-								pictureInPictureContainer,
-							)
-						: null}
-					<div className="controls">
+					{/* While a hold is active only its button stays visible; the others keep their space so it never moves. */}
+					<div
+						className={holding ? "controls holding" : "controls"}
+						ref={controlsRef}
+					>
+						{/* Both labels share one cell, so switching to "Stop" never resizes the button and shifts the hold button. */}
 						<button
+							className="toggle"
 							disabled={captureState === "sending"}
 							onClick={toggleCapture}
 							type="button"
 						>
-							{isRecording ? t("dictation.stop") : t("dictation.start")}
+							<span aria-hidden={isRecording}>{t("dictation.start")}</span>
+							<span aria-hidden={!isRecording}>{t("dictation.stop")}</span>
 						</button>
 						<button
-							disabled={captureState !== "idle"}
+							aria-pressed={holding}
+							className="hold"
+							disabled={captureState !== "idle" && !holding}
+							onContextMenu={(event) => event.preventDefault()}
 							onPointerCancel={stopHoldCapture}
 							onPointerDown={startHoldCapture}
 							onPointerUp={stopHoldCapture}
@@ -1116,13 +1547,16 @@ export function App() {
 							{t("dictation.hold")}
 						</button>
 						<button
-							disabled={!isRecording}
-							onClick={() => void cancelCapture()}
+							disabled={!isRecording && !uploading}
+							onClick={() =>
+								isRecording ? void cancelCapture() : cancelTranscription()
+							}
 							type="button"
 						>
 							{t("dictation.cancel")}
 						</button>
 						{captureState !== "idle" &&
+						!holding &&
 						capabilities.documentPictureInPicture &&
 						!pictureInPictureContainer ? (
 							<button onClick={() => void openFloatingPanel()} type="button">
@@ -1135,6 +1569,14 @@ export function App() {
 							type="button"
 						>
 							{t("dictation.copy")}
+						</button>
+						<button
+							className="secondary"
+							disabled={!documentText}
+							onClick={clearDocument}
+							type="button"
+						>
+							{t("dictation.clear")}
 						</button>
 					</div>
 					<div className="meter-row">
@@ -1156,44 +1598,96 @@ export function App() {
 									? t("dictation.meterSending")
 									: t("dictation.meterIdle")}
 						</output>
-					</div>
-					<p className="shortcut">
-						{t("dictation.shortcut", { shortcut: dictationShortcut })}
-					</p>
-					<section
-						aria-labelledby="paste-translation-title"
-						className="settings-section"
-					>
-						<h2 id="paste-translation-title">{t("dictation.pasteTitle")}</h2>
-						<p>{t("dictation.pasteDescription")}</p>
-						<label htmlFor="translation-text">
-							{t("dictation.textToTranslate")}
-							<textarea
-								id="translation-text"
-								onChange={(event) => setTranslationText(event.target.value)}
-								value={translationText}
-							/>
-						</label>
-						<button
-							disabled={!translationText.trim()}
-							onClick={() => void translatePastedText()}
-							type="button"
+						<p
+							aria-live="polite"
+							className="status"
+							ref={statusElement}
+							tabIndex={-1}
 						>
-							{t("dictation.translatePasted")}
-						</button>
-						<output aria-label={t("dictation.translationResult")}>
-							{translationResult}
-						</output>
-					</section>
-					<p
-						aria-live="polite"
-						className="status"
-						ref={statusElement}
-						tabIndex={-1}
+							{status}
+						</p>
+						{/* Until the saved settings arrive the shortcut is unknown; showing the default would be wrong. */}
+						<p className="shortcut">
+							{settingsLoaded
+								? t(
+										firesInTextFields(dictationShortcut)
+											? "dictation.shortcut"
+											: "dictation.shortcutOutsideFields",
+										{
+											shortcut: displayShortcut(
+												parseShortcut(dictationShortcut),
+												shortcutPlatform(),
+											),
+										},
+									)
+								: null}
+						</p>
+					</div>
+					{captureState !== "idle" && !pictureInPictureContainer ? (
+						<LiveTranscriptPanel
+							announceLiveTranscript={announceLiveTranscript}
+							liveFinalText={liveFinalText}
+							liveProvisionalText={liveProvisionalText}
+						/>
+					) : null}
+					{pictureInPictureContainer
+						? createPortal(
+								<LiveTranscriptPanel
+									announceLiveTranscript={announceLiveTranscript}
+									liveFinalText={liveFinalText}
+									liveProvisionalText={liveProvisionalText}
+									onReturnToPage={closeFloatingPanel}
+								/>,
+								pictureInPictureContainer,
+							)
+						: null}
+					<details
+						className="paste-translation"
+						onToggle={(event) => setPasteOpen(event.currentTarget.open)}
+						open={pasteOpen}
 					>
-						{status}
-					</p>
-				</>
+						<summary>{t("dictation.pasteTitle")}</summary>
+						<div className="paste-body">
+							<p className="hint">{t("dictation.pasteDescription")}</p>
+							<TranslationLanguages
+								disabled={captureState !== "idle"}
+								idPrefix="paste-translation"
+								label={t("dictation.pasteLanguages")}
+								onChange={(pair) => void changeTranslationLanguages(pair)}
+								pair={translationPair}
+							/>
+							<label htmlFor="translation-text">
+								{t("dictation.textToTranslate")}
+								<textarea
+									id="translation-text"
+									onChange={(event) => setTranslationText(event.target.value)}
+									value={translationText}
+								/>
+							</label>
+							<button
+								disabled={!translationText.trim() || translating}
+								onClick={() => void translatePastedText()}
+								type="button"
+							>
+								{t("dictation.translatePasted")}
+							</button>
+							<p
+								aria-live="polite"
+								className={
+									pasteMessage?.failed ? "status field-error" : "status"
+								}
+							>
+								{pasteMessage?.text}
+							</p>
+							<output
+								aria-label={t("dictation.translationResult")}
+								className="translation-result"
+							>
+								{translationResult}
+							</output>
+						</div>
+					</details>
+				</div>
 			)}
 		</main>
 	);

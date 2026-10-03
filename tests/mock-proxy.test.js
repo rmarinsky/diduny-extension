@@ -214,3 +214,97 @@ test("exposes rotating sessions and mutable frozen-contract variants", async () 
 		await mock.server.close();
 	}
 });
+
+test("numbers transcripts only when asked, so tests keep the fixed text", async () => {
+	const transcribe = (mock) =>
+		mock.server
+			.inject({
+				headers: { authorization: "Bearer mock-access-token" },
+				method: "POST",
+				payload: {},
+				url: "/api/v1/transcriptions",
+			})
+			.then((response) => response.json());
+
+	const numbered = await buildMockProxy({ numberTranscripts: true });
+	const first = await transcribe(numbered);
+	const second = await transcribe(numbered);
+	expect(first.text).toBe("Mock transcript 1");
+	expect(first.tokens[0].text).toBe("Mock transcript 1");
+	expect(second.text).toBe("Mock transcript 2");
+	await numbered.server.close();
+
+	const fixed = await buildMockProxy();
+	expect((await transcribe(fixed)).text).toBe("Mock transcript");
+	expect((await transcribe(fixed)).text).toBe("Mock transcript");
+	await fixed.server.close();
+});
+
+test("streams the transcript word by word only when asked, ending on the same text", async () => {
+	const mock = await buildMockProxy({
+		numberTranscripts: true,
+		streamLiveTokens: true,
+	});
+	await mock.server.listen({ host: "127.0.0.1", port: 0 });
+	try {
+		const socket = new WebSocket(
+			`${serverUrl(mock.server).replace("http", "ws")}/api/v1/realtime?token=mock-access-token`,
+		);
+		const received = await new Promise((resolve, reject) => {
+			const messages = [];
+			socket.on("message", (data) => {
+				const message = JSON.parse(String(data));
+				if (message.type === "proxy_ready") {
+					socket.send('{"audio_format":"s16le"}');
+					socket.send(Buffer.alloc(16_000));
+					socket.send(Buffer.alloc(16_000));
+					socket.send('{"type":"finalize"}');
+					return;
+				}
+				messages.push(message);
+				if (message.tokens?.some((token) => token.text === "<fin>")) {
+					socket.close();
+					resolve(messages);
+				}
+			});
+			socket.once("error", reject);
+		});
+		const tokens = received.flatMap((message) => message.tokens);
+		expect(received[0].tokens).toEqual([{ is_final: false, text: "Mock" }]);
+		expect(received[1].tokens).toEqual([
+			{ is_final: true, text: "Mock" },
+			{ is_final: false, text: " transcript" },
+		]);
+		expect(
+			tokens
+				.filter((token) => token.is_final && !token.text.startsWith("<"))
+				.map((token) => token.text)
+				.join(""),
+		).toBe("Mock transcript 1");
+		expect(received.some((message) => message.finished === true)).toBe(true);
+	} finally {
+		for (const socket of mock.server.websocketServer?.clients ?? [])
+			socket.terminate();
+		mock.server.server.closeAllConnections?.();
+		await mock.server.close();
+	}
+});
+
+test("tags translations with their direction only when asked", async () => {
+	const translate = (mock) =>
+		mock.server
+			.inject({
+				headers: { authorization: "Bearer mock-access-token" },
+				method: "GET",
+				url: "/api/v1/translations?q=Привіт&sl=uk&tl=en",
+			})
+			.then((response) => response.json().sentences[0].trans);
+
+	const tagged = await buildMockProxy({ tagTranslations: true });
+	expect(await translate(tagged)).toBe("Привіт (uk->en)");
+	await tagged.server.close();
+
+	const plain = await buildMockProxy();
+	expect(await translate(plain)).toBe("Привіт");
+	await plain.server.close();
+});

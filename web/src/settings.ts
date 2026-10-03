@@ -1,6 +1,21 @@
 import type { RetentionCategory, RetentionPolicy } from "../../src/core/ports";
-import type { Settings } from "../../src/core/settings";
+import { DEFAULT_SETTINGS, type Settings } from "../../src/core/settings";
 import { errorFromResponse, localProcessUnavailable } from "./errors";
+
+/** Everything the Settings page edits except retention, which "Reset settings" leaves alone. */
+export const resettableSettings = {
+	announceLiveTranscript: DEFAULT_SETTINGS.announceLiveTranscript,
+	dictationShortcut: DEFAULT_SETTINGS.dictationShortcut,
+	fillerWords: DEFAULT_SETTINGS.fillerWords,
+	microphoneDeviceId: DEFAULT_SETTINGS.microphoneDeviceId,
+	protectedLexicon: DEFAULT_SETTINGS.protectedLexicon,
+	speechLanguageHints: DEFAULT_SETTINGS.speechLanguageHints,
+	textCleanupEnabled: DEFAULT_SETTINGS.textCleanupEnabled,
+	translationSourceLanguage: DEFAULT_SETTINGS.translationSourceLanguage,
+	translationTargetLanguage: DEFAULT_SETTINGS.translationTargetLanguage,
+	typingSpeedWordsPerMinute: DEFAULT_SETTINGS.typingSpeedWordsPerMinute,
+	uiLocale: DEFAULT_SETTINGS.uiLocale,
+} satisfies Partial<Settings>;
 
 export interface WorkspaceSettingsSnapshot {
 	retention: Record<RetentionCategory, RetentionPolicy>;

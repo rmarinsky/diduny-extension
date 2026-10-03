@@ -37,9 +37,11 @@ import type {
 	RetentionCategory,
 	RetentionPolicy,
 } from "../core/ports";
+import { UNTITLED_RECORDING_TITLE } from "../core/ports";
 import {
 	DEFAULT_SETTINGS,
 	type Settings,
+	effectiveTypingSpeed,
 	normalizeSettings,
 	textCleanupFromSettings,
 	updateSettings,
@@ -365,7 +367,7 @@ export class LibraryStore implements LibraryPort {
 			timeSavedSeconds: timeSavedSecondsForWords(
 				totalWords,
 				dictationDurationSeconds,
-				settings.typingSpeedWordsPerMinute,
+				effectiveTypingSpeed(settings),
 			),
 			wordCount: totalWords,
 		};
@@ -464,7 +466,7 @@ export class LibraryStore implements LibraryPort {
 			.all(...values);
 		const items = rows.map((row) => ({
 			createdAt: row.createdAt,
-			displayTitle: row.title?.trim() || "Untitled recording",
+			displayTitle: row.title?.trim() || UNTITLED_RECORDING_TITLE,
 			durationSeconds: row.durationSeconds,
 			hasTranslation: row.hasTranslation === 1,
 			id: row.id,

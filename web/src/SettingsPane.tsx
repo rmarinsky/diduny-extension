@@ -8,16 +8,20 @@ import {
 import { useTranslation } from "react-i18next";
 import { wordCount } from "../../src/core/models";
 import type { RetentionCategory, RetentionPolicy } from "../../src/core/ports";
-import type { Settings } from "../../src/core/settings";
+import { DEFAULT_TYPING_SPEED_WPM } from "../../src/core/settings";
 import {
 	isReservedShortcut,
 	normalizeShortcut,
 } from "../../src/core/shortcuts";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { ShortcutField } from "./ShortcutField";
+import { TermListInput } from "./TermListInput";
 import {
 	audioInputDevices,
 	microphonePermissionFailure,
 	resolveAudioInput,
 } from "./audio-devices";
+import { COMMAND_PALETTE_SHORTCUT } from "./dictation";
 import { userErrorMessage } from "./errors";
 import {
 	type UiLocale,
@@ -26,12 +30,19 @@ import {
 	setUiLocale,
 	supportedUiLocales,
 } from "./i18n";
+import { dictationLanguages, ownLanguageName } from "./languages";
 import {
 	type WorkspaceSettingsSnapshot,
 	getWorkspaceSettings,
+	resettableSettings,
 	updateRetentionPolicy,
 	updateWorkspaceSettings,
 } from "./settings";
+import {
+	type ShortcutParts,
+	composeShortcut,
+	parseShortcut,
+} from "./shortcut-editor";
 
 const retentionOptions: ReadonlyArray<{
 	labelKey: string;
@@ -45,18 +56,7 @@ const retentionOptions: ReadonlyArray<{
 	{ labelKey: "settings.retention.forever", value: "forever" },
 ];
 
-const translationLanguages = ["en", "uk"] as const;
-
-function ownLanguageName(code: (typeof translationLanguages)[number]) {
-	return new Intl.DisplayNames([code], { type: "language" }).of(code) ?? code;
-}
-
-function terms(value: string) {
-	return value
-		.split("\n")
-		.map((item) => item.trim())
-		.filter(Boolean);
-}
+const MAX_TYPING_SPEED_WPM = 300;
 
 function formatBytes(value: number) {
 	const units = ["B", "KB", "MB", "GB", "TB"];
@@ -86,6 +86,31 @@ function errorMessage(
 	return userErrorMessage(error, t);
 }
 
+/** Where a save confirmation or error shows: next to the section it belongs to. */
+type NoticeSection =
+	| "accessibility"
+	| "cleanup"
+	| "interfaceLanguage"
+	| "microphone"
+	| "page"
+	| "reset"
+	| "retention"
+	| "shortcut"
+	| "statistics"
+	| "translation";
+
+interface Notice {
+	section: NoticeSection;
+	text: string;
+}
+
+const punctuationAndSpaces = /[\p{P}\s]+/gu;
+
+/** The typed test text and the sentence compare without case, spacing, or punctuation. */
+function sentenceWords(value: string) {
+	return value.replace(punctuationAndSpaces, " ").trim().toLocaleLowerCase();
+}
+
 type MicrophoneAccess =
 	| "checking"
 	| "denied"
@@ -94,9 +119,13 @@ type MicrophoneAccess =
 	| "unsupported";
 
 function MicrophoneSettings({
+	message,
+	onMessage,
 	onSave,
 	savedDeviceId,
 }: {
+	message: string;
+	onMessage(text: string): void;
 	onSave(deviceId: string | null): Promise<void>;
 	savedDeviceId: string | null;
 }) {
@@ -105,7 +134,6 @@ function MicrophoneSettings({
 	const [devices, setDevices] = useState<ReturnType<typeof audioInputDevices>>(
 		[],
 	);
-	const [message, setMessage] = useState("");
 	const { device, savedDeviceMissing } = resolveAudioInput(
 		devices,
 		savedDeviceId,
@@ -151,7 +179,7 @@ function MicrophoneSettings({
 			setAccess("unsupported");
 			return;
 		}
-		setMessage(t("microphone.requesting"));
+		onMessage(t("microphone.requesting"));
 		try {
 			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 			for (const track of stream.getTracks()) track.stop();
@@ -159,21 +187,21 @@ function MicrophoneSettings({
 			setDevices(
 				audioInputDevices(await navigator.mediaDevices.enumerateDevices()),
 			);
-			setMessage(t("microphone.granted"));
+			onMessage(t("microphone.granted"));
 		} catch (error) {
 			setAccess(
 				microphonePermissionFailure(error) === "denied" ? "denied" : "prompt",
 			);
-			setMessage(errorMessage(error, t));
+			onMessage(errorMessage(error, t));
 		}
 	}
 
 	async function saveDevice(value: string) {
 		try {
 			await onSave(value || null);
-			setMessage(t("microphone.preferenceSaved"));
+			onMessage(t("microphone.preferenceSaved"));
 		} catch (error) {
-			setMessage(errorMessage(error, t));
+			onMessage(errorMessage(error, t));
 		}
 	}
 
@@ -245,18 +273,29 @@ export function SettingsPane({
 	);
 	const [announceLiveTranscript, setAnnounceLiveTranscript] = useState(false);
 	const [cleanupEnabled, setCleanupEnabled] = useState(false);
-	const [dictationShortcut, setDictationShortcut] = useState("");
-	const [fillerWords, setFillerWords] = useState("");
-	const [lexicon, setLexicon] = useState("");
-	const [message, setMessage] = useState("");
+	const [confirmingReset, setConfirmingReset] = useState(false);
+	const [fillerWords, setFillerWords] = useState<readonly string[]>([]);
+	const [lexicon, setLexicon] = useState<readonly string[]>([]);
+	const [notice, setNotice] = useState<Notice | null>(null);
+	const [shortcut, setShortcut] = useState<ShortcutParts>({
+		key: "",
+		modifiers: [],
+	});
+	const [typingSpeed, setTypingSpeed] = useState("");
 	const [uiLocale, setUiLocaleState] = useState<UiLocale>("en");
 	const [translationSourceLanguage, setTranslationSourceLanguage] =
 		useState("uk");
 	const [translationTargetLanguage, setTranslationTargetLanguage] =
 		useState("en");
-	const [typingStartedAt, setTypingStartedAt] = useState<number | null>(null);
-	const [typingText, setTypingText] = useState("");
-	const typingInput = useRef<HTMLTextAreaElement>(null);
+	const [typingTestText, setTypingTestText] = useState("");
+	const resetReturnFocus = useRef<HTMLButtonElement>(null);
+	// The test runs from the first key to the last, so a pause before saving doesn't count.
+	const typingTestTiming = useRef<{ firstAt: number; lastAt: number } | null>(
+		null,
+	);
+	// One notice at a time, shown in its own section, so an earlier save's message never lingers.
+	const say = (section: NoticeSection, text: string) =>
+		setNotice({ section, text });
 
 	const refresh = useCallback(async () => {
 		try {
@@ -264,14 +303,24 @@ export function SettingsPane({
 			setSnapshot(next);
 			setAnnounceLiveTranscript(next.settings.announceLiveTranscript);
 			setCleanupEnabled(next.settings.textCleanupEnabled);
-			setDictationShortcut(next.settings.dictationShortcut);
-			setFillerWords(next.settings.fillerWords.join("\n"));
-			setLexicon(next.settings.protectedLexicon.join("\n"));
+			setShortcut(parseShortcut(next.settings.dictationShortcut));
+			setFillerWords(next.settings.fillerWords);
+			setLexicon(next.settings.protectedLexicon);
+			setTypingSpeed(
+				String(
+					Math.round(
+						next.settings.typingSpeedWordsPerMinute ?? DEFAULT_TYPING_SPEED_WPM,
+					),
+				),
+			);
 			setUiLocaleState(next.settings.uiLocale);
 			setTranslationSourceLanguage(next.settings.translationSourceLanguage);
 			setTranslationTargetLanguage(next.settings.translationTargetLanguage);
 		} catch (error) {
-			setMessage(errorMessage(error, i18n.t.bind(i18n)));
+			setNotice({
+				section: "page",
+				text: errorMessage(error, i18n.t.bind(i18n)),
+			});
 		}
 	}, []);
 
@@ -280,23 +329,21 @@ export function SettingsPane({
 		void refresh();
 	}, [refresh, revision]);
 
-	useEffect(() => {
-		if (typingStartedAt !== null) typingInput.current?.focus();
-	}, [typingStartedAt]);
-
 	async function saveCleanup(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 		try {
 			const settings = await updateWorkspaceSettings({
-				fillerWords: terms(fillerWords),
-				protectedLexicon: terms(lexicon),
+				fillerWords,
+				protectedLexicon: lexicon,
 				textCleanupEnabled: cleanupEnabled,
 			});
 			setSnapshot((current) => (current ? { ...current, settings } : current));
-			setMessage(t("settings.cleanupSaved"));
+			setFillerWords(settings.fillerWords);
+			setLexicon(settings.protectedLexicon);
+			say("cleanup", t("settings.cleanupSaved"));
 			onSettingsChanged();
 		} catch (error) {
-			setMessage(errorMessage(error, t));
+			say("cleanup", errorMessage(error, t));
 		}
 	}
 
@@ -307,54 +354,78 @@ export function SettingsPane({
 		try {
 			const retention = await updateRetentionPolicy(category, policy);
 			setSnapshot((current) => (current ? { ...current, retention } : current));
-			setMessage(t("settings.retentionSaved"));
+			say("retention", t("settings.retentionSaved"));
 			onSettingsChanged();
 		} catch (error) {
-			setMessage(errorMessage(error, t));
+			say("retention", errorMessage(error, t));
 		}
 	}
 
+	// MicrophoneSettings reports the confirmation or the error in its own section.
 	async function saveMicrophone(deviceId: string | null) {
-		try {
-			const settings = await updateWorkspaceSettings({
-				microphoneDeviceId: deviceId,
-			});
-			setSnapshot((current) => (current ? { ...current, settings } : current));
-			onSettingsChanged();
-		} catch (error) {
-			setMessage(errorMessage(error, t));
-			throw error;
-		}
+		const settings = await updateWorkspaceSettings({
+			microphoneDeviceId: deviceId,
+		});
+		setSnapshot((current) => (current ? { ...current, settings } : current));
+		onSettingsChanged();
 	}
 
 	async function saveShortcut(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		const shortcut = normalizeShortcut(dictationShortcut);
-		if (!shortcut) {
-			setMessage(t("settings.invalidShortcut"));
+		const chord = composeShortcut(shortcut);
+		if (!chord) {
+			say("shortcut", t("settings.invalidShortcut"));
 			return;
 		}
-		if (isReservedShortcut(shortcut)) {
-			setMessage(t("settings.reservedShortcut", { shortcut }));
+		if (isReservedShortcut(chord)) {
+			say("shortcut", t("settings.reservedShortcut", { shortcut: chord }));
+			return;
+		}
+		// The page keeps this chord for the command palette, so dictation would never see it.
+		if (
+			normalizeShortcut(chord) === normalizeShortcut(COMMAND_PALETTE_SHORTCUT)
+		) {
+			say(
+				"shortcut",
+				t("settings.commandPaletteShortcut", { shortcut: chord }),
+			);
 			return;
 		}
 		try {
 			const settings = await updateWorkspaceSettings({
-				dictationShortcut: shortcut,
+				dictationShortcut: chord,
 			});
-			setDictationShortcut(settings.dictationShortcut);
+			setShortcut(parseShortcut(settings.dictationShortcut));
 			setSnapshot((current) => (current ? { ...current, settings } : current));
-			setMessage(
+			say(
+				"shortcut",
 				t("settings.shortcutSaved", { shortcut: settings.dictationShortcut }),
 			);
 			onSettingsChanged();
 		} catch (error) {
-			setMessage(errorMessage(error, t));
+			say("shortcut", errorMessage(error, t));
 		}
+	}
+
+	// Choosing the language already on the other side swaps the two, like the Dictation pickers.
+	function chooseTranslationSource(language: string) {
+		if (language === translationTargetLanguage)
+			setTranslationTargetLanguage(translationSourceLanguage);
+		setTranslationSourceLanguage(language);
+	}
+
+	function chooseTranslationTarget(language: string) {
+		if (language === translationSourceLanguage)
+			setTranslationSourceLanguage(translationTargetLanguage);
+		setTranslationTargetLanguage(language);
 	}
 
 	async function saveTranslationLanguages(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
+		if (translationSourceLanguage === translationTargetLanguage) {
+			say("translation", t("settings.sameTranslationLanguages"));
+			return;
+		}
 		try {
 			const settings = await updateWorkspaceSettings({
 				translationSourceLanguage,
@@ -363,10 +434,10 @@ export function SettingsPane({
 			setSnapshot((current) => (current ? { ...current, settings } : current));
 			setTranslationSourceLanguage(settings.translationSourceLanguage);
 			setTranslationTargetLanguage(settings.translationTargetLanguage);
-			setMessage(t("settings.translationSaved"));
+			say("translation", t("settings.translationSaved"));
 			onSettingsChanged();
 		} catch (error) {
-			setMessage(errorMessage(error, t));
+			say("translation", errorMessage(error, t));
 		}
 	}
 
@@ -377,10 +448,11 @@ export function SettingsPane({
 			setSnapshot((current) => (current ? { ...current, settings } : current));
 			setUiLocaleState(settings.uiLocale);
 			await setUiLocale(settings.uiLocale);
-			setMessage(t("settings.interfaceLanguageSaved"));
+			// `t` from this render still speaks the old language; confirm in the new one.
+			say("interfaceLanguage", i18n.t("settings.interfaceLanguageSaved"));
 			onSettingsChanged();
 		} catch (error) {
-			setMessage(errorMessage(error, t));
+			say("interfaceLanguage", errorMessage(error, t));
 		}
 	}
 
@@ -392,54 +464,144 @@ export function SettingsPane({
 			});
 			setSnapshot((current) => (current ? { ...current, settings } : current));
 			setAnnounceLiveTranscript(settings.announceLiveTranscript);
-			setMessage(t("settings.accessibilitySaved"));
+			say("accessibility", t("settings.accessibilitySaved"));
 			onSettingsChanged();
 		} catch (error) {
-			setMessage(errorMessage(error, t));
+			say("accessibility", errorMessage(error, t));
 		}
 	}
 
-	function startTypingTest() {
-		setTypingText("");
-		setTypingStartedAt(performance.now());
-		setMessage(t("settings.typingStart"));
-	}
-
-	async function finishTypingTest() {
-		if (typingStartedAt === null) return;
-		const words = wordCount(typingText);
-		const elapsedSeconds = (performance.now() - typingStartedAt) / 1_000;
-		if (!words || elapsedSeconds <= 0) {
-			setMessage(t("settings.typingNeedsWords"));
+	async function saveTypingSpeed(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		const wordsPerMinute = Number(typingSpeed);
+		if (
+			!Number.isFinite(wordsPerMinute) ||
+			wordsPerMinute < 1 ||
+			wordsPerMinute > MAX_TYPING_SPEED_WPM
+		) {
+			say(
+				"statistics",
+				t("settings.invalidTypingSpeed", { max: MAX_TYPING_SPEED_WPM }),
+			);
 			return;
 		}
 		try {
-			const settings = await updateWorkspaceSettings({
-				typingSpeedWordsPerMinute: (words * 60) / elapsedSeconds,
+			await updateWorkspaceSettings({
+				typingSpeedWordsPerMinute: Math.round(wordsPerMinute),
 			});
-			setSnapshot((current) => (current ? { ...current, settings } : current));
-			setTypingStartedAt(null);
 			await refresh();
 			onSettingsChanged();
-			setMessage(t("settings.typingSaved"));
+			say("statistics", t("settings.typingSpeedSaved"));
 		} catch (error) {
-			setMessage(errorMessage(error, t));
+			say("statistics", errorMessage(error, t));
 		}
 	}
 
-	if (!snapshot) {
-		return <p aria-live="polite">{t("settings.loading")}</p>;
+	function editTypingTest(value: string) {
+		const now = performance.now();
+		if (!value.trim()) typingTestTiming.current = null;
+		else if (!typingTestTiming.current)
+			typingTestTiming.current = { firstAt: now, lastAt: now };
+		else typingTestTiming.current.lastAt = now;
+		setTypingTestText(value);
 	}
+
+	async function saveMeasuredSpeed() {
+		const timing = typingTestTiming.current;
+		const words = wordCount(typingTestText);
+		const seconds = timing ? (timing.lastAt - timing.firstAt) / 1_000 : 0;
+		if (!words || seconds <= 0) {
+			say("statistics", t("settings.typingNeedsWords"));
+			return;
+		}
+		if (
+			sentenceWords(typingTestText) !==
+			sentenceWords(t("settings.calibrationText"))
+		) {
+			say("statistics", t("settings.typingMismatch"));
+			return;
+		}
+		const wordsPerMinute = Math.max(1, Math.round((words * 60) / seconds));
+		// Faster than anyone types: the sentence was pasted.
+		if (wordsPerMinute > MAX_TYPING_SPEED_WPM) {
+			say(
+				"statistics",
+				t("settings.typingTooFast", { max: MAX_TYPING_SPEED_WPM }),
+			);
+			return;
+		}
+		try {
+			await updateWorkspaceSettings({
+				typingSpeedWordsPerMinute: wordsPerMinute,
+			});
+			typingTestTiming.current = null;
+			setTypingTestText("");
+			await refresh();
+			onSettingsChanged();
+			say(
+				"statistics",
+				t("settings.typingMeasuredSaved", { speed: wordsPerMinute }),
+			);
+		} catch (error) {
+			say("statistics", errorMessage(error, t));
+		}
+	}
+
+	async function resetSettings() {
+		setConfirmingReset(false);
+		try {
+			const settings = await updateWorkspaceSettings(resettableSettings);
+			await setUiLocale(settings.uiLocale);
+			await refresh();
+			onSettingsChanged();
+			say("reset", i18n.t("settings.resetDone"));
+		} catch (error) {
+			say("reset", errorMessage(error, i18n.t.bind(i18n)));
+		}
+		queueMicrotask(() => resetReturnFocus.current?.focus());
+	}
+
+	function cancelReset() {
+		setConfirmingReset(false);
+		queueMicrotask(() => resetReturnFocus.current?.focus());
+	}
+
+	if (!snapshot) {
+		return <p aria-live="polite">{notice?.text || t("settings.loading")}</p>;
+	}
+
+	const noticeFor = (section: NoticeSection) => (
+		<p aria-live="polite" className="status">
+			{notice?.section === section ? notice.text : ""}
+		</p>
+	);
 
 	const { settings, stats, storage } = snapshot;
 	return (
 		<section aria-labelledby="settings-title" className="settings">
 			<header>
 				<h2 id="settings-title">{t("settings.title")}</h2>
-				<button onClick={() => void refresh()} type="button">
-					{t("settings.refresh")}
+				<button
+					className="secondary"
+					onClick={() => setConfirmingReset(true)}
+					ref={resetReturnFocus}
+					type="button"
+				>
+					{t("settings.reset")}
 				</button>
 			</header>
+			{noticeFor("page")}
+			{noticeFor("reset")}
+			{confirmingReset ? (
+				<ConfirmDialog
+					body={t("settings.resetConfirm.body")}
+					cancelLabel={t("settings.resetConfirm.cancel")}
+					confirmLabel={t("settings.resetConfirm.confirm")}
+					onCancel={cancelReset}
+					onConfirm={() => void resetSettings()}
+					title={t("settings.resetConfirm.title")}
+				/>
+			) : null}
 
 			<section aria-labelledby="cleanup-title" className="settings-section">
 				<h3 id="cleanup-title">{t("settings.cleanupTitle")}</h3>
@@ -453,24 +615,25 @@ export function SettingsPane({
 						/>
 						{t("settings.enableCleanup")}
 					</label>
-					<label htmlFor="filler-words">
-						{t("settings.fillerWords")}
-						<textarea
-							id="filler-words"
-							onChange={(event) => setFillerWords(event.target.value)}
-							value={fillerWords}
-						/>
-					</label>
-					<label htmlFor="protected-lexicon">
-						{t("settings.protectedLexicon")}
-						<textarea
-							id="protected-lexicon"
-							onChange={(event) => setLexicon(event.target.value)}
-							value={lexicon}
-						/>
-					</label>
+					<TermListInput
+						hint={t("settings.fillerWordsHint")}
+						id="filler-words"
+						label={t("settings.fillerWords")}
+						onChange={setFillerWords}
+						placeholder={t("settings.fillerWordsPlaceholder")}
+						terms={fillerWords}
+					/>
+					<TermListInput
+						hint={t("settings.protectedLexiconHint")}
+						id="protected-lexicon"
+						label={t("settings.protectedLexicon")}
+						onChange={setLexicon}
+						placeholder={t("settings.protectedLexiconPlaceholder")}
+						terms={lexicon}
+					/>
 					<button type="submit">{t("settings.saveCleanup")}</button>
 				</form>
+				{noticeFor("cleanup")}
 			</section>
 
 			<section
@@ -497,6 +660,7 @@ export function SettingsPane({
 					</label>
 					<button type="submit">{t("settings.saveInterfaceLanguage")}</button>
 				</form>
+				{noticeFor("interfaceLanguage")}
 			</section>
 
 			<section
@@ -519,9 +683,12 @@ export function SettingsPane({
 					<p>{t("settings.announceLiveDescription")}</p>
 					<button type="submit">{t("settings.saveAccessibility")}</button>
 				</form>
+				{noticeFor("accessibility")}
 			</section>
 
 			<MicrophoneSettings
+				message={notice?.section === "microphone" ? notice.text : ""}
+				onMessage={(text) => say("microphone", text)}
 				onSave={saveMicrophone}
 				savedDeviceId={settings.microphoneDeviceId}
 			/>
@@ -529,18 +696,10 @@ export function SettingsPane({
 			<section aria-labelledby="shortcut-title" className="settings-section">
 				<h3 id="shortcut-title">{t("settings.shortcutTitle")}</h3>
 				<form onSubmit={saveShortcut}>
-					<label htmlFor="dictation-shortcut">
-						{t("settings.toggleDictation")}
-						<input
-							aria-describedby="dictation-shortcut-help"
-							id="dictation-shortcut"
-							onChange={(event) => setDictationShortcut(event.target.value)}
-							value={dictationShortcut}
-						/>
-					</label>
-					<p id="dictation-shortcut-help">{t("settings.shortcutHelp")}</p>
+					<ShortcutField onChange={setShortcut} value={shortcut} />
 					<button type="submit">{t("settings.saveShortcut")}</button>
 				</form>
+				{noticeFor("shortcut")}
 			</section>
 
 			<section
@@ -555,12 +714,10 @@ export function SettingsPane({
 						{t("settings.translationSource")}
 						<select
 							id="translation-source-language"
-							onChange={(event) =>
-								setTranslationSourceLanguage(event.target.value)
-							}
+							onChange={(event) => chooseTranslationSource(event.target.value)}
 							value={translationSourceLanguage}
 						>
-							{translationLanguages.map((language) => (
+							{dictationLanguages.map((language) => (
 								<option key={language} value={language}>
 									{ownLanguageName(language)}
 								</option>
@@ -571,12 +728,10 @@ export function SettingsPane({
 						{t("settings.translationTarget")}
 						<select
 							id="translation-target-language"
-							onChange={(event) =>
-								setTranslationTargetLanguage(event.target.value)
-							}
+							onChange={(event) => chooseTranslationTarget(event.target.value)}
 							value={translationTargetLanguage}
 						>
-							{translationLanguages.map((language) => (
+							{dictationLanguages.map((language) => (
 								<option key={language} value={language}>
 									{ownLanguageName(language)}
 								</option>
@@ -585,6 +740,7 @@ export function SettingsPane({
 					</label>
 					<button type="submit">{t("settings.saveTranslation")}</button>
 				</form>
+				{noticeFor("translation")}
 			</section>
 
 			<section aria-labelledby="retention-title" className="settings-section">
@@ -613,6 +769,7 @@ export function SettingsPane({
 						</select>
 					</label>
 				))}
+				{noticeFor("retention")}
 			</section>
 
 			<section aria-labelledby="statistics-title" className="settings-section">
@@ -624,63 +781,74 @@ export function SettingsPane({
 						duration: formatDuration(stats.dictationDurationSeconds),
 					})}
 				</p>
-				<p>
-					{stats.timeSavedSeconds === null
-						? t("settings.timeSavedNeedsSpeed")
-						: stats.timeSavedSeconds >= 0
+				{stats.timeSavedSeconds === null ? null : (
+					<p>
+						{stats.timeSavedSeconds >= 0
 							? t("settings.timeSaved", {
-									duration: formatDuration(Math.abs(stats.timeSavedSeconds)),
+									duration: formatDuration(stats.timeSavedSeconds),
 								})
 							: t("settings.slowerThanTyping", {
-									duration: formatDuration(Math.abs(stats.timeSavedSeconds)),
+									duration: formatDuration(stats.timeSavedSeconds),
 								})}
-				</p>
-				{settings.typingSpeedWordsPerMinute === null ? null : (
-					<p>
-						{t("settings.measuredSpeed", {
-							speed: Math.round(settings.typingSpeedWordsPerMinute),
-						})}
 					</p>
 				)}
 				<p>{t("settings.typingPrompt")}</p>
-				<blockquote>{t("settings.calibrationText")}</blockquote>
-				{typingStartedAt === null ? (
-					<button onClick={startTypingTest} type="button">
-						{t("settings.startTypingTest")}
-					</button>
-				) : (
-					<>
-						<label htmlFor="typing-test-text">
-							{t("settings.typingTestText")}
-							<textarea
-								id="typing-test-text"
-								onChange={(event) => setTypingText(event.target.value)}
-								ref={typingInput}
-								value={typingText}
-							/>
-						</label>
-						<button onClick={() => void finishTypingTest()} type="button">
-							{t("settings.saveMeasuredSpeed")}
-						</button>
-					</>
-				)}
+				<blockquote className="typing-sentence">
+					{t("settings.calibrationText")}
+				</blockquote>
+				<label htmlFor="typing-test-text">
+					{t("settings.typingTestText")}
+					<textarea
+						aria-describedby="typing-test-hint"
+						autoComplete="off"
+						id="typing-test-text"
+						onChange={(event) => editTypingTest(event.target.value)}
+						spellCheck={false}
+						value={typingTestText}
+					/>
+				</label>
+				<p className="hint" id="typing-test-hint">
+					{t("settings.typingTestHint")}
+				</p>
+				<button
+					disabled={!typingTestText.trim()}
+					onClick={() => void saveMeasuredSpeed()}
+					type="button"
+				>
+					{t("settings.saveMeasuredSpeed")}
+				</button>
+				<form onSubmit={saveTypingSpeed}>
+					<label htmlFor="typing-speed">
+						{t("settings.typingSpeed")}
+						<input
+							aria-describedby="typing-speed-hint"
+							id="typing-speed"
+							inputMode="numeric"
+							max={MAX_TYPING_SPEED_WPM}
+							min={1}
+							onChange={(event) => setTypingSpeed(event.target.value)}
+							step={1}
+							type="number"
+							value={typingSpeed}
+						/>
+					</label>
+					<p className="hint" id="typing-speed-hint">
+						{t("settings.typingSpeedHint", {
+							average: DEFAULT_TYPING_SPEED_WPM,
+						})}
+					</p>
+					<button type="submit">{t("settings.saveTypingSpeed")}</button>
+				</form>
+				{noticeFor("statistics")}
 			</section>
 
 			<section aria-labelledby="storage-title" className="settings-section">
 				<h3 id="storage-title">{t("settings.storageTitle")}</h3>
-				<p>{t("settings.dataDirectory", { path: storage.dataDir })}</p>
 				<p>
 					{t("settings.usesDisk", { size: formatBytes(storage.usedBytes) })}
 				</p>
-				<p>
-					{t("settings.freeDisk", { size: formatBytes(storage.freeBytes) })}
-				</p>
 				<a href="/bff/library/export">{t("settings.downloadExport")}</a>
 			</section>
-
-			<p aria-live="polite" className="status">
-				{message}
-			</p>
 		</section>
 	);
 }

@@ -1,4 +1,7 @@
-import { getDefaultMicrophoneId } from "../lib/audio/microphone";
+import {
+	MIC_GRANTED_STORAGE_KEY,
+	getDefaultMicrophoneId,
+} from "../lib/audio/microphone";
 import { getTabCaptureStreamId } from "../lib/audio/tab-capture";
 /**
  * Background service worker — single entry point per ADR-0005.
@@ -15,6 +18,10 @@ import { getTabCaptureStreamId } from "../lib/audio/tab-capture";
 import { getBffAuthSession, logoutBff } from "../lib/bff/auth";
 import { getBffOrigin } from "../lib/bff/client";
 import {
+	type RecordingRequest,
+	commandRecording,
+} from "../lib/commands/command-recording";
+import {
 	type CommandPress,
 	nextCommandPress,
 } from "../lib/commands/multi-press";
@@ -29,14 +36,28 @@ import {
 	deliverToQuill,
 	installDeliveryBridge,
 } from "../lib/delivery/page-bridge";
-import { isDeliveryEnabled } from "../lib/delivery/site-settings";
+import {
+	deliveryOrigin,
+	isDeliveryEnabled,
+} from "../lib/delivery/site-settings";
 import { onMessage, sendMessage } from "../lib/messaging/bridge";
-import type { DictationTranslation, Message } from "../lib/messaging/types";
+import type { Message } from "../lib/messaging/types";
+import {
+	SAME_TRANSLATION_LANGUAGE_MESSAGE,
+	getRecordingPreferences,
+} from "../lib/recording-preferences";
 import type { RecordingMode, RecordingState } from "../lib/types";
 import { INPUT_TIMING } from "../src/core/constants";
+import { EXTENSION_DICTATION_EVENT } from "../web/src/dictation";
 
 export default defineBackground(() => {
 	let currentState: RecordingState = "idle";
+	let currentMode: RecordingMode = "voice";
+	/** Set from the first start until it records or fails, so a second start cannot replace it. */
+	let startInFlight = false;
+	/** Bumped when a recording is discarded, so a start still waiting for the microphone gives up. */
+	let startGeneration = 0;
+	let micPermissionTabId: number | undefined;
 	const completedSources = new Set<"mic" | "tab">();
 	const persistedSources = new Set<"mic" | "tab">();
 	const KEEPALIVE_ALARM = "recording-keepalive";
@@ -64,8 +85,16 @@ export default defineBackground(() => {
 		chrome.alarms.clear(KEEPALIVE_ALARM);
 	}
 
-	// Side panel opens on action click
-	chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+	// The toolbar button opens the side panel. Chrome grants activeTab, which
+	// tab capture needs, only when the extension handles the click itself; with
+	// openPanelOnActionClick the panel opened but Meeting could never record.
+	chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+	chrome.action.onClicked.addListener((tab) => {
+		// Called straight from the click, as sidePanel.open needs a user gesture.
+		chrome.sidePanel.open({ windowId: tab.windowId }).catch((error) => {
+			logError("bg:openSidePanel", error);
+		});
+	});
 
 	// Log uncaught errors in service worker
 	self.addEventListener("error", (event) => {
@@ -87,6 +116,10 @@ export default defineBackground(() => {
 	});
 
 	crashLog("bg", "info", "Service worker started");
+
+	// Older versions kept up to 50 copies of every panel transcript here, and
+	// nothing ever read them; the panel now keeps one draft in session storage.
+	chrome.storage.local.remove("diduny_transcripts").catch(() => {});
 
 	// Dump crash logs on startup for debugging
 	getCrashLogs().then((logs) => {
@@ -137,12 +170,18 @@ export default defineBackground(() => {
 					return true;
 				}
 
+				// A reopened side panel shows the recording that is still running.
+				case "getRecordingState": {
+					sendResponse({ mode: currentMode, state: currentState });
+					return false;
+				}
+
 				case "signOutRequest": {
-					logoutBff()
-						.then(() => {
-							sendMessage({ type: "forceClose" }).catch(() => {});
-							sendResponse({ ok: true });
-						})
+					// Logout ends the recording too; otherwise the panel comes back to a
+					// capture that no longer exists and stays on Processing.
+					discardRecording()
+						.then(() => logoutBff())
+						.then(() => sendResponse({ ok: true }))
 						.catch((error) =>
 							sendResponse({
 								ok: false,
@@ -162,22 +201,56 @@ export default defineBackground(() => {
 	chrome.commands.onCommand.addListener(async (command) => {
 		if (currentState === "recording") {
 			await stopRecording();
-		} else if (
-			currentState === "idle" ||
-			currentState === "success" ||
-			currentState === "error"
-		) {
-			if (command === "toggle-recording") {
-				await handleDictationCommandPress();
-			} else if (command === "toggle-translation") {
-				await startRecording("translation", "uk", false, {
-					targetLanguage: "en",
-				});
-			} else if (command === "start-meeting") {
-				await startRecording("meeting", "uk", false);
-			}
+			return;
+		}
+		if (command === "toggle-recording" && (await forwardDictationToWebApp()))
+			return;
+		if (!canStart()) return;
+		if (command === "toggle-recording") {
+			await handleDictationCommandPress();
+		} else if (command === "toggle-translation") {
+			await startRecording(
+				commandRecording("translation", await getRecordingPreferences()),
+			);
+		} else if (command === "start-meeting") {
+			await startRecording(
+				commandRecording("meeting", await getRecordingPreferences()),
+			);
 		}
 	});
+
+	function canStart() {
+		return (
+			!startInFlight &&
+			(currentState === "idle" ||
+				currentState === "success" ||
+				currentState === "error")
+		);
+	}
+
+	/**
+	 * Chrome gives Alt+Shift+V to the extension on every tab, so the Diduny web
+	 * app never sees the key. On its tab, hand the press back to the page.
+	 */
+	async function forwardDictationToWebApp() {
+		const [tab] = await chrome.tabs.query({
+			active: true,
+			lastFocusedWindow: true,
+		});
+		if (!tab?.id || !tab.url) return false;
+		if (new URL(tab.url).origin !== (await getBffOrigin())) return false;
+		try {
+			await chrome.scripting.executeScript({
+				target: { tabId: tab.id },
+				func: (eventName: string) => window.dispatchEvent(new Event(eventName)),
+				args: [EXTENSION_DICTATION_EVENT],
+			});
+			return true;
+		} catch (err) {
+			logError("bg:forwardDictation", err);
+			return false;
+		}
+	}
 
 	async function handleDictationCommandPress() {
 		const next = nextCommandPress(commandPress, Date.now());
@@ -186,19 +259,19 @@ export default defineBackground(() => {
 		if (next.count >= 3) {
 			commandPress = undefined;
 			commandPressTimer = undefined;
-			await startRecording("meeting", "uk", false);
+			await startRecording(
+				commandRecording("meeting", await getRecordingPreferences()),
+			);
 			return;
 		}
 		// ponytail: this is input disambiguation before capture; audio rotation never uses a timer.
 		commandPressTimer = setTimeout(() => {
 			commandPress = undefined;
 			commandPressTimer = undefined;
-			if (
-				currentState === "idle" ||
-				currentState === "success" ||
-				currentState === "error"
-			)
-				void startRecording("voice", "uk", false);
+			if (canStart())
+				void getRecordingPreferences().then((preferences) =>
+					startRecording(commandRecording("voice", preferences)),
+				);
 		}, INPUT_TIMING.multiPressWindowMs);
 	}
 
@@ -207,13 +280,13 @@ export default defineBackground(() => {
 		crashLog("bg:msg", "info", `received: ${msg.type}`);
 		switch (msg.type) {
 			case "start-recording": {
-				await startRecording(
-					msg.mode,
-					msg.language,
-					msg.diarization,
-					msg.translation,
-					msg.targetTabId,
-				);
+				await startRecording({
+					diarization: msg.diarization,
+					language: msg.language,
+					mode: msg.mode,
+					targetTabId: msg.targetTabId,
+					translation: msg.translation,
+				});
 				break;
 			}
 			case "stop-recording": {
@@ -263,6 +336,9 @@ export default defineBackground(() => {
 				break;
 			}
 			case "capture-error": {
+				// The stored grant was stale; the next record click reopens the permission page.
+				if (msg.reason === "microphone-blocked")
+					await chrome.storage.local.remove(MIC_GRANTED_STORAGE_KEY);
 				completedSources.clear();
 				persistedSources.clear();
 				await clearDeliveryStatus();
@@ -275,35 +351,50 @@ export default defineBackground(() => {
 
 	// ── Recording helpers ───────────────────────────────────────────────────────
 
-	async function startRecording(
-		mode: RecordingMode,
-		language: string,
-		diarization: boolean,
-		translation?: DictationTranslation,
-		targetTabId?: number,
-	) {
+	async function startRecording({
+		diarization,
+		language,
+		mode,
+		targetTabId,
+		translation,
+	}: RecordingRequest) {
+		if (!canStart()) {
+			// A second click or shortcut must not restart the capture or replace
+			// the field chosen at the first start; show the waiting page instead.
+			crashLog("bg:startIgnored", "info", `state=${currentState}`);
+			await focusMicPermissionTab();
+			return;
+		}
 		crashLog(
 			"bg:startRecording",
 			"info",
 			`mode=${mode}, lang=${language}, diarization=${diarization}`,
 		);
-
-		const [session, bffOrigin, microphoneDeviceId] = await Promise.all([
-			getBffAuthSession(),
-			getBffOrigin(),
-			getDefaultMicrophoneId(),
-		]);
-		if (!session.authenticated) {
-			await setState("error", "Not authenticated");
+		if (translation && translation.targetLanguage === language) {
+			await setState("error", SAME_TRANSLATION_LANGUAGE_MESSAGE);
 			return;
 		}
 
+		startInFlight = true;
+		const generation = startGeneration;
 		try {
+			const [session, bffOrigin, microphoneDeviceId] = await Promise.all([
+				getBffAuthSession(),
+				getBffOrigin(),
+				getDefaultMicrophoneId(),
+			]);
+			if (!session.authenticated) {
+				// The web sign-out also ended this session; the panel offers sign-in again.
+				await sendMessage({ type: "session-ended" });
+				await setState("idle");
+				return;
+			}
+
 			completedSources.clear();
 			persistedSources.clear();
 			await clearDeliveryStatus();
 			const delivery =
-				mode !== "meeting" ? await prepareDeliveryTarget() : undefined;
+				mode !== "meeting" ? await prepareDeliveryTarget(bffOrigin) : undefined;
 			await saveDeliverySession(delivery?.session);
 			if (mode !== "meeting") {
 				await sendMessage({
@@ -312,8 +403,11 @@ export default defineBackground(() => {
 					reason: delivery?.reason,
 				});
 			}
+			currentMode = mode;
+			await setState("starting");
 			await ensureMicPermission();
 			crashLog("bg:startRecording", "info", "mic permission OK");
+			if (generation !== startGeneration) return;
 
 			await createOffscreen();
 			crashLog("bg:startRecording", "info", "offscreen created");
@@ -323,7 +417,6 @@ export default defineBackground(() => {
 					? await meetingTabCaptureStreamId(targetTabId)
 					: undefined;
 
-			await setState("starting");
 			startKeepalive();
 			await sendToOffscreenWithRetry({
 				type: "start-capture",
@@ -337,36 +430,71 @@ export default defineBackground(() => {
 			});
 		} catch (err) {
 			stopKeepalive();
+			// Logout discarded this start while it waited; it already reset the state.
+			if (generation !== startGeneration) return;
 			await clearDeliveryStatus();
 			logError("bg:startRecording", err);
 			const msg =
 				err instanceof Error ? err.message : "Failed to start recording";
 			await setState("error", msg);
+			await closeOffscreen();
+		} finally {
+			startInFlight = false;
 		}
 	}
 
 	async function stopRecording() {
+		if (!(await chrome.offscreen.hasDocument().catch(() => false))) {
+			// Nothing is capturing any more, so there is no result to wait for.
+			stopKeepalive();
+			await clearDeliveryStatus();
+			await setState("idle");
+			return;
+		}
 		await setState("processing");
 		await sendDeliveryStatus("processing");
 		await sendMessage({ type: "stop-capture" });
 	}
 
-	async function meetingTabCaptureStreamId(targetTabId?: number) {
-		if (targetTabId)
-			return getTabCaptureStreamId(
-				chrome.tabCapture,
-				chrome.runtime,
-				targetTabId,
-			);
-		const [tab] = await chrome.tabs.query({
-			active: true,
-			lastFocusedWindow: true,
-		});
-		if (!tab?.id) throw new Error("Could not find the active browser tab");
-		return getTabCaptureStreamId(chrome.tabCapture, chrome.runtime, tab.id);
+	/** Ends a running or starting recording without a result, e.g. on Logout. */
+	async function discardRecording() {
+		startGeneration += 1;
+		const capturing = await chrome.offscreen.hasDocument().catch(() => false);
+		if (!capturing && currentState !== "starting") return;
+		completedSources.clear();
+		persistedSources.clear();
+		if (micPermissionTabId !== undefined)
+			await chrome.tabs.remove(micPermissionTabId).catch(() => {});
+		// The offscreen document answers once its capture and scratch audio are gone.
+		if (capturing)
+			await chrome.runtime
+				.sendMessage({ type: "forceClose" } satisfies Message)
+				.catch(() => {});
+		await clearDeliveryStatus();
+		await closeOffscreen();
+		await setState("idle");
 	}
 
-	async function prepareDeliveryTarget(): Promise<{
+	async function meetingTabCaptureStreamId(targetTabId?: number) {
+		const tab = targetTabId
+			? await chrome.tabs.get(targetTabId).catch(() => undefined)
+			: (
+					await chrome.tabs.query({
+						active: true,
+						lastFocusedWindow: true,
+					})
+				)[0];
+		const tabId = targetTabId ?? tab?.id;
+		if (!tabId) throw new Error("Could not find the active browser tab");
+		return getTabCaptureStreamId(
+			chrome.tabCapture,
+			chrome.runtime,
+			tabId,
+			tab?.url,
+		);
+	}
+
+	async function prepareDeliveryTarget(bffOrigin: string): Promise<{
 		reason?: DeliveryUnavailableReason;
 		session?: DeliverySession;
 	}> {
@@ -375,6 +503,14 @@ export default defineBackground(() => {
 			lastFocusedWindow: true,
 		});
 		if (!tab?.id || !tab.url) return { reason: "no-text-field" };
+		// New Tab, about:blank and extension pages are not sites the user can disable.
+		if (!deliveryOrigin(tab.url)) return { reason: "browser-page" };
+		// Deliberately not synced: the Diduny web app keeps its own dictation
+		// document. Typing the extension's result into it mixed two transcripts
+		// (the panel shows live text, the page got the final upload), so on the
+		// web app's origin the text stays in the side panel only.
+		if (new URL(tab.url).origin === bffOrigin)
+			return { reason: "diduny-web-app" };
 		if (!(await isDeliveryEnabled(tab.url))) return { reason: "site-disabled" };
 
 		try {
@@ -430,7 +566,7 @@ export default defineBackground(() => {
 							type: "diduny:deliver-transcript",
 							text,
 						},
-						{ frameId: session.frameId },
+						deliveryTarget(session),
 					);
 				}
 				crashLog(
@@ -451,6 +587,12 @@ export default defineBackground(() => {
 				"warn",
 				err instanceof Error ? err.message : "Could not deliver transcript",
 			);
+			// The page navigated or closed, so its field is gone; say so instead of a bare Done.
+			await sendMessage({
+				type: "delivery-availability",
+				available: false,
+				reason: "target-unavailable",
+			});
 		} finally {
 			await sendDeliveryStatus("clear", session);
 			await clearDeliverySession();
@@ -493,9 +635,16 @@ export default defineBackground(() => {
 			.sendMessage(
 				target.tabId,
 				{ type: "diduny:delivery-status", status },
-				{ frameId: target.frameId },
+				deliveryTarget(target),
 			)
 			.catch(() => {});
+	}
+
+	/** Messages go to the document the field was in, never to a page that replaced it. */
+	function deliveryTarget(session: DeliverySession) {
+		return session.documentId
+			? { documentId: session.documentId }
+			: { frameId: session.frameId };
 	}
 
 	async function saveDeliverySession(session: DeliverySession | undefined) {
@@ -538,7 +687,12 @@ export default defineBackground(() => {
 
 	async function setState(state: RecordingState, error?: string) {
 		currentState = state;
-		await sendMessage({ type: "recording-state-changed", state, error });
+		await sendMessage({
+			type: "recording-state-changed",
+			state,
+			error,
+			mode: currentMode,
+		});
 		updateBadge(state);
 	}
 
@@ -563,9 +717,15 @@ export default defineBackground(() => {
 	}
 
 	async function ensureMicPermission(): Promise<void> {
-		const { micGranted } = await chrome.storage.local.get("micGranted");
-		if (micGranted) return;
+		const granted = async () =>
+			Boolean(
+				(await chrome.storage.local.get(MIC_GRANTED_STORAGE_KEY))[
+					MIC_GRANTED_STORAGE_KEY
+				],
+			);
+		if (await granted()) return;
 
+		await sendMessage({ type: "microphone-permission", status: "waiting" });
 		return new Promise((resolve, reject) => {
 			chrome.tabs.create(
 				{ url: chrome.runtime.getURL("/mic-permission.html") },
@@ -576,17 +736,37 @@ export default defineBackground(() => {
 					}
 
 					const tabId = tab.id;
+					micPermissionTabId = tabId;
+					// The page records the grant itself; closing it proves nothing.
 					const listener = (closedTabId: number) => {
-						if (closedTabId === tabId) {
-							chrome.tabs.onRemoved.removeListener(listener);
-							chrome.storage.local.set({ micGranted: true });
-							resolve();
-						}
+						if (closedTabId !== tabId) return;
+						chrome.tabs.onRemoved.removeListener(listener);
+						if (micPermissionTabId === tabId) micPermissionTabId = undefined;
+						granted().then((ok) => {
+							if (ok) resolve();
+							else
+								reject(
+									new Error(
+										"Microphone access was not granted. Click record to try again.",
+									),
+								);
+						}, reject);
 					};
 					chrome.tabs.onRemoved.addListener(listener);
 				},
 			);
 		});
+	}
+
+	async function focusMicPermissionTab() {
+		if (micPermissionTabId === undefined) return;
+		const tab = await chrome.tabs
+			.update(micPermissionTabId, { active: true })
+			.catch(() => undefined);
+		if (tab?.windowId !== undefined)
+			await chrome.windows
+				.update(tab.windowId, { focused: true })
+				.catch(() => undefined);
 	}
 
 	async function createOffscreen() {

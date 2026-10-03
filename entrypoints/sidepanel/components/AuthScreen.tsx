@@ -36,7 +36,7 @@ export function AuthScreen({ loading, error, onOpenSignIn, onRefresh }: Props) {
 				{loading ? "Checking..." : "I signed in"}
 			</button>
 
-			{error && <div className="error-msg">{error}</div>}
+			{error && <output className="error-msg">{error}</output>}
 		</div>
 	);
 }

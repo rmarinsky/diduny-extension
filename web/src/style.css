@@ -1,7 +1,72 @@
 :root {
-	color: #1c1c1c;
-	background: #f6f3ee;
+	color-scheme: light;
+	--bg: #f6f3ee;
+	--surface: #fff;
+	--text: #1c1c1c;
+	--muted: #555;
+	--border: #aaa;
+	--border-subtle: #d7d2ca;
+	--border-strong: #222;
+	--outline: #767676;
+	--button-bg: #222;
+	--button-text: #fff;
+	--focus: #005fcc;
+	--link: #0b57b8;
+	--meter-track: #d7d2ca;
+	--meter-fill: #28714b;
+	--warning: #7a3700;
+	--error: #a3261d;
+	--provisional: #595959;
+	--backdrop: rgb(0 0 0 / 45%);
+	color: var(--text);
+	background: var(--bg);
 	font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		color-scheme: dark;
+		--bg: #161514;
+		--surface: #211f1d;
+		--text: #ece8e1;
+		--muted: #b5afa6;
+		--border: #85807a;
+		--border-subtle: #3a3734;
+		--border-strong: #ece8e1;
+		--outline: #8f8a83;
+		--button-bg: #ece8e1;
+		--button-text: #161514;
+		--focus: #8ab4f8;
+		--link: #9cc3ff;
+		--meter-track: #3b3834;
+		--meter-fill: #4cc38a;
+		--warning: #f2a766;
+		--error: #ffb4ab;
+		--provisional: #a9a39a;
+		--backdrop: rgb(0 0 0 / 65%);
+	}
+}
+
+:root[data-theme="dark"] {
+	color-scheme: dark;
+	--bg: #161514;
+	--surface: #211f1d;
+	--text: #ece8e1;
+	--muted: #b5afa6;
+	--border: #85807a;
+	--border-subtle: #3a3734;
+	--border-strong: #ece8e1;
+	--outline: #8f8a83;
+	--button-bg: #ece8e1;
+	--button-text: #161514;
+	--focus: #8ab4f8;
+	--link: #9cc3ff;
+	--meter-track: #3b3834;
+	--meter-fill: #4cc38a;
+	--warning: #f2a766;
+	--error: #ffb4ab;
+	--provisional: #a9a39a;
+	--backdrop: rgb(0 0 0 / 65%);
 }
 
 * {
@@ -10,6 +75,12 @@
 
 body {
 	margin: 0;
+	color: var(--text);
+	background: var(--bg);
+}
+
+a {
+	color: var(--link);
 }
 
 button,
@@ -21,12 +92,17 @@ textarea {
 
 button {
 	min-height: 44px;
-	border: 1px solid #222;
+	border: 1px solid var(--border-strong);
 	border-radius: 0.4rem;
-	background: #222;
-	color: #fff;
+	background: var(--button-bg);
+	color: var(--button-text);
 	padding: 0.55rem 0.8rem;
 	cursor: pointer;
+}
+
+button.secondary {
+	background: transparent;
+	color: var(--text);
 }
 
 button:disabled {
@@ -39,54 +115,190 @@ select,
 textarea {
 	min-height: 44px;
 	width: 100%;
-	border: 1px solid #aaa;
+	border: 1px solid var(--border);
 	border-radius: 0.4rem;
-	background: #fff;
+	background: var(--surface);
+	color: var(--text);
 	padding: 0.6rem;
+}
+
+input[aria-invalid="true"] {
+	border-color: var(--error);
 }
 
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
+summary:focus-visible,
 textarea:focus-visible,
 a:focus-visible {
-	outline: 3px solid #005fcc;
+	outline: 3px solid var(--focus);
 	outline-offset: 3px;
 }
 
 .shell {
 	width: min(100% - 2rem, 58rem);
 	margin: 0 auto;
-	padding: 2rem 0;
+	padding: 1.25rem 0 2rem;
 }
 
 .auth {
 	width: min(100% - 2rem, 27rem);
 }
 
-.onboarding-dialog {
-	position: fixed;
-	inset: 1rem;
-	z-index: 10;
-	width: min(100% - 2rem, 38rem);
-	height: fit-content;
-	max-height: calc(100vh - 2rem);
-	margin: auto;
-	overflow: auto;
-	border: 1px solid #222;
-	border-radius: 0.5rem;
-	background: #f6f3ee;
-	padding: 1.5rem;
+.app-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 0.7rem 1rem;
 }
 
-.auth form,
-.workspace {
+.app-bar h1 {
+	margin: 0;
+}
+
+button.theme-toggle {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 44px;
+	padding: 0;
+	border-radius: 50%;
+}
+
+.start {
+	display: grid;
+	gap: 1.25rem;
+	width: min(100% - 2rem, 40rem);
+}
+
+.start .lead {
+	margin: 0;
+	font-size: 1.1rem;
+	color: var(--muted);
+}
+
+.start > button.primary {
+	justify-self: stretch;
+}
+
+.card {
+	display: grid;
+	gap: 0.75rem;
+	padding: 1.25rem;
+	border: 1px solid var(--border-subtle);
+	border-radius: 0.6rem;
+	background: var(--surface);
+	line-height: 1.5;
+}
+
+.card h2,
+.card p {
+	margin: 0;
+}
+
+.card h2:focus {
+	outline: none;
+}
+
+.card .note {
+	color: var(--muted);
+}
+
+.card-actions {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.7rem;
+}
+
+.about {
+	max-width: 44rem;
+}
+
+.flow {
+	max-width: 44rem;
+}
+
+.flow .note:first-child {
+	font-size: 0.9rem;
+}
+
+.flow h3 {
+	margin: 0;
+	font-size: 1.05rem;
+}
+
+.microphone-choice {
+	display: grid;
+	gap: 0.6rem;
+}
+
+.microphone-choice p {
+	margin: 0;
+}
+
+label.checkbox {
+	min-height: 44px;
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	font-weight: 600;
+}
+
+label.checkbox input {
+	width: 1.1rem;
+	height: 1.1rem;
+}
+
+.field-error {
+	margin: 0;
+	color: var(--error);
+	font-weight: 600;
+}
+
+.confirm-dialog {
+	width: min(100% - 2rem, 26rem);
+	padding: 1.5rem;
+	border: 1px solid var(--border-strong);
+	border-radius: 0.6rem;
+	background: var(--bg);
+	color: var(--text);
+}
+
+.confirm-dialog::backdrop {
+	background: var(--backdrop);
+}
+
+.confirm-dialog h2 {
+	margin: 0 0 0.5rem;
+	font-size: 1.25rem;
+}
+
+.confirm-dialog p {
+	margin: 0 0 1.25rem;
+	color: var(--muted);
+}
+
+.dialog-actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 0.7rem;
+}
+
+.auth form {
 	display: grid;
 	gap: 1rem;
 }
 
-.auth label,
-.language {
+.workspace {
+	display: grid;
+	gap: 0.9rem;
+}
+
+.auth label {
 	display: grid;
 	gap: 0.35rem;
 	font-weight: 600;
@@ -112,6 +324,30 @@ a:focus-visible {
 	margin: 0;
 }
 
+.workspace h1 {
+	font-size: 1.6rem;
+	line-height: 1.2;
+}
+
+button.brand {
+	min-height: 44px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: inherit;
+	font-weight: inherit;
+}
+
+button.brand:hover {
+	text-decoration: underline;
+	text-underline-offset: 0.2em;
+}
+
+.workspace header .account {
+	color: var(--muted);
+	font-size: 0.9rem;
+}
+
 textarea {
 	min-height: 20rem;
 	resize: vertical;
@@ -124,9 +360,9 @@ textarea {
 	justify-content: flex-end;
 }
 
-.workspace-actions nav button[aria-current="page"] {
-	background: #f6f3ee;
-	color: #222;
+.workspace-actions button[aria-current="page"] {
+	background: var(--bg);
+	color: var(--text);
 }
 
 .library,
@@ -163,6 +399,10 @@ textarea {
 	margin: 0;
 }
 
+.settings h3[tabindex="-1"]:focus {
+	outline: none;
+}
+
 .settings > header {
 	display: flex;
 	align-items: baseline;
@@ -172,7 +412,7 @@ textarea {
 
 .settings-section {
 	padding: 1rem;
-	border: 1px solid #aaa;
+	border: 1px solid var(--border);
 	border-radius: 0.4rem;
 }
 
@@ -183,13 +423,129 @@ textarea {
 }
 
 .settings-section label.checkbox {
-	min-height: 44px;
 	display: flex;
-	align-items: center;
 }
 
 .settings-section label.checkbox input {
 	width: auto;
+}
+
+.hint {
+	margin: 0;
+	color: var(--muted);
+	font-size: 0.95rem;
+	font-weight: 400;
+}
+
+.term-field {
+	display: grid;
+	gap: 0.35rem;
+}
+
+.term-box {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.4rem;
+	padding: 0.35rem;
+	border: 1px solid var(--border);
+	border-radius: 0.4rem;
+	background: var(--surface);
+}
+
+.term-box:has(input:focus-visible) {
+	outline: 3px solid var(--focus);
+	outline-offset: 3px;
+}
+
+.term-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.term-chips li {
+	display: inline-flex;
+	align-items: center;
+	padding-left: 0.75rem;
+	border: 1px solid var(--border-subtle);
+	border-radius: 999px;
+	background: var(--bg);
+}
+
+.term-chips button {
+	min-width: 44px;
+	padding: 0 0.6rem;
+	border: none;
+	border-radius: 999px;
+	background: transparent;
+	color: var(--text);
+	font-size: 1.15rem;
+	line-height: 1;
+}
+
+.term-box input:not([type="checkbox"]) {
+	flex: 1 1 10rem;
+	width: auto;
+	border: none;
+	background: transparent;
+	padding: 0.4rem;
+}
+
+.term-box input:focus-visible {
+	outline: none;
+}
+
+.shortcut-field {
+	display: grid;
+	gap: 0.5rem;
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	border: none;
+}
+
+.shortcut-field legend {
+	margin-bottom: 0.35rem;
+	padding: 0;
+	font-weight: 600;
+}
+
+.shortcut-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: 0.5rem;
+}
+
+button.toggle {
+	background: transparent;
+	color: var(--text);
+}
+
+button.toggle[aria-pressed="true"] {
+	background: var(--button-bg);
+	color: var(--button-text);
+}
+
+.shortcut-plus {
+	display: flex;
+	align-items: center;
+	min-height: 44px;
+	font-weight: 700;
+}
+
+.settings-section .shortcut-key input {
+	width: 6rem;
+	font-weight: 700;
+	text-align: center;
+}
+
+.shortcut-preview {
+	font-weight: 600;
 }
 
 .library-filters {
@@ -227,9 +583,9 @@ textarea {
 .history pre {
 	margin: 0;
 	padding: 0.75rem;
-	border: 1px solid #aaa;
+	border: 1px solid var(--border);
 	border-radius: 0.4rem;
-	background: #fff;
+	background: var(--surface);
 	white-space: pre-wrap;
 	word-break: break-word;
 	font: inherit;
@@ -239,13 +595,202 @@ textarea {
 	display: grid;
 	gap: 0.45rem;
 	padding: 0.75rem;
-	border: 1px solid #aaa;
+	border: 1px solid var(--border);
 	border-radius: 0.4rem;
 }
 
 .recovered {
 	font-weight: 700;
-	color: #7a3700;
+	color: var(--warning);
+}
+
+.dictation {
+	display: grid;
+	gap: 0.6rem;
+}
+
+.dictation p {
+	margin: 0;
+}
+
+.language-hints,
+.translation-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.4rem 0.6rem;
+}
+
+.language-hints {
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	border: none;
+}
+
+/* A floated legend is laid out like the other children, so it sits inline with the pills. */
+.language-hints legend {
+	float: left;
+	padding: 0;
+	font-weight: 600;
+}
+
+.language-hints .hint {
+	flex-basis: 100%;
+}
+
+label.checkbox.pill {
+	padding: 0 0.85rem;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--surface);
+	font-weight: 500;
+}
+
+label.checkbox.pill:has(input:checked) {
+	border-color: var(--border-strong);
+	font-weight: 600;
+}
+
+label.checkbox.pill:has(input:disabled) {
+	opacity: 0.6;
+}
+
+.translation-languages {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.4rem 0.6rem;
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	border: none;
+}
+
+fieldset.translation-languages label {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	font-weight: 500;
+}
+
+fieldset.translation-languages select {
+	width: auto;
+	min-width: 9rem;
+}
+
+button.swap {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 44px;
+	padding: 0;
+}
+
+blockquote.typing-sentence {
+	margin: 0;
+	padding: 0.6rem 0.8rem;
+	border-left: 3px solid var(--border-strong);
+	background: var(--bg);
+}
+
+textarea.document {
+	min-height: 14rem;
+}
+
+.controls {
+	flex-wrap: wrap;
+}
+
+/* Keep the space of hidden buttons so the held button never moves. */
+.controls.holding > :not(.hold) {
+	visibility: hidden;
+}
+
+/* Start/Stop labels overlap in one cell, so the button is always as wide as the longer one. */
+button.toggle {
+	display: inline-grid;
+	justify-items: center;
+}
+
+button.toggle > span {
+	grid-area: 1 / 1;
+}
+
+button.toggle > span[aria-hidden="true"] {
+	visibility: hidden;
+}
+
+button.hold {
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+	-webkit-touch-callout: none;
+}
+
+button.hold[aria-pressed="true"] {
+	border-color: var(--meter-fill);
+	background: var(--meter-fill);
+	color: var(--button-text);
+}
+
+.meter-row {
+	flex-wrap: wrap;
+	gap: 0.4rem 0.7rem;
+}
+
+.meter-row .status {
+	flex: 1 1 12rem;
+}
+
+.meter-row .shortcut {
+	margin-left: auto;
+	font-size: 0.9rem;
+}
+
+.paste-translation {
+	border: 1px solid var(--border-subtle);
+	border-radius: 0.5rem;
+	background: var(--surface);
+}
+
+.paste-translation summary {
+	min-height: 44px;
+	padding: 0.65rem 0.9rem;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.paste-body {
+	display: grid;
+	gap: 0.6rem;
+	padding: 0 0.9rem 0.9rem;
+}
+
+.paste-body label {
+	display: grid;
+	gap: 0.35rem;
+	font-weight: 600;
+}
+
+.paste-body textarea {
+	min-height: 6rem;
+}
+
+.paste-body button {
+	justify-self: start;
+}
+
+.translation-result {
+	padding: 0.6rem;
+	border: 1px solid var(--border-subtle);
+	border-radius: 0.4rem;
+	background: var(--bg);
+	white-space: pre-wrap;
+}
+
+.translation-result:empty {
+	display: none;
 }
 
 .meter {
@@ -253,7 +798,7 @@ textarea {
 	height: 0.55rem;
 	overflow: hidden;
 	border-radius: 1rem;
-	background: #d7d2ca;
+	background: var(--meter-track);
 }
 
 .meter span {
@@ -261,7 +806,7 @@ textarea {
 	width: 100%;
 	height: 100%;
 	transform-origin: left;
-	background: #28714b;
+	background: var(--meter-fill);
 	transition: transform 80ms linear;
 }
 
@@ -269,9 +814,9 @@ textarea {
 	display: grid;
 	gap: 0.55rem;
 	padding: 0.9rem;
-	border: 1px solid #767676;
+	border: 1px solid var(--outline);
 	border-radius: 0.4rem;
-	background: #fff;
+	background: var(--surface);
 }
 
 .live-transcript-panel {
@@ -298,13 +843,13 @@ textarea {
 }
 
 .provisional-token {
-	color: #595959;
+	color: var(--provisional);
 }
 
 .status,
 .shortcut {
 	margin: 0;
-	color: #555;
+	color: var(--muted);
 }
 
 .command-palette-backdrop {
@@ -314,7 +859,7 @@ textarea {
 	display: grid;
 	place-items: start center;
 	padding: 4rem 1rem 1rem;
-	background: rgb(0 0 0 / 45%);
+	background: var(--backdrop);
 }
 
 .command-palette {
@@ -325,9 +870,10 @@ textarea {
 	overflow: auto;
 	gap: 0.8rem;
 	padding: 1rem;
-	border: 1px solid #222;
+	border: 1px solid var(--border-strong);
 	border-radius: 0.5rem;
-	background: #f6f3ee;
+	background: var(--bg);
+	color: var(--text);
 }
 
 .command-palette header {
@@ -357,12 +903,14 @@ textarea {
 }
 
 .command-palette li button {
+	display: grid;
 	width: 100%;
+	gap: 0.25rem;
 	text-align: left;
 }
 
 .command-palette li button[aria-current="true"] {
-	outline: 3px solid #005fcc;
+	outline: 3px solid var(--focus);
 	outline-offset: 1px;
 }
 

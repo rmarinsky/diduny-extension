@@ -6,7 +6,7 @@ export async function installSupportedBrowserCapabilities(
 ) {
 	await context.addInitScript((completeOnboarding) => {
 		const browser = globalThis as typeof globalThis & {
-			FileSystemFileHandle?: { prototype: Record<string, unknown> };
+			FileSystemFileHandle?: unknown;
 			SpeechRecognition?: unknown;
 		};
 		const browserNavigator = navigator as Navigator & {
@@ -23,17 +23,6 @@ export async function installSupportedBrowserCapabilities(
 				configurable: true,
 				value: function FileSystemFileHandle() {},
 			});
-		}
-		if (
-			browser.FileSystemFileHandle &&
-			typeof browser.FileSystemFileHandle.prototype.createSyncAccessHandle !==
-				"function"
-		) {
-			Object.defineProperty(
-				browser.FileSystemFileHandle.prototype,
-				"createSyncAccessHandle",
-				{ configurable: true, value: () => undefined },
-			);
 		}
 		if (!browserNavigator.storage) {
 			Object.defineProperty(browserNavigator, "storage", {

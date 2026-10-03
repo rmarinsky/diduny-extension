@@ -3,6 +3,7 @@ import {
 	audioCaptureConstraints,
 	audioInputDevices,
 	microphonePermissionFailure,
+	microphoneStartFailureKey,
 	resolveAudioInput,
 	savedMicrophoneUnavailable,
 } from "./audio-devices";
@@ -45,4 +46,19 @@ test("uses the saved device with dictation-friendly browser audio processing", (
 		noiseSuppression: true,
 	});
 	expect(audioCaptureConstraints(null)).not.toHaveProperty("deviceId");
+});
+
+test("explains each microphone start failure instead of one generic message", () => {
+	expect(microphoneStartFailureKey({ name: "NotAllowedError" })).toBe(
+		"status.microphoneBlocked",
+	);
+	expect(microphoneStartFailureKey({ name: "NotFoundError" })).toBe(
+		"status.microphoneNotFound",
+	);
+	expect(microphoneStartFailureKey({ name: "NotReadableError" })).toBe(
+		"status.microphoneBusy",
+	);
+	expect(microphoneStartFailureKey(new Error("worklet failed"))).toBe(
+		"status.couldNotStartMicrophone",
+	);
 });

@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import websocket from "@fastify/websocket";
 import { expect, test } from "@playwright/test";
 import Fastify from "fastify";
@@ -41,7 +42,7 @@ test("the optional floating live panel receives tokens and returns safely to the
 	await upstream.listen({ host: "localhost", port: 0 });
 	const bff = await buildServer({
 		library: createE2eLibrary().library,
-		staticDir: new URL("../web/dist", import.meta.url).pathname,
+		staticDir: fileURLToPath(new URL("../web/dist", import.meta.url)),
 		upstreamUrl: serverUrl(upstream),
 	});
 	await bff.listen({ host: "localhost", port: 0 });

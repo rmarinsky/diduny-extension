@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import Fastify from "fastify";
 import { chromium } from "playwright";
@@ -64,7 +65,7 @@ test("the web library searches server-side and edits, copies, plays, and deletes
 	const e2eLibrary = createE2eLibrary([recording]);
 	const bff = await buildServer({
 		library: e2eLibrary.library,
-		staticDir: new URL("../web/dist", import.meta.url).pathname,
+		staticDir: fileURLToPath(new URL("../web/dist", import.meta.url)),
 		upstreamUrl: serverUrl(upstream),
 	});
 	await bff.listen({ host: "localhost", port: 0 });
@@ -189,17 +190,19 @@ test("the web library searches server-side and edits, copies, plays, and deletes
 		await expect(
 			page.getByText("Microphone access is blocked. Open this site’s settings"),
 		).toBeVisible();
-		await page.getByLabel("Toggle dictation").fill("Alt+Shift+M");
+		await page.getByLabel("Key", { exact: true }).press("Alt+Shift+M");
 		await page.getByRole("button", { name: "Save shortcut" }).click();
 		await expect
 			.poll(() => e2eLibrary.settings().dictationShortcut)
 			.toBe("Alt+Shift+M");
 		await page.getByRole("button", { name: "Dictation" }).click();
-		await expect(
-			page.getByText("Shortcut: Alt+Shift+M outside text fields."),
-		).toBeVisible();
+		await expect(page.getByText("Shortcut: Alt + Shift + M")).toBeVisible();
 		await page.getByRole("button", { name: "Settings" }).click();
-		await page.getByLabel("Toggle dictation").fill("Ctrl+R");
+		// Build Ctrl+R from the toggles instead of pressing it, so the browser never reloads.
+		await page.getByRole("button", { exact: true, name: "Alt" }).click();
+		await page.getByRole("button", { exact: true, name: "Shift" }).click();
+		await page.getByRole("button", { exact: true, name: "Ctrl" }).click();
+		await page.getByLabel("Key", { exact: true }).press("r");
 		await page.getByRole("button", { name: "Save shortcut" }).click();
 		await expect(
 			page.getByText("Ctrl+R is reserved by this browser and cannot be used."),

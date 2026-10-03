@@ -1,14 +1,20 @@
 import {
 	extensionTranscriptionConfig,
+	failureMessage,
 	transcribeAudio,
 	transcriptSegments,
+	transcriptionUploadTimeoutMs,
 } from "../../lib/api/transcription";
 import {
 	recoverPartialCapture,
 	releaseCaptureResources,
 	watchForStreamEnd,
 } from "../../lib/audio/capture-resources";
-import { microphoneConstraints } from "../../lib/audio/microphone";
+import {
+	MICROPHONE_BLOCKED_MESSAGE,
+	isMicrophoneBlocked,
+	microphoneConstraints,
+} from "../../lib/audio/microphone";
 import { mixStreams } from "../../lib/audio/mixer";
 import { tabAudioConstraints } from "../../lib/audio/tab-capture";
 import { bffExtensionWebSocketUrl } from "../../lib/bff/client";
@@ -60,10 +66,18 @@ interface AudioPipeline {
 
 let pipelines: AudioPipeline[] = [];
 
+class MicrophoneBlockedError extends Error {}
+
 async function getMicrophoneStream(deviceId: string | null | undefined) {
-	return navigator.mediaDevices.getUserMedia({
-		audio: microphoneConstraints(deviceId ?? null),
-	});
+	try {
+		return await navigator.mediaDevices.getUserMedia({
+			audio: microphoneConstraints(deviceId ?? null),
+		});
+	} catch (error) {
+		if (isMicrophoneBlocked(error))
+			throw new MicrophoneBlockedError(MICROPHONE_BLOCKED_MESSAGE);
+		throw error;
+	}
 }
 
 function messageTokens(tokens: readonly RealtimeToken[]) {
@@ -108,10 +122,20 @@ onMessage(async (msg) => {
 		await startCapture(msg);
 	} else if (msg.type === "stop-capture") {
 		await stopCapture();
-	} else if (msg.type === "forceClose") {
-		await discardCapture();
 	}
 });
+
+// Logout waits for this answer before it closes the offscreen document.
+chrome.runtime.onMessage.addListener(
+	(message: unknown, _sender, sendResponse) => {
+		if ((message as { type?: unknown } | null)?.type !== "forceClose")
+			return false;
+		discardCapture()
+			.catch((error) => logError("offscreen:discard", error))
+			.finally(() => sendResponse({ ok: true }));
+		return true;
+	},
+);
 
 console.log("[offscreen] loaded");
 
@@ -305,6 +329,9 @@ async function startCapture(msg: StartCapture) {
 		sendMessage({
 			type: "capture-error",
 			error: error instanceof Error ? error.message : "Failed to start capture",
+			...(error instanceof MicrophoneBlockedError
+				? { reason: "microphone-blocked" as const }
+				: {}),
 		});
 	}
 }
@@ -321,12 +348,13 @@ async function stopCapture(partiallyRecovered = false) {
 			let segments: readonly TranscriptSegment[] = [];
 			let transcribed = false;
 			let error: Error | undefined;
+			let realtimeFailure: unknown;
 			try {
 				text = await pipeline.realtime.result;
 				segments = pipeline.realtimeSegments;
 				transcribed = Boolean(text.trim());
 			} catch (cause) {
-				logError("offscreen:realtime", cause);
+				realtimeFailure = cause;
 			}
 			try {
 				if (
@@ -343,6 +371,11 @@ async function stopCapture(partiallyRecovered = false) {
 							translation: pipeline.translation,
 						},
 						pipeline.bffOrigin,
+						{
+							timeoutMs: transcriptionUploadTimeoutMs(
+								recording.durationSeconds,
+							),
+						},
 					);
 					text = result.text;
 					segments = transcriptSegments(result.tokens);
@@ -352,6 +385,16 @@ async function stopCapture(partiallyRecovered = false) {
 				logError("offscreen:transcribe", cause);
 				error =
 					cause instanceof Error ? cause : new Error("Transcription failed");
+			}
+			// The upload covers a stream that ends without a result, so that is only an error when the upload fails too.
+			if (realtimeFailure && transcribed) {
+				crashLog(
+					"offscreen:realtime",
+					"info",
+					`${realtimeFailure instanceof Error ? realtimeFailure.message : String(realtimeFailure)}; transcribed the uploaded recording instead`,
+				);
+			} else if (realtimeFailure) {
+				logError("offscreen:realtime", realtimeFailure);
 			}
 			try {
 				await saveExtensionRecording(
@@ -372,10 +415,10 @@ async function stopCapture(partiallyRecovered = false) {
 				await pipeline.scratch.discard();
 			} catch (cause) {
 				logError("offscreen:library", cause);
-				error =
-					cause instanceof Error
-						? cause
-						: new Error("Could not save the recording to the library");
+				// A failed transcription explains more than the save that failed after it.
+				error ??= new Error(
+					failureMessage(cause, "Could not save the recording to the library"),
+				);
 			}
 			if (transcribed) {
 				await sendMessage({

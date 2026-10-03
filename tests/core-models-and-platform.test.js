@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
 	AUDIO_FORMAT,
 	DEFAULT_SETTINGS,
+	DEFAULT_TYPING_SPEED_WPM,
 	FINALIZE_PROFILES,
 	REALTIME,
 	VAD,
@@ -10,6 +11,8 @@ import {
 	createDiduny,
 	createFakePlatform,
 	displayRecordingText,
+	effectiveTypingSpeed,
+	normalizeSettings,
 	resolveTranscriptHistory,
 	timeSavedSeconds,
 	updateSettings,
@@ -79,6 +82,15 @@ test("resolves legacy history and keeps UI locale independent of speech settings
 		DEFAULT_SETTINGS.speechLanguageHints,
 	);
 	expect(ukrainianUi.microphoneDeviceId).toBe("built-in-mic");
+	expect(DEFAULT_SETTINGS.speechLanguageHints).toEqual(["uk"]);
+	expect(
+		normalizeSettings({
+			speechLanguageHints: ["uk", "en", "uk", "not a code", 7],
+		}).speechLanguageHints,
+	).toEqual(["uk", "en"]);
+	expect(
+		normalizeSettings({ speechLanguageHints: [] }).speechLanguageHints,
+	).toEqual([]);
 
 	const englishTranslation = updateSettings(DEFAULT_SETTINGS, {
 		translationSourceLanguage: "en",
@@ -115,6 +127,9 @@ test("cleans dictation without changing protected terms and calculates measured 
 	).toBe(recording.text);
 	expect(timeSavedSeconds("one two three four", 2, 60)).toBe(2);
 	expect(timeSavedSeconds("one two", 1, null)).toBeNull();
+	expect(DEFAULT_TYPING_SPEED_WPM).toBe(40);
+	expect(effectiveTypingSpeed({ typingSpeedWordsPerMinute: null })).toBe(40);
+	expect(effectiveTypingSpeed({ typingSpeedWordsPerMinute: 75 })).toBe(75);
 });
 
 test("constructs the core from a complete platform fake without browser or network access", () => {

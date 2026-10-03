@@ -22,22 +22,19 @@ export default defineConfig({
 		side_panel: {
 			default_path: "sidepanel/index.html",
 		},
-		options_ui: {
-			open_in_tab: true,
-			page: "options/index.html",
-		},
 		commands: {
 			"toggle-recording": {
 				suggested_key: {
-					default: "Alt+Shift+D",
-					mac: "Alt+Shift+D",
+					default: "Alt+Shift+V",
+					mac: "Alt+Shift+V",
 				},
 				description: "Start/stop recording",
 			},
+			// Chrome keeps Alt+Shift+T for its toolbar and never assigns it to an extension.
 			"toggle-translation": {
 				suggested_key: {
-					default: "Alt+Shift+T",
-					mac: "Alt+Shift+T",
+					default: "Alt+V",
+					mac: "Alt+V",
 				},
 				description: "Start or stop translation dictation",
 			},

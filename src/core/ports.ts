@@ -105,6 +105,9 @@ export interface LibraryDetail extends Recording {
 	media: LibraryMedia;
 }
 
+/** The library's display title for a recording without one; clients show their own localized label. */
+export const UNTITLED_RECORDING_TITLE = "Untitled recording";
+
 export interface RecordingSummary {
 	createdAt: number;
 	displayTitle: string;

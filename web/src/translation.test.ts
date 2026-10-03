@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import {
+	MAX_TRANSLATION_QUERY_LENGTH,
 	buildTranscriptionConfig,
+	translationChunks,
 	translationResultText,
 	translationUrl,
 } from "./translation";
@@ -62,4 +64,30 @@ test("joins the translated sentences returned by the proxy", () => {
 	expect(() => translationResultText({ sentences: [] })).toThrow(
 		"empty_result",
 	);
+});
+
+test("splits long pasted text into requests that fit, after sentences when it can", () => {
+	expect(translationChunks("Short text.")).toEqual([
+		{ gap: "", text: "Short text." },
+	]);
+
+	const long = Array.from({ length: 1200 }, () => "слово").join(" ");
+	const chunks = translationChunks(long);
+	expect(chunks.length).toBeGreaterThan(1);
+	for (const chunk of chunks) {
+		expect(
+			translationUrl(chunk.text, { sourceLanguage: "uk", targetLanguage: "en" })
+				.length,
+		).toBeLessThan(MAX_TRANSLATION_QUERY_LENGTH + 100);
+	}
+	expect(chunks.map((chunk) => chunk.text + chunk.gap).join("")).toBe(long);
+
+	expect(
+		translationChunks("One two. Three four five.\nSix", 20).map(
+			(chunk) => chunk.text,
+		),
+	).toEqual(["One two.", "Three four five.", "Six"]);
+	expect(
+		translationChunks("x".repeat(25), 10).map((chunk) => chunk.text),
+	).toEqual(["x".repeat(10), "x".repeat(10), "x".repeat(5)]);
 });

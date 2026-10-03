@@ -22,7 +22,11 @@ import type {
 } from "./src/core/ports";
 import type { Settings } from "./src/core/settings";
 import { isReservedShortcut, normalizeShortcut } from "./src/core/shortcuts";
-import { type BffAuthGateway, ProxyOtpGateway } from "./src/server/auth";
+import {
+	type BffAuthGateway,
+	ProxyOtpGateway,
+	UpstreamAuthError,
+} from "./src/server/auth";
 import type {
 	LibraryExportEntry,
 	LibraryStorageStats,
@@ -119,6 +123,7 @@ const workspaceSettingKeys = [
 	"fillerWords",
 	"microphoneDeviceId",
 	"protectedLexicon",
+	"speechLanguageHints",
 	"textCleanupEnabled",
 	"typingSpeedWordsPerMinute",
 	"translationSourceLanguage",
@@ -503,6 +508,12 @@ function validLanguage(value: unknown): value is string {
 	);
 }
 
+function validLanguageList(value: unknown): value is readonly string[] {
+	return (
+		Array.isArray(value) && value.length <= 10 && value.every(validLanguage)
+	);
+}
+
 function validTerms(value: unknown): value is readonly string[] {
 	return (
 		Array.isArray(value) &&
@@ -545,6 +556,8 @@ function parseWorkspaceSettings(value: unknown): Partial<Settings> | null {
 				settings.microphoneDeviceId.length > 512)) ||
 		("protectedLexicon" in settings &&
 			!validTerms(settings.protectedLexicon)) ||
+		("speechLanguageHints" in settings &&
+			!validLanguageList(settings.speechLanguageHints)) ||
 		("typingSpeedWordsPerMinute" in settings &&
 			settings.typingSpeedWordsPerMinute !== null &&
 			(typeof settings.typingSpeedWordsPerMinute !== "number" ||
@@ -850,7 +863,13 @@ export async function buildServer({
 		try {
 			await authGateway.sendOtp(email);
 			return reply.code(204).send();
-		} catch {
+		} catch (error) {
+			// The sign-in service may be stricter than RFC 5322; report that as a bad address, not an outage.
+			if (
+				error instanceof UpstreamAuthError &&
+				(error.status === 400 || error.status === 422)
+			)
+				return reply.code(400).send({ error: "invalid_email" });
 			return reply.code(502).send({ error: "upstream_auth_unavailable" });
 		}
 	});
@@ -866,8 +885,16 @@ export async function buildServer({
 			const id = await sessions.create(session);
 			reply.header("set-cookie", sessionCookies(id));
 			return { email: session.email };
-		} catch {
-			return reply.code(401).send({ error: "otp_verification_failed" });
+		} catch (error) {
+			// Only a refused code is the person's to fix; outages and rate limits must not read as a wrong code.
+			if (
+				error instanceof UpstreamAuthError &&
+				error.status >= 400 &&
+				error.status < 500 &&
+				error.status !== 429
+			)
+				return reply.code(401).send({ error: "otp_verification_failed" });
+			return reply.code(502).send({ error: "upstream_auth_unavailable" });
 		}
 	});
 	server.get("/bff/auth/session", (request) => sessionResponse(request));

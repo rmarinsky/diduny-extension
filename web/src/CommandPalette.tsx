@@ -8,6 +8,7 @@ import {
 import { useTranslation } from "react-i18next";
 import type { LibraryPage } from "../../src/core/ports";
 import { userErrorMessage } from "./errors";
+import { dateTime, duration, recordingTitle } from "./format";
 import i18n from "./i18n";
 import { getLibraryRecording, listLibraryRecordings } from "./library";
 
@@ -129,7 +130,21 @@ export function CommandPalette({
 								onClick={() => void copy(recording.id)}
 								type="button"
 							>
-								{recording.displayTitle}
+								<span>
+									{recordingTitle(
+										recording.displayTitle,
+										t("library.untitled"),
+									)}
+								</span>
+								{/* Untitled rows look alike, so each one also shows when (to the second), how long, and what. */}
+								<small>
+									{dateTime(recording.createdAt, i18n.language, {
+										withSeconds: true,
+									})}{" "}
+									· {duration(recording.durationSeconds)} ·{" "}
+									{t(`library.typeLabel.${recording.type}`)}
+									{recording.snippet ? ` · ${recording.snippet}` : null}
+								</small>
 							</button>
 						</li>
 					))}
