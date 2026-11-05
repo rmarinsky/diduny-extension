@@ -1,15 +1,10 @@
-import {
-	type KeyboardEvent as ReactKeyboardEvent,
-	useCallback,
-	useEffect,
-	useRef,
-	useState,
-} from "react";
-import { useTranslation } from "react-i18next";
+import { useCallback, useEffect, useRef, useState } from "hono/jsx/dom";
+import { targetValue } from "../../lib/dom-events";
 import type { LibraryPage } from "../../src/core/ports";
 import { userErrorMessage } from "./errors";
 import i18n from "./i18n";
 import { getLibraryRecording, listLibraryRecordings } from "./library";
+import { useTranslation } from "./useTranslation";
 
 export function CommandPalette({
 	onClose,
@@ -62,7 +57,7 @@ export function CommandPalette({
 		[onClose, onCopied, t],
 	);
 
-	function onKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+	function onKeyDown(event: KeyboardEvent) {
 		if (event.key === "Escape") {
 			event.preventDefault();
 			onClose();
@@ -89,11 +84,11 @@ export function CommandPalette({
 	}
 
 	return (
-		<div className="command-palette-backdrop">
+		<div class="command-palette-backdrop">
 			<dialog
 				aria-labelledby="command-palette-title"
 				aria-modal="true"
-				className="command-palette"
+				class="command-palette"
 				onKeyDown={onKeyDown}
 				open
 			>
@@ -107,11 +102,11 @@ export function CommandPalette({
 						×
 					</button>
 				</header>
-				<label htmlFor="command-palette-search">
+				<label for="command-palette-search">
 					{t("commandPalette.search")}
 					<input
 						id="command-palette-search"
-						onChange={(event) => setQuery(event.target.value)}
+						onChange={(event) => setQuery(targetValue(event))}
 						ref={input}
 						value={query}
 					/>

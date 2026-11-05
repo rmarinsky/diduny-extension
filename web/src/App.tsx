@@ -1,13 +1,11 @@
 import {
-	type FormEvent,
-	type PointerEvent as ReactPointerEvent,
+	createPortal,
 	useCallback,
 	useEffect,
 	useRef,
 	useState,
-} from "react";
-import { createPortal } from "react-dom";
-import { useTranslation } from "react-i18next";
+} from "hono/jsx/dom";
+import { targetChecked, targetValue } from "../../lib/dom-events";
 import { isValidEmail, isValidOtp } from "../../src/core/auth-validation";
 import { AUDIO_FORMAT, WEB_LATENCY_TARGET_MS } from "../../src/core/constants";
 import type { RetentionPolicy } from "../../src/core/ports";
@@ -63,6 +61,7 @@ import {
 	translationResultText,
 	translationUrl,
 } from "./translation";
+import { useTranslation } from "./useTranslation";
 import "./style.css";
 
 type AuthState = "checking" | "otp-sent" | "signed-in" | "signed-out";
@@ -149,19 +148,19 @@ function LiveTranscriptPanel({
 }) {
 	const { t } = useTranslation();
 	return (
-		<div className="live-transcript-panel">
+		<div class="live-transcript-panel">
 			<section
-				aria-hidden={announceLiveTranscript ? undefined : true}
+				aria-hidden={announceLiveTranscript ? undefined : "true"}
 				aria-label={t("liveTranscript.title")}
-				className="live-transcript"
+				class="live-transcript"
 			>
 				<h2>{t("liveTranscript.title")}</h2>
 				<p aria-live={announceLiveTranscript ? "polite" : undefined}>
-					<span className="token-state">{t("liveTranscript.final")}</span>
+					<span class="token-state">{t("liveTranscript.final")}</span>
 					<span data-testid="live-final-text">{liveFinalText}</span>
 				</p>
-				<p aria-hidden="true" className="provisional-token">
-					<span className="token-state">{t("liveTranscript.provisional")}</span>
+				<p aria-hidden="true" class="provisional-token">
+					<span class="token-state">{t("liveTranscript.provisional")}</span>
 					<span data-testid="live-provisional-text">{liveProvisionalText}</span>
 				</p>
 			</section>
@@ -180,7 +179,7 @@ export function App() {
 	const missingCapabilities = missingBrowserCapabilities(capabilities);
 	if (missingCapabilities.length) {
 		return (
-			<main className="shell capability-gate">
+			<main class="shell capability-gate">
 				<h1>{t("app.unsupportedBrowser")}</h1>
 				<p>{t("app.unsupportedBrowserIntro")}</p>
 				<ul>
@@ -809,7 +808,7 @@ export function App() {
 		void (isRecording ? finishCapture() : startCapture());
 	}
 
-	function startHoldCapture(event: ReactPointerEvent<HTMLButtonElement>) {
+	function startHoldCapture(event: PointerEvent) {
 		if (event.button !== 0 || captureRef.current || captureState !== "idle")
 			return;
 		holdCaptureRef.current = true;
@@ -842,7 +841,7 @@ export function App() {
 		[],
 	);
 
-	async function sendOtp(event: FormEvent<HTMLFormElement>) {
+	async function sendOtp(event: Event) {
 		event.preventDefault();
 		if (!isValidEmail(email)) {
 			setStatus(t("errors.requestRejected"));
@@ -862,7 +861,7 @@ export function App() {
 		}
 	}
 
-	async function verifyOtp(event: FormEvent<HTMLFormElement>) {
+	async function verifyOtp(event: Event) {
 		event.preventDefault();
 		if (!isValidEmail(email) || !isValidOtp(otp)) {
 			setStatus(t("errors.requestRejected"));
@@ -934,7 +933,7 @@ export function App() {
 	}
 
 	if (authState === "checking") {
-		return <main className="shell">{t("app.checkingSession")}</main>;
+		return <main class="shell">{t("app.checkingSession")}</main>;
 	}
 
 	if (onboardingOpen && authState !== "signed-in") {
@@ -945,17 +944,17 @@ export function App() {
 
 	if (authState !== "signed-in") {
 		return (
-			<main className="shell auth">
+			<main class="shell auth">
 				<h1>{t("app.title")}</h1>
 				<p>{t("auth.description")}</p>
 				{authState === "otp-sent" ? (
 					<form onSubmit={verifyOtp}>
-						<label htmlFor="otp">{t("auth.oneTimeCode")}</label>
+						<label for="otp">{t("auth.oneTimeCode")}</label>
 						<input
 							autoComplete="one-time-code"
 							id="otp"
 							inputMode="numeric"
-							onChange={(event) => setOtp(event.target.value)}
+							onChange={(event) => setOtp(targetValue(event))}
 							pattern="[0-9]{6}"
 							required
 							value={otp}
@@ -967,11 +966,11 @@ export function App() {
 					</form>
 				) : (
 					<form onSubmit={sendOtp}>
-						<label htmlFor="email">{t("auth.email")}</label>
+						<label for="email">{t("auth.email")}</label>
 						<input
 							autoComplete="email"
 							id="email"
-							onChange={(event) => setEmail(event.target.value)}
+							onChange={(event) => setEmail(targetValue(event))}
 							required
 							type="email"
 							value={email}
@@ -979,7 +978,7 @@ export function App() {
 						<button type="submit">{t("auth.sendCode")}</button>
 					</form>
 				)}
-				<p aria-live="polite" className="status">
+				<p aria-live="polite" class="status">
 					{status}
 				</p>
 			</main>
@@ -988,13 +987,13 @@ export function App() {
 
 	const isRecording = captureState === "recording";
 	return (
-		<main className="shell workspace">
+		<main class="shell workspace">
 			<header>
 				<div>
 					<h1>{t("app.title")}</h1>
 					<p>{signedInEmail}</p>
 				</div>
-				<div className="workspace-actions">
+				<div class="workspace-actions">
 					<nav aria-label={t("app.workspace")}>
 						<button
 							aria-current={view === "dictation" ? "page" : undefined}
@@ -1059,20 +1058,20 @@ export function App() {
 				/>
 			) : (
 				<>
-					<label className="language" htmlFor="language">
+					<label class="language" for="language">
 						{t("dictation.languageHints")}
 						<input
 							id="language"
-							onChange={(event) => setLanguage(event.target.value)}
+							onChange={(event) => setLanguage(targetValue(event))}
 							value={language}
 						/>
 					</label>
-					<label className="checkbox" htmlFor="translation-mode">
+					<label class="checkbox" for="translation-mode">
 						<input
 							checked={translationMode}
 							disabled={captureState !== "idle"}
 							id="translation-mode"
-							onChange={(event) => setTranslationMode(event.target.checked)}
+							onChange={(event) => setTranslationMode(targetChecked(event))}
 							type="checkbox"
 						/>
 						{t("dictation.translationMode")}
@@ -1088,7 +1087,7 @@ export function App() {
 					<textarea
 						aria-label={t("dictation.document")}
 						ref={documentInput}
-						onChange={(event) => setDocumentText(event.target.value)}
+						onChange={(event) => setDocumentText(targetValue(event))}
 						placeholder={t("dictation.documentPlaceholder")}
 						value={documentText}
 					/>
@@ -1110,7 +1109,7 @@ export function App() {
 								pictureInPictureContainer,
 							)
 						: null}
-					<div className="controls">
+					<div class="controls">
 						<button
 							disabled={captureState === "sending"}
 							onClick={toggleCapture}
@@ -1149,13 +1148,13 @@ export function App() {
 							{t("dictation.copy")}
 						</button>
 					</div>
-					<div className="meter-row">
+					<div class="meter-row">
 						<div
 							aria-label={t("dictation.microphoneLevel")}
 							aria-valuemax={100}
 							aria-valuemin={0}
 							aria-valuenow={Math.round(level * 100)}
-							className="meter"
+							class="meter"
 							role="progressbar"
 							tabIndex={0}
 						>
@@ -1169,20 +1168,20 @@ export function App() {
 									: t("dictation.meterIdle")}
 						</output>
 					</div>
-					<p className="shortcut">
+					<p class="shortcut">
 						{t("dictation.shortcut", { shortcut: dictationShortcut })}
 					</p>
 					<section
 						aria-labelledby="paste-translation-title"
-						className="settings-section"
+						class="settings-section"
 					>
 						<h2 id="paste-translation-title">{t("dictation.pasteTitle")}</h2>
 						<p>{t("dictation.pasteDescription")}</p>
-						<label htmlFor="translation-text">
+						<label for="translation-text">
 							{t("dictation.textToTranslate")}
 							<textarea
 								id="translation-text"
-								onChange={(event) => setTranslationText(event.target.value)}
+								onChange={(event) => setTranslationText(targetValue(event))}
 								value={translationText}
 							/>
 						</label>
@@ -1199,7 +1198,7 @@ export function App() {
 					</section>
 					<p
 						aria-live="polite"
-						className="status"
+						class="status"
 						ref={statusElement}
 						tabIndex={-1}
 					>

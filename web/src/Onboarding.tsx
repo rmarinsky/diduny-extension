@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useEffect, useRef, useState } from "hono/jsx/dom";
+import { targetChecked } from "../../lib/dom-events";
 import type { RetentionPolicy } from "../../src/core/ports";
+import { useTranslation } from "./useTranslation";
 
 type OnboardingStep = "delivery" | "microphone" | "provider";
 type MicrophoneState = "denied" | "granted" | "idle" | "unsupported";
@@ -47,8 +48,8 @@ export function Onboarding({
 	return (
 		<Container
 			aria-labelledby="onboarding-title"
-			aria-modal={asDialog || undefined}
-			className={
+			aria-modal={asDialog ? "true" : undefined}
+			class={
 				asDialog ? "onboarding onboarding-dialog" : "shell auth onboarding"
 			}
 			role={asDialog ? "dialog" : undefined}
@@ -72,7 +73,7 @@ export function Onboarding({
 					<button onClick={() => void requestMicrophone()} type="button">
 						{t("onboarding.microphone.allow")}
 					</button>
-					<p aria-live="polite" className="status">
+					<p aria-live="polite" class="status">
 						{microphone === "granted"
 							? t("onboarding.microphone.granted")
 							: microphone === "denied"
@@ -106,12 +107,12 @@ export function Onboarding({
 					<h2>{t("onboarding.provider.title")}</h2>
 					<p>{t("onboarding.provider.cloud")}</p>
 					<p>{t("onboarding.provider.noSubstitution")}</p>
-					<label className="checkbox" htmlFor="onboarding-never-save">
+					<label class="checkbox" for="onboarding-never-save">
 						<input
 							checked={retention === "never"}
 							id="onboarding-never-save"
 							onChange={(event) =>
-								setRetention(event.target.checked ? "never" : "forever")
+								setRetention(targetChecked(event) ? "never" : "forever")
 							}
 							type="checkbox"
 						/>

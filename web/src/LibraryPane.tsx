@@ -1,5 +1,5 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useCallback, useEffect, useState } from "hono/jsx/dom";
+import { targetValue } from "../../lib/dom-events";
 import type { ProcessingStatus, RecordingType } from "../../src/core/models";
 import type { LibraryDetail, LibraryPage } from "../../src/core/ports";
 import { userErrorMessage } from "./errors";
@@ -10,6 +10,7 @@ import {
 	listLibraryRecordings,
 	updateLibraryRecording,
 } from "./library";
+import { useTranslation } from "./useTranslation";
 
 const pageSize = 50;
 
@@ -77,7 +78,7 @@ function RecordingDetail({
 		}
 	}
 
-	async function saveDetails(event: FormEvent<HTMLFormElement>) {
+	async function saveDetails(event: Event) {
 		event.preventDefault();
 		setIsSaving(true);
 		setMessage("");
@@ -108,7 +109,7 @@ function RecordingDetail({
 	}
 
 	return (
-		<section aria-labelledby="recording-title" className="recording-detail">
+		<section aria-labelledby="recording-title" class="recording-detail">
 			<button onClick={onBack} type="button">
 				{t("library.back")}
 			</button>
@@ -123,7 +124,7 @@ function RecordingDetail({
 					</p>
 				</div>
 				{recording.status === "partiallyRecovered" ? (
-					<p className="recovered">{t("library.recovered")}</p>
+					<p class="recovered">{t("library.recovered")}</p>
 				) : null}
 			</header>
 			<audio
@@ -140,17 +141,17 @@ function RecordingDetail({
 					srcLang="und"
 				/>
 			</audio>
-			<div className="controls">
+			<div class="controls">
 				<button onClick={() => void copyTranscript()} type="button">
 					{t("library.copyTranscript")}
 				</button>
 			</div>
-			<pre aria-label={t("library.transcript")} className="transcript">
+			<pre aria-label={t("library.transcript")} class="transcript">
 				{recording.displayText}
 			</pre>
 			<section aria-labelledby="history-title">
 				<h3 id="history-title">{t("library.history")}</h3>
-				<ol className="history">
+				<ol class="history">
 					{recording.history.map((version, index) => (
 						<li key={version.id}>
 							<strong>
@@ -167,21 +168,21 @@ function RecordingDetail({
 					))}
 				</ol>
 			</section>
-			<form className="metadata-form" onSubmit={saveDetails}>
+			<form class="metadata-form" onSubmit={saveDetails}>
 				<h3>{t("library.details")}</h3>
-				<label htmlFor="recording-title-input">
+				<label for="recording-title-input">
 					{t("library.recordingTitle")}
 					<input
 						id="recording-title-input"
-						onChange={(event) => setTitle(event.target.value)}
+						onChange={(event) => setTitle(targetValue(event))}
 						value={title}
 					/>
 				</label>
-				<label htmlFor="recording-description-input">
+				<label for="recording-description-input">
 					{t("library.descriptionLabel")}
 					<textarea
 						id="recording-description-input"
-						onChange={(event) => setDescription(event.target.value)}
+						onChange={(event) => setDescription(targetValue(event))}
 						value={description}
 					/>
 				</label>
@@ -189,10 +190,7 @@ function RecordingDetail({
 					{t("library.saveDetails")}
 				</button>
 			</form>
-			<section
-				aria-label={t("library.deleteLabel")}
-				className="delete-recording"
-			>
+			<section aria-label={t("library.deleteLabel")} class="delete-recording">
 				{confirmingDelete ? (
 					<>
 						<p>{t("library.deleteWarning")}</p>
@@ -217,7 +215,7 @@ function RecordingDetail({
 					</button>
 				)}
 			</section>
-			<p aria-live="polite" className="status">
+			<p aria-live="polite" class="status">
 				{message}
 			</p>
 		</section>
@@ -289,7 +287,7 @@ export function LibraryPane({
 		};
 	}, [revision, selectedId, t]);
 
-	function applyFilters(event: FormEvent<HTMLFormElement>) {
+	function applyFilters(event: Event) {
 		event.preventDefault();
 		setQuery({
 			...(search.trim() ? { search: search.trim() } : {}),
@@ -307,7 +305,7 @@ export function LibraryPane({
 	if (selectedId) {
 		if (error) {
 			return (
-				<section className="recording-detail">
+				<section class="recording-detail">
 					<button onClick={returnToList} type="button">
 						{t("library.back")}
 					</button>
@@ -334,25 +332,25 @@ export function LibraryPane({
 	}
 
 	return (
-		<section aria-labelledby="library-title" className="library">
+		<section aria-labelledby="library-title" class="library">
 			<header>
 				<h2 id="library-title">{t("library.title")}</h2>
 				<p>{t("library.description")}</p>
 			</header>
-			<form className="library-filters" onSubmit={applyFilters}>
-				<label htmlFor="library-search">
+			<form class="library-filters" onSubmit={applyFilters}>
+				<label for="library-search">
 					{t("library.search")}
 					<input
 						id="library-search"
-						onChange={(event) => setSearch(event.target.value)}
+						onChange={(event) => setSearch(targetValue(event))}
 						value={search}
 					/>
 				</label>
-				<label htmlFor="library-type">
+				<label for="library-type">
 					{t("library.recordingType")}
 					<select
 						id="library-type"
-						onChange={(event) => setType(event.target.value)}
+						onChange={(event) => setType(targetValue(event))}
 						value={type}
 					>
 						<option value="">{t("library.allTypes")}</option>
@@ -363,11 +361,11 @@ export function LibraryPane({
 						))}
 					</select>
 				</label>
-				<label htmlFor="library-status">
+				<label for="library-status">
 					{t("library.status")}
 					<select
 						id="library-status"
-						onChange={(event) => setStatus(event.target.value)}
+						onChange={(event) => setStatus(targetValue(event))}
 						value={status}
 					>
 						<option value="">{t("library.allStatuses")}</option>
@@ -385,7 +383,7 @@ export function LibraryPane({
 			{!isLoading && !error && page.items.length === 0 ? (
 				<p>{t("library.empty")}</p>
 			) : null}
-			<ul aria-label={t("library.listLabel")} className="recording-list">
+			<ul aria-label={t("library.listLabel")} class="recording-list">
 				{page.items.map((recording) => (
 					<li key={recording.id}>
 						<button onClick={() => setSelectedId(recording.id)} type="button">

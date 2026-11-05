@@ -1,11 +1,5 @@
-import {
-	type FormEvent,
-	useCallback,
-	useEffect,
-	useRef,
-	useState,
-} from "react";
-import { useTranslation } from "react-i18next";
+import { useCallback, useEffect, useRef, useState } from "hono/jsx/dom";
+import { targetChecked, targetValue } from "../../lib/dom-events";
 import { wordCount } from "../../src/core/models";
 import type { RetentionCategory, RetentionPolicy } from "../../src/core/ports";
 import type { Settings } from "../../src/core/settings";
@@ -32,6 +26,7 @@ import {
 	updateRetentionPolicy,
 	updateWorkspaceSettings,
 } from "./settings";
+import { useTranslation } from "./useTranslation";
 
 const retentionOptions: ReadonlyArray<{
 	labelKey: string;
@@ -178,7 +173,7 @@ function MicrophoneSettings({
 	}
 
 	return (
-		<section aria-labelledby="microphone-title" className="settings-section">
+		<section aria-labelledby="microphone-title" class="settings-section">
 			<h3 id="microphone-title">{t("microphone.title")}</h3>
 			{access === "checking" ? <p>{t("microphone.checking")}</p> : null}
 			{access === "prompt" ? (
@@ -200,11 +195,11 @@ function MicrophoneSettings({
 			) : null}
 			{access === "granted" && devices.length ? (
 				<>
-					<label htmlFor="microphone-device">
+					<label for="microphone-device">
 						{t("microphone.recordingMicrophone")}
 						<select
 							id="microphone-device"
-							onChange={(event) => void saveDevice(event.target.value)}
+							onChange={(event) => void saveDevice(targetValue(event))}
 							value={device?.deviceId ?? ""}
 						>
 							<option value="">{t("microphone.browserDefault")}</option>
@@ -225,7 +220,7 @@ function MicrophoneSettings({
 			<button onClick={() => void inspect()} type="button">
 				{t("microphone.refresh")}
 			</button>
-			<p aria-live="polite" className="status">
+			<p aria-live="polite" class="status">
 				{message}
 			</p>
 		</section>
@@ -284,7 +279,7 @@ export function SettingsPane({
 		if (typingStartedAt !== null) typingInput.current?.focus();
 	}, [typingStartedAt]);
 
-	async function saveCleanup(event: FormEvent<HTMLFormElement>) {
+	async function saveCleanup(event: Event) {
 		event.preventDefault();
 		try {
 			const settings = await updateWorkspaceSettings({
@@ -327,7 +322,7 @@ export function SettingsPane({
 		}
 	}
 
-	async function saveShortcut(event: FormEvent<HTMLFormElement>) {
+	async function saveShortcut(event: Event) {
 		event.preventDefault();
 		const shortcut = normalizeShortcut(dictationShortcut);
 		if (!shortcut) {
@@ -353,7 +348,7 @@ export function SettingsPane({
 		}
 	}
 
-	async function saveTranslationLanguages(event: FormEvent<HTMLFormElement>) {
+	async function saveTranslationLanguages(event: Event) {
 		event.preventDefault();
 		try {
 			const settings = await updateWorkspaceSettings({
@@ -370,7 +365,7 @@ export function SettingsPane({
 		}
 	}
 
-	async function saveUiLocale(event: FormEvent<HTMLFormElement>) {
+	async function saveUiLocale(event: Event) {
 		event.preventDefault();
 		try {
 			const settings = await updateWorkspaceSettings({ uiLocale });
@@ -384,7 +379,7 @@ export function SettingsPane({
 		}
 	}
 
-	async function saveAccessibility(event: FormEvent<HTMLFormElement>) {
+	async function saveAccessibility(event: Event) {
 		event.preventDefault();
 		try {
 			const settings = await updateWorkspaceSettings({
@@ -433,7 +428,7 @@ export function SettingsPane({
 
 	const { settings, stats, storage } = snapshot;
 	return (
-		<section aria-labelledby="settings-title" className="settings">
+		<section aria-labelledby="settings-title" class="settings">
 			<header>
 				<h2 id="settings-title">{t("settings.title")}</h2>
 				<button onClick={() => void refresh()} type="button">
@@ -441,31 +436,31 @@ export function SettingsPane({
 				</button>
 			</header>
 
-			<section aria-labelledby="cleanup-title" className="settings-section">
+			<section aria-labelledby="cleanup-title" class="settings-section">
 				<h3 id="cleanup-title">{t("settings.cleanupTitle")}</h3>
 				<form onSubmit={saveCleanup}>
-					<label className="checkbox" htmlFor="cleanup-enabled">
+					<label class="checkbox" for="cleanup-enabled">
 						<input
 							checked={cleanupEnabled}
 							id="cleanup-enabled"
-							onChange={(event) => setCleanupEnabled(event.target.checked)}
+							onChange={(event) => setCleanupEnabled(targetChecked(event))}
 							type="checkbox"
 						/>
 						{t("settings.enableCleanup")}
 					</label>
-					<label htmlFor="filler-words">
+					<label for="filler-words">
 						{t("settings.fillerWords")}
 						<textarea
 							id="filler-words"
-							onChange={(event) => setFillerWords(event.target.value)}
+							onChange={(event) => setFillerWords(targetValue(event))}
 							value={fillerWords}
 						/>
 					</label>
-					<label htmlFor="protected-lexicon">
+					<label for="protected-lexicon">
 						{t("settings.protectedLexicon")}
 						<textarea
 							id="protected-lexicon"
-							onChange={(event) => setLexicon(event.target.value)}
+							onChange={(event) => setLexicon(targetValue(event))}
 							value={lexicon}
 						/>
 					</label>
@@ -475,16 +470,16 @@ export function SettingsPane({
 
 			<section
 				aria-labelledby="interface-language-title"
-				className="settings-section"
+				class="settings-section"
 			>
 				<h3 id="interface-language-title">{t("settings.interfaceLanguage")}</h3>
 				<form onSubmit={saveUiLocale}>
-					<label htmlFor="ui-locale">
+					<label for="ui-locale">
 						{t("settings.interfaceLanguage")}
 						<select
 							id="ui-locale"
 							onChange={(event) =>
-								setUiLocaleState(event.target.value as UiLocale)
+								setUiLocaleState(targetValue(event) as UiLocale)
 							}
 							value={uiLocale}
 						>
@@ -499,18 +494,15 @@ export function SettingsPane({
 				</form>
 			</section>
 
-			<section
-				aria-labelledby="accessibility-title"
-				className="settings-section"
-			>
+			<section aria-labelledby="accessibility-title" class="settings-section">
 				<h3 id="accessibility-title">{t("settings.accessibilityTitle")}</h3>
 				<form onSubmit={saveAccessibility}>
-					<label className="checkbox" htmlFor="announce-live-transcript">
+					<label class="checkbox" for="announce-live-transcript">
 						<input
 							checked={announceLiveTranscript}
 							id="announce-live-transcript"
 							onChange={(event) =>
-								setAnnounceLiveTranscript(event.target.checked)
+								setAnnounceLiveTranscript(targetChecked(event))
 							}
 							type="checkbox"
 						/>
@@ -526,15 +518,15 @@ export function SettingsPane({
 				savedDeviceId={settings.microphoneDeviceId}
 			/>
 
-			<section aria-labelledby="shortcut-title" className="settings-section">
+			<section aria-labelledby="shortcut-title" class="settings-section">
 				<h3 id="shortcut-title">{t("settings.shortcutTitle")}</h3>
 				<form onSubmit={saveShortcut}>
-					<label htmlFor="dictation-shortcut">
+					<label for="dictation-shortcut">
 						{t("settings.toggleDictation")}
 						<input
 							aria-describedby="dictation-shortcut-help"
 							id="dictation-shortcut"
-							onChange={(event) => setDictationShortcut(event.target.value)}
+							onChange={(event) => setDictationShortcut(targetValue(event))}
 							value={dictationShortcut}
 						/>
 					</label>
@@ -545,18 +537,18 @@ export function SettingsPane({
 
 			<section
 				aria-labelledby="translation-languages-title"
-				className="settings-section"
+				class="settings-section"
 			>
 				<h3 id="translation-languages-title">
 					{t("settings.translationLanguages")}
 				</h3>
 				<form onSubmit={saveTranslationLanguages}>
-					<label htmlFor="translation-source-language">
+					<label for="translation-source-language">
 						{t("settings.translationSource")}
 						<select
 							id="translation-source-language"
 							onChange={(event) =>
-								setTranslationSourceLanguage(event.target.value)
+								setTranslationSourceLanguage(targetValue(event))
 							}
 							value={translationSourceLanguage}
 						>
@@ -567,12 +559,12 @@ export function SettingsPane({
 							))}
 						</select>
 					</label>
-					<label htmlFor="translation-target-language">
+					<label for="translation-target-language">
 						{t("settings.translationTarget")}
 						<select
 							id="translation-target-language"
 							onChange={(event) =>
-								setTranslationTargetLanguage(event.target.value)
+								setTranslationTargetLanguage(targetValue(event))
 							}
 							value={translationTargetLanguage}
 						>
@@ -587,11 +579,11 @@ export function SettingsPane({
 				</form>
 			</section>
 
-			<section aria-labelledby="retention-title" className="settings-section">
+			<section aria-labelledby="retention-title" class="settings-section">
 				<h3 id="retention-title">{t("settings.retentionTitle")}</h3>
 				<p>{t("settings.neverSaveDescription")}</p>
 				{(["dictation", "meeting"] as const).map((category) => (
-					<label key={category} htmlFor={`retention-${category}`}>
+					<label key={category} for={`retention-${category}`}>
 						{category === "dictation"
 							? t("settings.dictationAndTranslation")
 							: t("settings.meetings")}
@@ -600,7 +592,7 @@ export function SettingsPane({
 							onChange={(event) =>
 								void saveRetention(
 									category,
-									event.target.value as RetentionPolicy,
+									targetValue(event) as RetentionPolicy,
 								)
 							}
 							value={snapshot.retention[category]}
@@ -615,7 +607,7 @@ export function SettingsPane({
 				))}
 			</section>
 
-			<section aria-labelledby="statistics-title" className="settings-section">
+			<section aria-labelledby="statistics-title" class="settings-section">
 				<h3 id="statistics-title">{t("settings.statisticsTitle")}</h3>
 				<p>{t("statistics.recordings", { count: stats.recordingCount })}</p>
 				<p>{t("settings.visibleWords", { count: stats.wordCount })}</p>
@@ -650,11 +642,11 @@ export function SettingsPane({
 					</button>
 				) : (
 					<>
-						<label htmlFor="typing-test-text">
+						<label for="typing-test-text">
 							{t("settings.typingTestText")}
 							<textarea
 								id="typing-test-text"
-								onChange={(event) => setTypingText(event.target.value)}
+								onChange={(event) => setTypingText(targetValue(event))}
 								ref={typingInput}
 								value={typingText}
 							/>
@@ -666,7 +658,7 @@ export function SettingsPane({
 				)}
 			</section>
 
-			<section aria-labelledby="storage-title" className="settings-section">
+			<section aria-labelledby="storage-title" class="settings-section">
 				<h3 id="storage-title">{t("settings.storageTitle")}</h3>
 				<p>{t("settings.dataDirectory", { path: storage.dataDir })}</p>
 				<p>
@@ -678,7 +670,7 @@ export function SettingsPane({
 				<a href="/bff/library/export">{t("settings.downloadExport")}</a>
 			</section>
 
-			<p aria-live="polite" className="status">
+			<p aria-live="polite" class="status">
 				{message}
 			</p>
 		</section>
