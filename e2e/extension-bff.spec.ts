@@ -768,6 +768,10 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 			}
 		}
 		await webLogin.getByRole("button", { name: "Sign out" }).click();
+		await webLogin
+			.getByRole("dialog", { name: "Sign out of Diduny?" })
+			.getByRole("button", { name: "Sign out" })
+			.click();
 		await expect(webLogin.getByLabel("Email")).toBeVisible();
 		expect(
 			await panel.evaluate(
