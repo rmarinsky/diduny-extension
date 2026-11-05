@@ -7,12 +7,12 @@ interface Props {
 
 export function AuthScreen({ loading, error, onOpenSignIn, onRefresh }: Props) {
 	return (
-		<div className="auth-screen">
+		<div class="auth-screen">
 			<h2>Diduny</h2>
 			<p>Voice dictation & meeting recording</p>
 			<button
 				type="button"
-				className="btn btn-ghost"
+				class="btn btn-ghost"
 				onClick={() => void chrome.runtime.openOptionsPage()}
 			>
 				BFF settings
@@ -21,7 +21,7 @@ export function AuthScreen({ loading, error, onOpenSignIn, onRefresh }: Props) {
 			<p>Sign in in the Diduny web app, then return here.</p>
 			<button
 				type="button"
-				className="btn btn-primary"
+				class="btn btn-primary"
 				onClick={onOpenSignIn}
 				disabled={loading}
 			>
@@ -29,14 +29,14 @@ export function AuthScreen({ loading, error, onOpenSignIn, onRefresh }: Props) {
 			</button>
 			<button
 				type="button"
-				className="btn btn-ghost"
+				class="btn btn-ghost"
 				onClick={onRefresh}
 				disabled={loading}
 			>
 				{loading ? "Checking..." : "I signed in"}
 			</button>
 
-			{error && <div className="error-msg">{error}</div>}
+			{error && <div class="error-msg">{error}</div>}
 		</div>
 	);
 }

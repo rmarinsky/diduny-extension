@@ -6,7 +6,7 @@
  *
  * Auth state is derived by asking the SW for the current session on mount.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "hono/jsx/dom";
 import { crashLog } from "../../../lib/crash-log";
 
 type AuthStep = "unauthenticated" | "authenticated";

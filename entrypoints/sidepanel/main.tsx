@@ -1,4 +1,4 @@
-import { createRoot } from "react-dom/client";
+import { render } from "hono/jsx/dom";
 import { crashLog } from "../../lib/crash-log";
 import { App } from "./App";
 import "./style.css";
@@ -23,4 +23,4 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 const root = document.getElementById("root");
-if (root) createRoot(root).render(<App />);
+if (root) render(<App />, root);

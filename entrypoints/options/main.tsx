@@ -1,5 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
-import { createRoot } from "react-dom/client";
+import { render, useEffect, useState } from "hono/jsx/dom";
 import {
 	getDefaultMicrophoneId,
 	setDefaultMicrophoneId,
@@ -14,6 +13,7 @@ import {
 	getDisabledDeliveryOrigins,
 	setDeliveryEnabled,
 } from "../../lib/delivery/site-settings";
+import { targetValue } from "../../lib/dom-events";
 import "./style.css";
 
 function Options() {
@@ -40,7 +40,7 @@ function Options() {
 			.catch(() => setMicrophones([]));
 	}, []);
 
-	const submit = async (event: FormEvent) => {
+	const submit = async (event: Event) => {
 		event.preventDefault();
 		try {
 			const saved = await setBffOrigin(origin);
@@ -60,7 +60,7 @@ function Options() {
 		);
 	};
 
-	const disableSite = async (event: FormEvent) => {
+	const disableSite = async (event: Event) => {
 		event.preventDefault();
 		const normalized = deliveryOrigin(site);
 		if (!normalized) {
@@ -85,12 +85,12 @@ function Options() {
 			<section>
 				<h2>Connection</h2>
 				<form onSubmit={submit}>
-					<label htmlFor="bff-origin">Local BFF origin</label>
+					<label for="bff-origin">Local BFF origin</label>
 					<input
 						id="bff-origin"
 						type="url"
 						value={origin}
-						onChange={(event) => setOrigin(event.target.value)}
+						onChange={(event) => setOrigin(targetValue(event))}
 						required
 					/>
 					<p>Use localhost, with any local port.</p>
@@ -100,11 +100,11 @@ function Options() {
 
 			<section>
 				<h2>Microphone</h2>
-				<label htmlFor="default-microphone">Default microphone</label>
+				<label for="default-microphone">Default microphone</label>
 				<select
 					id="default-microphone"
 					value={microphoneId}
-					onChange={(event) => setMicrophoneId(event.target.value)}
+					onChange={(event) => setMicrophoneId(targetValue(event))}
 				>
 					<option value="">System default</option>
 					{microphones.map((microphone, index) => (
@@ -121,14 +121,12 @@ function Options() {
 			<section>
 				<h2>Sites</h2>
 				<form onSubmit={disableSite}>
-					<label htmlFor="delivery-site">
-						Disable direct delivery on a site
-					</label>
+					<label for="delivery-site">Disable direct delivery on a site</label>
 					<input
 						id="delivery-site"
 						type="url"
 						value={site}
-						onChange={(event) => setSite(event.target.value)}
+						onChange={(event) => setSite(targetValue(event))}
 						placeholder="https://example.com"
 						required
 					/>
@@ -158,4 +156,4 @@ function Options() {
 }
 
 const root = document.getElementById("root");
-if (root) createRoot(root).render(<Options />);
+if (root) render(<Options />, root);

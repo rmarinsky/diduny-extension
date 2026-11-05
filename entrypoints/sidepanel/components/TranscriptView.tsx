@@ -19,26 +19,26 @@ export function TranscriptView({
 	if (!hasText) return null;
 
 	return (
-		<div className="transcript">
-			{deliveryNotice && <p className="delivery-notice">{deliveryNotice}</p>}
-			<div className="transcript-header">
+		<div class="transcript">
+			{deliveryNotice && <p class="delivery-notice">{deliveryNotice}</p>}
+			<div class="transcript-header">
 				<h3>Transcript</h3>
 				<div>
 					{finalText && (
 						<>
-							<button type="button" className="btn btn-ghost" onClick={onCopy}>
+							<button type="button" class="btn btn-ghost" onClick={onCopy}>
 								{copied ? "Copied!" : "Copy"}
 							</button>
-							<button type="button" className="btn btn-ghost" onClick={onClear}>
+							<button type="button" class="btn btn-ghost" onClick={onClear}>
 								Clear
 							</button>
 						</>
 					)}
 				</div>
 			</div>
-			<div className="transcript-text">
+			<div class="transcript-text">
 				{finalText}
-				{interimText && <span className="interim">{interimText}</span>}
+				{interimText && <span class="interim">{interimText}</span>}
 			</div>
 		</div>
 	);

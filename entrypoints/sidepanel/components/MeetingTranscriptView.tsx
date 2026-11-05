@@ -8,11 +8,11 @@ function SourcePanel({ label, finalText, interimText }: SourceProps) {
 	if (!finalText && !interimText) return null;
 
 	return (
-		<div className="source-panel">
-			<div className="source-label">{label}</div>
-			<div className="transcript-text">
+		<div class="source-panel">
+			<div class="source-label">{label}</div>
+			<div class="transcript-text">
 				{finalText}
-				{interimText && <span className="interim">{interimText}</span>}
+				{interimText && <span class="interim">{interimText}</span>}
 			</div>
 		</div>
 	);
@@ -38,19 +38,19 @@ export function MeetingTranscriptView({
 	if (!hasText) return null;
 
 	return (
-		<div className="transcript">
-			<div className="transcript-header">
+		<div class="transcript">
+			<div class="transcript-header">
 				<h3>Meeting Transcript</h3>
 				<div>
-					<button type="button" className="btn btn-ghost" onClick={onCopy}>
+					<button type="button" class="btn btn-ghost" onClick={onCopy}>
 						{copied ? "Copied!" : "Copy all"}
 					</button>
-					<button type="button" className="btn btn-ghost" onClick={onClear}>
+					<button type="button" class="btn btn-ghost" onClick={onClear}>
 						Clear
 					</button>
 				</div>
 			</div>
-			<div className="meeting-sources">
+			<div class="meeting-sources">
 				<SourcePanel
 					label="Shared Audio"
 					finalText={tab.finalText}
