@@ -30,6 +30,15 @@ export interface Settings {
 	uiLocale: UiLocale;
 }
 
+/** Typical adult typing speed, used for "time saved" until the user enters their own. */
+export const DEFAULT_TYPING_SPEED_WPM = 40;
+
+export function effectiveTypingSpeed(
+	settings: Pick<Settings, "typingSpeedWordsPerMinute">,
+) {
+	return settings.typingSpeedWordsPerMinute ?? DEFAULT_TYPING_SPEED_WPM;
+}
+
 // Defaults ported from SettingsStorage.swift:160-179, not its stale prose docs.
 export const DEFAULT_SETTINGS: Settings = {
 	announceLiveTranscript: false,
@@ -43,7 +52,8 @@ export const DEFAULT_SETTINGS: Settings = {
 	pushToTalkKey: "rightShift",
 	pushToTalkToggleEnabled: true,
 	pushToTalkToggleTapCount: INPUT_TIMING.tapToggleCount,
-	speechLanguageHints: [],
+	// The web page dictated in Ukrainian by default; the extension does too (lib/api/transcription.ts).
+	speechLanguageHints: ["uk"],
 	textCleanupEnabled: true,
 	transcriptionProvider: "cloud",
 	translationSourceLanguage: "uk",
@@ -69,6 +79,19 @@ function language(value: unknown, fallback: string) {
 		/^[a-z]{2,3}(?:-[a-z]{2,4})?$/i.test(value)
 		? value
 		: fallback;
+}
+
+/** Valid language codes without duplicates; an empty list means detect automatically. */
+function languageList(value: unknown, fallback: readonly string[]) {
+	if (!Array.isArray(value)) return fallback;
+	return [
+		...new Set(
+			value.filter(
+				(item): item is string =>
+					typeof item === "string" && language(item, "") !== "",
+			),
+		),
+	];
 }
 
 function shortcut(value: unknown, fallback: string) {
@@ -126,7 +149,7 @@ export function normalizeSettings(value: unknown): Settings {
 			Number.isInteger(settings.pushToTalkToggleTapCount)
 				? settings.pushToTalkToggleTapCount
 				: DEFAULT_SETTINGS.pushToTalkToggleTapCount,
-		speechLanguageHints: stringList(
+		speechLanguageHints: languageList(
 			settings.speechLanguageHints,
 			DEFAULT_SETTINGS.speechLanguageHints,
 		),

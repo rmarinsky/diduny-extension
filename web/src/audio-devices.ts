@@ -54,6 +54,21 @@ export function microphonePermissionFailure(error: unknown) {
 		: "failed";
 }
 
+/** The status message for a getUserMedia failure: what went wrong and what to do. */
+export function microphoneStartFailureKey(error: unknown) {
+	const name =
+		error && typeof error === "object" && "name" in error
+			? (error as { name?: unknown }).name
+			: undefined;
+	if (name === "NotAllowedError" || name === "SecurityError")
+		return "status.microphoneBlocked";
+	if (name === "NotFoundError" || name === "OverconstrainedError")
+		return "status.microphoneNotFound";
+	if (name === "NotReadableError" || name === "AbortError")
+		return "status.microphoneBusy";
+	return "status.couldNotStartMicrophone";
+}
+
 export function savedMicrophoneUnavailable(error: unknown) {
 	return (
 		!!error &&

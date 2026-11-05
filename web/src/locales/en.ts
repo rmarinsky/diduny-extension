@@ -47,14 +47,42 @@ export const en = {
 		couldNotSendCode: "Could not send the code.",
 		couldNotVerifyCode: "Could not verify the code.",
 		signedOut: "Signed out.",
+		invalidEmail: "Enter a valid email address, like name@example.com.",
+		invalidCode: "Enter the six-digit code from the email, like 123456.",
+		incorrectCode:
+			"That code is incorrect or has expired. Check the latest email, or choose “Use another email” to get a new code.",
+		signOutConfirm: {
+			title: "Sign out of Diduny?",
+			body: "You'll need a new one-time code to sign in again.",
+			confirm: "Sign out",
+			cancel: "Stay signed in",
+		},
+	},
+	theme: {
+		toggleToDark: "Switch to dark theme",
+		toggleToLight: "Switch to light theme",
+	},
+	about: {
+		back: "Back to dictation",
 	},
 	onboarding: {
-		close: "Close onboarding",
-		continue: "Continue",
+		intro: "Before you sign in, here's how Diduny works.",
 		continueToSignIn: "Continue to sign in",
+		step: "Step {current} of {total}",
+		next: "Next",
+		back: "Back",
+		saved: "Saved.",
+		choices: {
+			cleanup: "Enable filler-word cleanup",
+			announce: "Announce final live transcript",
+		},
 		microphone: {
 			title: "Use your microphone",
 			body: "Diduny needs microphone access before it can transcribe your words.",
+			allowAlways:
+				"When the browser asks, choose “Allow while visiting the site”. “Allow this time” ends when you close this tab, and you'll be asked again next time.",
+			optional:
+				"This is optional now - the browser will also ask when you start your first dictation.",
 			allow: "Allow microphone",
 			granted: "Microphone access is ready.",
 			denied:
@@ -65,7 +93,7 @@ export const en = {
 			title: "Where your words end up",
 			body: "Diduny listens while you speak and writes what it hears into a text box on this page. When you stop, the text is there, ready to edit. Press Copy, then paste it wherever you were going - your email, your editor, a chat window. A web page can't type into other applications, so Diduny won't put text into the window you had open before. That's a limit of the browser, not a feature we skipped. What you get instead is a page you can dictate into all day: keep talking, keep appending, edit as you go, and copy when you're ready.",
 			extension:
-				"A browser extension is coming in the next release. It will let Diduny put your words straight into whatever page you're typing in - no copying, no switching tabs.",
+				"With the Diduny browser extension, your words go straight into the text field you are typing in on other pages - no copying, no switching tabs. Sign in here once so the extension can use this browser.",
 			clipboardNote:
 				"Diduny never writes to your clipboard on its own. Nothing is copied unless you press Copy, so whatever you copied five minutes ago is still there.",
 		},
@@ -103,7 +131,18 @@ export const en = {
 			"Saved microphone is unavailable. Recording with {device}.",
 		listening: "Listening…",
 		couldNotStartMicrophone: "Could not start the microphone.",
+		microphoneBlocked:
+			"Microphone access is blocked. Open this site’s settings in your browser, allow Microphone, then try again.",
+		microphoneNotFound:
+			"No microphone was found. Connect a microphone, then try again.",
+		microphoneBusy:
+			"The microphone is in use by another app or could not be opened. Close the other app, then try again.",
+		transcriptionTimedOut:
+			"Transcription took too long and was stopped. Your document is unchanged; dictate again to retry.",
+		transcriptionCancelled:
+			"Transcription cancelled. Your document is unchanged.",
 		copied: "Copied to clipboard.",
+		documentCleared: "Document cleared.",
 		clipboardDenied: "The browser did not allow clipboard access.",
 		pasteBeforeTranslate: "Paste text before translating it.",
 		translatingPasted: "Translating pasted text…",
@@ -114,9 +153,12 @@ export const en = {
 			"Could not translate the pasted text. Check the Diduny service and try again.",
 	},
 	dictation: {
-		languageHints: "Language hints",
+		languages: "Spoken languages",
+		languagesHint: "Nothing ticked: Diduny detects the language itself.",
+		languagesInTranslation:
+			"Translation dictation listens for {source}, the language you translate from.",
 		translationMode: "Translation dictation",
-		translates: "Translates {source} to {target}.",
+		translationLanguages: "Translation dictation languages",
 		document: "Dictation document",
 		documentPlaceholder:
 			"Your dictation appears here. You can edit it while you work.",
@@ -125,17 +167,25 @@ export const en = {
 		hold: "Hold to record",
 		cancel: "Cancel",
 		copy: "Copy",
+		clear: "Clear",
 		microphoneLevel: "Microphone level",
 		meterSending: "Sending",
 		meterIdle: "Idle",
 		meterElapsed: "{seconds}s",
-		shortcut: "Shortcut: {shortcut} outside text fields.",
+		shortcut: "Shortcut: {shortcut}",
+		shortcutOutsideFields: "Shortcut: {shortcut} outside text fields",
 		pasteTitle: "Paste-in translation",
 		pasteDescription:
 			"Paste text into Diduny to translate it. Other applications are not read.",
+		pasteLanguages: "Paste-in translation languages",
 		textToTranslate: "Text to translate",
 		translatePasted: "Translate pasted text",
 		translationResult: "Translation result",
+	},
+	translation: {
+		from: "From",
+		to: "To",
+		swap: "Swap languages",
 	},
 	liveTranscript: {
 		title: "Live transcript",
@@ -181,11 +231,26 @@ export const en = {
 	settings: {
 		loading: "Loading settings…",
 		title: "Settings",
-		refresh: "Refresh data",
+		reset: "Reset settings",
+		resetConfirm: {
+			title: "Reset settings?",
+			body: "Cleanup words, interface language, accessibility, microphone, keyboard shortcut, translation languages, spoken languages, and typing speed go back to their defaults. Retention and your library stay as they are.",
+			confirm: "Reset settings",
+			cancel: "Cancel",
+		},
+		resetDone: "Settings reset to defaults.",
 		cleanupTitle: "Transcript cleanup",
 		enableCleanup: "Enable filler-word cleanup",
-		fillerWords: "Filler words, one per line",
-		protectedLexicon: "Protected terms, one per line",
+		fillerWords: "Filler words to remove",
+		fillerWordsHint:
+			"Diduny deletes these from Library transcripts and copies, e.g. um, uh, like. Press Enter or a comma after each one; phrases such as “you know” work too.",
+		fillerWordsPlaceholder: "Add a word, e.g. um",
+		protectedLexicon: "Phrases to keep",
+		protectedLexiconHint:
+			"If a filler word is part of a phrase you need, add the phrase so it is never cut. E.g. with “like” removed, add “feel like” to keep “I feel like it”.",
+		protectedLexiconPlaceholder: "Add a phrase, e.g. feel like",
+		removeTerm: "Remove {term}",
+		termLimit: "This list is full (100 entries).",
 		saveCleanup: "Save cleanup",
 		cleanupSaved:
 			"Cleanup settings saved. New library views and copies use this text.",
@@ -200,10 +265,15 @@ export const en = {
 		accessibilitySaved: "Accessibility setting saved.",
 		shortcutTitle: "Keyboard shortcut",
 		toggleDictation: "Toggle dictation",
+		shortcutKey: "Key",
 		shortcutHelp:
-			"Use one key, optionally with Ctrl, Alt, Shift, or Meta. Browser-reserved chords are refused.",
+			"Turn on the modifier keys you want, then press a letter, digit, F1–F12, or Space in the Key field. You can also press the whole combination there. With Ctrl, Alt, or Meta it also works while you type in the document. Shortcuts the browser reserves, like Ctrl+R, are refused.",
+		shortcutPreview: "Preview: {shortcut}",
+		shortcutNeedsKey: "Press a key to finish the shortcut.",
 		saveShortcut: "Save shortcut",
-		invalidShortcut: "Use one key, optionally with Ctrl, Alt, Shift, or Meta.",
+		invalidShortcut: "Choose a key for the shortcut.",
+		commandPaletteShortcut:
+			"{shortcut} opens the command palette and cannot be used.",
 		reservedShortcut:
 			"{shortcut} is reserved by this browser and cannot be used.",
 		shortcutSaved: "Shortcut saved: {shortcut}.",
@@ -212,6 +282,8 @@ export const en = {
 		translationTarget: "Translation target language",
 		saveTranslation: "Save translation languages",
 		translationSaved: "Translation languages saved.",
+		sameTranslationLanguages:
+			"Choose two different languages to translate between.",
 		retentionTitle: "Retention",
 		neverSaveDescription:
 			"With retention set to never, Diduny saves no recording and no transcript - nothing is written to your library at all. While you're actually speaking, audio is buffered in a temporary file so a crashed tab doesn't lose what you said. That file is deleted as soon as the recording finishes.",
@@ -219,25 +291,32 @@ export const en = {
 		meetings: "Meetings",
 		retentionSaved: "Retention policy saved.",
 		statisticsTitle: "Dictation statistics",
-		visibleWords: "{count} visible dictation words.",
+		visibleWords:
+			"{count, plural, one {# visible dictation word.} other {# visible dictation words.}}",
 		dictated: "{duration} dictated.",
-		timeSavedNeedsSpeed: "Time saved needs your measured typing speed.",
 		timeSaved: "{duration} saved",
 		slowerThanTyping: "{duration} slower than typing",
-		measuredSpeed: "Measured speed: {speed} words per minute.",
-		typingPrompt: "Type this sentence at your normal pace:",
+		typingSpeed: "Your typing speed, words per minute",
+		typingSpeedHint:
+			"Used to estimate the time dictation saves you. Most people type about {average} words per minute.",
+		typingPrompt:
+			"Measure your typing speed: type this sentence at your normal pace.",
 		calibrationText: "Clear ideas deserve calm words and careful attention.",
-		startTypingTest: "Start typing test",
-		typingTestText: "Typing test text",
+		typingTestText: "Typing test",
+		typingTestHint:
+			"The timer starts with your first key and stops at your last.",
 		saveMeasuredSpeed: "Save measured speed",
-		typingStart: "Type the sentence, then save your measured speed.",
-		typingNeedsWords:
-			"Type at least one word before saving your measured speed.",
-		typingSaved: "Typing speed measured and saved.",
+		typingNeedsWords: "Type the sentence before saving your measured speed.",
+		typingMismatch: "Type the sentence exactly as shown to measure your speed.",
+		typingTooFast:
+			"That is faster than {max} words per minute. Type the sentence instead of pasting it.",
+		typingMeasuredSaved: "Measured {speed} words per minute and saved it.",
+		saveTypingSpeed: "Save typing speed",
+		typingSpeedSaved: "Typing speed saved.",
+		invalidTypingSpeed:
+			"Enter a typing speed between 1 and {max} words per minute.",
 		storageTitle: "Storage on this device",
-		dataDirectory: "Data directory: {path}",
 		usesDisk: "Diduny uses {size} on disk.",
-		freeDisk: "{size} free on this filesystem.",
 		downloadExport: "Download library export",
 		saveFailed:
 			"Could not save this setting. Check the local Diduny service and try again.",

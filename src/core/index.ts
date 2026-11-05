@@ -40,17 +40,26 @@ export {
 } from "./errors";
 export {
 	DEFAULT_SETTINGS,
+	DEFAULT_TYPING_SPEED_WPM,
+	effectiveTypingSpeed,
 	normalizeSettings,
 	textCleanupFromSettings,
 	updateSettings,
 } from "./settings";
 export {
 	DEFAULT_DICTATION_SHORTCUT,
+	firesInTextFields,
 	isReservedShortcut,
 	matchesShortcut,
 	normalizeShortcut,
+	shortcutKeyFromEvent,
 } from "./shortcuts";
-export { isValidEmail, isValidOtp } from "./auth-validation";
+export {
+	isValidEmail,
+	isValidOtp,
+	normalizeEmail,
+	normalizeOtp,
+} from "./auth-validation";
 export {
 	RealtimeSession,
 	RealtimeSessionError,

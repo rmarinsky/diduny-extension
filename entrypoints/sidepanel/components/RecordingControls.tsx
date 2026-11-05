@@ -21,6 +21,7 @@ interface Props {
 	onDiarizationChange: (val: boolean) => void;
 	onLogout: () => void;
 	error: string | null;
+	waitingForMicrophone: boolean;
 }
 
 const stateLabels: Record<RecordingState, string> = {
@@ -46,6 +47,7 @@ export function RecordingControls({
 	onDiarizationChange,
 	onLogout,
 	error,
+	waitingForMicrophone,
 }: Props) {
 	const isRecording = state === "recording";
 	const isStarting = state === "starting";
@@ -121,6 +123,7 @@ export function RecordingControls({
 			<div class="mode-toggle">
 				<button
 					type="button"
+					aria-pressed={mode === "translation" ? "true" : "false"}
 					class={mode === "translation" ? "active" : ""}
 					onClick={() => onModeChange("translation")}
 					disabled={isRecording || isStarting || isProcessing}
@@ -129,6 +132,7 @@ export function RecordingControls({
 				</button>
 				<button
 					type="button"
+					aria-pressed={mode === "voice" ? "true" : "false"}
 					class={mode === "voice" ? "active" : ""}
 					onClick={() => onModeChange("voice")}
 					disabled={isRecording || isStarting || isProcessing}
@@ -137,6 +141,7 @@ export function RecordingControls({
 				</button>
 				<button
 					type="button"
+					aria-pressed={mode === "meeting" ? "true" : "false"}
 					class={mode === "meeting" ? "active" : ""}
 					onClick={() => onModeChange("meeting")}
 					disabled={isRecording || isStarting || isProcessing}
@@ -147,6 +152,7 @@ export function RecordingControls({
 
 			<div class="settings-row">
 				<select
+					aria-label="Spoken language"
 					value={language}
 					onChange={(e) => onLanguageChange(targetValue(e))}
 					disabled={isRecording || isStarting || isProcessing}
@@ -194,6 +200,7 @@ export function RecordingControls({
 
 			<button
 				type="button"
+				aria-label={isRecording ? "Stop recording" : "Start recording"}
 				class={`record-btn ${isRecording ? "recording" : ""}`}
 				onClick={onToggleRecording}
 				disabled={!canRecord}
@@ -202,6 +209,17 @@ export function RecordingControls({
 			</button>
 
 			<div class={`state-label ${state}`}>{stateLabels[state]}</div>
+			{canRecord && (
+				<div class="record-hint">
+					{isRecording ? "Click again to stop" : "Click to start"}
+				</div>
+			)}
+			{isStarting && waitingForMicrophone && (
+				<output class="record-hint">
+					Allow microphone access in the Diduny tab that opened, then come back
+					here.
+				</output>
+			)}
 
 			{error && <div class="error-msg">{error}</div>}
 		</div>

@@ -14,6 +14,12 @@ function string(value: unknown): string | null {
 	return typeof value === "string" ? value : null;
 }
 
+export class UpstreamAuthError extends Error {
+	constructor(readonly status: number) {
+		super(`Upstream auth failed with ${status}`);
+	}
+}
+
 export interface BffAuthGateway {
 	logout(session: BffSession): Promise<void>;
 	refresh(session: BffSession): Promise<BffSession>;
@@ -70,7 +76,7 @@ export class ProxyOtpGateway implements BffAuthGateway {
 			this.timeoutMs,
 		);
 		if (response.status < 200 || response.status >= 300) {
-			throw new Error(`Upstream auth failed with ${response.status}`);
+			throw new UpstreamAuthError(response.status);
 		}
 		return response;
 	}

@@ -5,22 +5,53 @@
   <title>Diduny — Microphone Access</title>
   <script type="module" src="./main.ts"></script>
   <style>
-    body { font-family: -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #fafafa; }
-    .card { text-align: center; padding: 40px; background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); max-width: 360px; }
+    :root {
+      color-scheme: light;
+      --bg: #fafafa; --surface: white; --text: #1a1a1a; --muted: #666;
+      --accent: #6366f1; --accent-hover: #4f46e5; --border: #d4d4d8;
+      --success: #15803d; --error: #dc2626;
+      --warn-text: #92400e; --warn-bg: #fffbeb; --warn-border: #fde68a;
+      --shadow: rgba(0,0,0,0.1);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --bg: #161514; --surface: #211f1d; --text: #ece8e1; --muted: #b5afa6;
+        --accent: #5b5ee6; --accent-hover: #6f72ee; --border: #4a4743;
+        --success: #4cc38a; --error: #ffb4ab;
+        --warn-text: #f2c98a; --warn-bg: #3a2f17; --warn-border: #6b5526;
+        --shadow: rgba(0,0,0,0.5);
+      }
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #161514; --surface: #211f1d; --text: #ece8e1; --muted: #b5afa6;
+      --accent: #5b5ee6; --accent-hover: #6f72ee; --border: #4a4743;
+      --success: #4cc38a; --error: #ffb4ab;
+      --warn-text: #f2c98a; --warn-bg: #3a2f17; --warn-border: #6b5526;
+      --shadow: rgba(0,0,0,0.5);
+    }
+    body { font-family: -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: var(--bg); color: var(--text); }
+    .card { text-align: center; padding: 40px; background: var(--surface); border-radius: 12px; box-shadow: 0 2px 8px var(--shadow); max-width: 360px; }
     h2 { margin: 0 0 8px; }
-    p { color: #666; margin: 0 0 24px; font-size: 14px; }
-    button { padding: 12px 24px; background: #6366f1; color: white; border: none; border-radius: 8px; font-size: 15px; cursor: pointer; }
-    button:hover { background: #4f46e5; }
-    .success { color: #22c55e; font-weight: 500; }
-    .error { color: #ef4444; }
+    p { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+    #grant { padding: 12px 24px; background: var(--accent); color: white; border: none; border-radius: 8px; font-size: 15px; cursor: pointer; }
+    #grant:hover { background: var(--accent-hover); }
+    .success { color: var(--success); font-weight: 500; }
+    .error { color: var(--error); }
+    .warning { color: var(--warn-text); background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 8px; padding: 10px 12px; }
+    #theme { position: fixed; top: 16px; right: 16px; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: none; color: var(--text); cursor: pointer; }
+    #theme:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   </style>
 </head>
 <body>
+  <button id="theme" class="theme-toggle" type="button"></button>
   <div class="card">
     <h2>Microphone Access</h2>
-    <p>Diduny needs microphone access for voice recording. Click below and allow when prompted.</p>
+    <p>Diduny needs microphone access for voice recording. Click below, and when Chrome asks, choose <strong>Allow while visiting the site</strong>.</p>
+    <p class="warning"><strong>Allow this time</strong> is not enough: it ends when this tab closes, and recording fails again.</p>
     <button id="grant">Grant Microphone Access</button>
-    <p id="status"></p>
+    <p id="status" role="status"></p>
   </div>
 </body>
 </html>

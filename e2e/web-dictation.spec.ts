@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import Fastify from "fastify";
 import { chromium } from "playwright";
@@ -37,7 +38,7 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 	const e2eLibrary = createE2eLibrary();
 	const bff = await buildServer({
 		library: e2eLibrary.library,
-		staticDir: new URL("../web/dist", import.meta.url).pathname,
+		staticDir: fileURLToPath(new URL("../web/dist", import.meta.url)),
 		upstreamUrl: serverUrl(upstream),
 	});
 	await bff.listen({ host: "localhost", port: 0 });
@@ -61,13 +62,11 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 		await page.getByLabel("One-time code").fill("123456");
 		await page.getByRole("button", { name: "Sign in", exact: true }).click();
 		await page.getByRole("button", { name: "Settings" }).click();
-		await page.getByLabel("Toggle dictation").fill("Alt+Shift+M");
+		await page.getByLabel("Key", { exact: true }).press("Alt+Shift+M");
 		await page.getByRole("button", { name: "Save shortcut" }).click();
 		await expect(page.getByText("Shortcut saved: Alt+Shift+M.")).toBeVisible();
 		await page.getByRole("button", { name: "Dictation" }).click();
-		await expect(
-			page.getByText("Shortcut: Alt+Shift+M outside text fields."),
-		).toBeVisible();
+		await expect(page.getByText("Shortcut: Alt + Shift + M")).toBeVisible();
 
 		const document = page.getByLabel("Dictation document");
 		await document.focus();
@@ -76,13 +75,25 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 		expect(transcriptionRequests).toBe(0);
 		await document.fill("");
 
-		await page.keyboard.press("Tab");
+		// Alt chords type nothing, so the shortcut works with the cursor in the document.
+		await document.focus();
 		await page.keyboard.press("Alt+Shift+M");
 		await expect(page.getByText("Listening…")).toBeVisible();
+		await expect(document).toHaveValue("");
 		await page.keyboard.press("Escape");
 		await expect(page.getByText("Dictation cancelled.")).toBeVisible();
 		expect(transcriptionRequests).toBe(0);
 		expect(e2eLibrary.savedTexts()).toEqual([]);
+
+		// With the extension installed, Chrome hands its Alt+Shift+V to the
+		// extension, which forwards the press to this tab as a window event.
+		await page.evaluate(() =>
+			window.dispatchEvent(new Event("diduny:dictation-shortcut")),
+		);
+		await expect(page.getByText("Listening…")).toBeVisible();
+		await page.keyboard.press("Escape");
+		await expect(page.getByText("Dictation cancelled.")).toBeVisible();
+		expect(transcriptionRequests).toBe(0);
 
 		await page.getByRole("button", { name: "Start dictation" }).focus();
 		await page.keyboard.press("Enter");
@@ -120,9 +131,16 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 			"0",
 		);
 		const recordButton = page.getByRole("button", { name: "Hold to record" });
+		const idleBox = await recordButton.boundingBox();
 		await recordButton.hover();
 		await page.mouse.down();
 		await expect(page.getByText("Listening…")).toBeVisible();
+		// While held, only the hold button shows, and it stays under the pointer.
+		await expect(recordButton).toHaveAttribute("aria-pressed", "true");
+		await expect(recordButton).toBeEnabled();
+		expect(await recordButton.boundingBox()).toEqual(idleBox);
+		for (const name of ["Stop dictation", "Cancel", "Copy"])
+			await expect(page.getByRole("button", { name })).toBeHidden();
 		await expect(page.getByLabel("Microphone level")).toHaveAttribute(
 			"aria-valuenow",
 			/[1-9]/,
@@ -130,16 +148,29 @@ test("web dictation cancels safely, uses keyboard and hold controls, and relays 
 		await expect(page.locator(".meter-row output")).toHaveText("1s");
 		await page.mouse.up();
 		await expect(document).toHaveValue(
-			"Hello from web dictation Hello from web dictation",
+			"Hello from web dictation\n---\nHello from web dictation",
 		);
 		expect(transcriptionRequests).toBe(2);
 		await expect
 			.poll(() => page.evaluate(() => navigator.clipboard.readText()))
 			.toBe("Keep this text");
 		await page.getByRole("button", { name: "Copy" }).click();
+		// Windows stores clipboard text with CRLF line endings.
 		await expect
-			.poll(() => page.evaluate(() => navigator.clipboard.readText()))
-			.toBe("Hello from web dictation Hello from web dictation");
+			.poll(async () =>
+				(await page.evaluate(() => navigator.clipboard.readText())).replace(
+					/\r\n/g,
+					"\n",
+				),
+			)
+			.toBe("Hello from web dictation\n---\nHello from web dictation");
+
+		const clearButton = page.getByRole("button", { name: "Clear" });
+		await clearButton.click();
+		await expect(document).toHaveValue("");
+		await expect(document).toBeFocused();
+		await expect(page.getByText("Document cleared.")).toBeVisible();
+		await expect(clearButton).toBeDisabled();
 	} finally {
 		bff.server.closeAllConnections?.();
 		upstream.server.closeAllConnections?.();

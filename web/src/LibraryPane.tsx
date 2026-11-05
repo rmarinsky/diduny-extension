@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "hono/jsx/dom";
+import { useCallback, useEffect, useRef, useState } from "hono/jsx/dom";
 import { targetValue } from "../../lib/dom-events";
 import type { ProcessingStatus, RecordingType } from "../../src/core/models";
 import type { LibraryDetail, LibraryPage } from "../../src/core/ports";
 import { userErrorMessage } from "./errors";
+import { dateTime, duration, recordingTitle } from "./format";
 import {
 	type LibraryListInput,
 	deleteLibraryRecording,
@@ -31,16 +32,20 @@ const types: readonly RecordingType[] = [
 	"fileTranscription",
 ];
 
-function duration(seconds: number) {
-	const total = Math.max(0, Math.round(seconds));
-	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
-}
-
-function dateTime(value: number, locale: string) {
-	return new Intl.DateTimeFormat(locale, {
-		dateStyle: "medium",
-		timeStyle: "short",
-	}).format(value);
+/**
+ * Browser-recorded WebM carries no duration, so the player shows no length
+ * until it has played to the end. Seeking past the end makes Chrome measure
+ * the file; then the player goes back to the start.
+ */
+function revealDuration(audio: HTMLAudioElement) {
+	if (Number.isFinite(audio.duration)) return;
+	const rewind = () => {
+		if (!Number.isFinite(audio.duration)) return;
+		audio.removeEventListener("durationchange", rewind);
+		audio.currentTime = 0;
+	};
+	audio.addEventListener("durationchange", rewind);
+	audio.currentTime = Number.MAX_SAFE_INTEGER;
 }
 
 function errorMessage(
@@ -68,6 +73,21 @@ function RecordingDetail({
 	const [isSaving, setIsSaving] = useState(false);
 	const [message, setMessage] = useState("");
 	const [title, setTitle] = useState(recording.title ?? "");
+	const cancelDeleteButton = useRef<HTMLButtonElement>(null);
+	const deleteButton = useRef<HTMLButtonElement>(null);
+	// The button that had focus is replaced when the confirmation opens or closes; focus its counterpart.
+	const focusAfterDeleteToggle = useRef(false);
+
+	useEffect(() => {
+		if (!focusAfterDeleteToggle.current) return;
+		focusAfterDeleteToggle.current = false;
+		(confirmingDelete ? cancelDeleteButton : deleteButton).current?.focus();
+	}, [confirmingDelete]);
+
+	function toggleDeleteConfirmation(confirming: boolean) {
+		focusAfterDeleteToggle.current = true;
+		setConfirmingDelete(confirming);
+	}
 
 	async function copyTranscript() {
 		try {
@@ -130,6 +150,9 @@ function RecordingDetail({
 			<audio
 				aria-label={t("library.playback")}
 				controls
+				onLoadedMetadata={(event: Event) =>
+					revealDuration(event.currentTarget as HTMLAudioElement)
+				}
 				preload="metadata"
 				src={`/bff/library/${recording.id}/media`}
 			>
@@ -190,7 +213,15 @@ function RecordingDetail({
 					{t("library.saveDetails")}
 				</button>
 			</form>
-			<section aria-label={t("library.deleteLabel")} class="delete-recording">
+			<section
+				aria-label={t("library.deleteLabel")}
+				class="delete-recording"
+				onKeyDown={(event) => {
+					if (event.key !== "Escape" || !confirmingDelete || isDeleting) return;
+					event.preventDefault();
+					toggleDeleteConfirmation(false);
+				}}
+			>
 				{confirmingDelete ? (
 					<>
 						<p>{t("library.deleteWarning")}</p>
@@ -203,14 +234,19 @@ function RecordingDetail({
 						</button>
 						<button
 							disabled={isDeleting}
-							onClick={() => setConfirmingDelete(false)}
+							onClick={() => toggleDeleteConfirmation(false)}
+							ref={cancelDeleteButton}
 							type="button"
 						>
 							{t("library.cancelDelete")}
 						</button>
 					</>
 				) : (
-					<button onClick={() => setConfirmingDelete(true)} type="button">
+					<button
+						onClick={() => toggleDeleteConfirmation(true)}
+						ref={deleteButton}
+						type="button"
+					>
 						{t("library.delete")}
 					</button>
 				)}
@@ -387,7 +423,9 @@ export function LibraryPane({
 				{page.items.map((recording) => (
 					<li key={recording.id}>
 						<button onClick={() => setSelectedId(recording.id)} type="button">
-							<span>{recording.displayTitle}</span>
+							<span>
+								{recordingTitle(recording.displayTitle, t("library.untitled"))}
+							</span>
 							<small>
 								{duration(recording.durationSeconds)} ·{" "}
 								{t(`library.typeLabel.${recording.type}`)} ·{" "}

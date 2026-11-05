@@ -1,5 +1,6 @@
 import { render } from "hono/jsx/dom";
 import { crashLog } from "../../lib/crash-log";
+import { applyStoredTheme } from "../../lib/theme-storage";
 import { App } from "./App";
 import "./style.css";
 
@@ -23,4 +24,5 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 const root = document.getElementById("root");
-if (root) render(<App />, root);
+// Apply the saved theme first so the panel never flashes the wrong one.
+if (root) void applyStoredTheme().then(() => render(<App />, root));

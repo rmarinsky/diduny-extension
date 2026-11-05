@@ -16,6 +16,8 @@ export function documentPictureInPictureApi(
 }
 
 export function copyDocumentStyles(source: Document, target: Document) {
+	const theme = source.documentElement.getAttribute("data-theme");
+	if (theme) target.documentElement.setAttribute("data-theme", theme);
 	for (const styleSheet of Array.from(source.styleSheets)) {
 		if (styleSheet.href) {
 			const link = target.createElement("link");

@@ -18,13 +18,6 @@ interface BrowserEnvironment {
 	webkitSpeechRecognition?: unknown;
 }
 
-function prototypeProperty(value: unknown, property: string) {
-	if (typeof value !== "function") return undefined;
-	const prototype = (value as { prototype?: Record<string, unknown> })
-		.prototype;
-	return prototype?.[property];
-}
-
 export const capabilityRequirements = [
 	{
 		key: "audioWorklet",
@@ -53,12 +46,12 @@ export function detectBrowserCapabilities(
 		onDeviceSpeechRecognition:
 			typeof environment.SpeechRecognition === "function" ||
 			typeof environment.webkitSpeechRecognition === "function",
+		// `createSyncAccessHandle` is `[Exposed=DedicatedWorker]`, so it is never on
+		// the main-thread prototype. The scratch worker is the real consumer; wherever
+		// a secure context exposes `getDirectory` here, sync access handles work there.
 		opfsSyncAccess:
 			typeof environment.navigator?.storage?.getDirectory === "function" &&
-			typeof prototypeProperty(
-				environment.FileSystemFileHandle,
-				"createSyncAccessHandle",
-			) === "function",
+			typeof environment.FileSystemFileHandle === "function",
 	};
 }
 

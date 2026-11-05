@@ -228,6 +228,7 @@ function createBackgroundHarness({
 
 	const chromeMock = {
 		action: {
+			onClicked: { addListener() {} },
 			setBadgeBackgroundColor() {},
 			setBadgeText() {},
 		},
@@ -280,7 +281,7 @@ function createBackgroundHarness({
 				];
 			},
 		},
-		sidePanel: { setPanelBehavior() {} },
+		sidePanel: { async open() {}, setPanelBehavior() {} },
 		storage: {
 			local: storageArea(local),
 			session: {
@@ -486,6 +487,7 @@ test("recovers delivery before accepting a new capture after worker restart", as
 	).toEqual({ acknowledged: true });
 	expect(harness.backgroundMessages).toContainEqual({
 		error: "Could not start microphone capture",
+		mode: "voice",
 		state: "error",
 		type: "recording-state-changed",
 	});

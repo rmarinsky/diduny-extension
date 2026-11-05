@@ -5,13 +5,12 @@ import {
 	isReservedShortcut,
 } from "./dictation";
 
-test("appends a completed dictation without replacing the working document", () => {
-	expect(appendTranscript("Draft", "next sentence")).toBe(
-		"Draft next sentence",
-	);
-	expect(appendTranscript("Draft ", "next sentence")).toBe(
-		"Draft next sentence",
-	);
+test("appends each completed dictation below a --- line without replacing the document", () => {
+	expect(appendTranscript("", " first ")).toBe("first");
+	expect(appendTranscript(" \n", "first")).toBe("first");
+	expect(appendTranscript("first", "second")).toBe("first\n---\nsecond");
+	expect(appendTranscript("first \n", "second")).toBe("first\n---\nsecond");
+	expect(appendTranscript("first", "  ")).toBe("first");
 });
 
 test("refuses browser-reserved keyboard chords", () => {

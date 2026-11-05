@@ -1,8 +1,8 @@
 import { sendMessageUntilAcknowledged } from "./bridge";
-import type { AudioSource } from "./types";
+import type { AudioSource, Message } from "./types";
 
 type FinalCaptureMessage =
-	| { captureId: string; error: string; type: "capture-error" }
+	| Extract<Message, { type: "capture-error" }>
 	| { captureId: string; source: AudioSource; type: "capture-persisted" };
 
 export async function sendFinalCaptureMessage(message: FinalCaptureMessage) {

@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import Fastify from "fastify";
 import { chromium } from "playwright";
@@ -53,7 +54,7 @@ test("the keyboard command palette searches the library, copies the displayed te
 	const e2eLibrary = createE2eLibrary([recording]);
 	const bff = await buildServer({
 		library: e2eLibrary.library,
-		staticDir: new URL("../web/dist", import.meta.url).pathname,
+		staticDir: fileURLToPath(new URL("../web/dist", import.meta.url)),
 		upstreamUrl: serverUrl(upstream),
 	});
 	await bff.listen({ host: "localhost", port: 0 });

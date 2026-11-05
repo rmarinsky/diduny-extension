@@ -26,6 +26,8 @@ export type RecordingStateChanged = {
 	type: "recording-state-changed";
 	state: RecordingState;
 	error?: string;
+	/** What is recording; a shortcut can start a mode the panel is not showing. */
+	mode?: RecordingMode;
 };
 export type RealtimeTokens = {
 	type: "realtime-tokens";
@@ -41,11 +43,20 @@ export type DeliveryAvailability = {
 	type: "delivery-availability";
 	available: boolean;
 	reason?:
+		| "browser-page"
+		| "diduny-web-app"
 		| "no-text-field"
 		| "permission-denied"
 		| "site-disabled"
 		| "target-unavailable"
 		| "unsupported-editor";
+};
+/** A start found no Diduny session; the panel goes back to its sign-in view. */
+export type SessionEnded = { type: "session-ended" };
+/** The Microphone Access tab is open and the start waits for the user there. */
+export type MicrophonePermission = {
+	type: "microphone-permission";
+	status: "waiting";
 };
 
 // Background → Offscreen
@@ -90,6 +101,7 @@ export type CaptureError = {
 	type: "capture-error";
 	captureId: string;
 	error: string;
+	reason?: "microphone-blocked";
 };
 export type CloseOffscreen = { type: "close-offscreen"; captureId: string };
 
@@ -101,6 +113,8 @@ export type Message =
 	| RealtimeTokens
 	| TranscriptionComplete
 	| DeliveryAvailability
+	| SessionEnded
+	| MicrophonePermission
 	| StartCapture
 	| StopCapture
 	| CaptureReady

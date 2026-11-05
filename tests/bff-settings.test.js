@@ -132,3 +132,47 @@ test("persists workspace settings and reports server-side library statistics and
 		await rm(dataDir, { force: true, recursive: true });
 	}
 });
+
+test("saves spoken-language hints as a validated list of language codes", async () => {
+	const dataDir = await mkdtemp(join(tmpdir(), "diduny-bff-language-hints-"));
+	const library = await LibraryStore.open({ dataDir });
+	const sessions = new InMemorySessionStore();
+	const sessionId = await sessions.create({ accessToken: "server-only" });
+	const server = await buildServer({ library, sessions });
+	const patch = (speechLanguageHints) =>
+		server.inject({
+			headers: { cookie: `diduny_session=${sessionId}` },
+			method: "PATCH",
+			payload: { speechLanguageHints },
+			url: "/bff/settings",
+		});
+	try {
+		const initial = await server.inject({
+			headers: { cookie: `diduny_session=${sessionId}` },
+			method: "GET",
+			url: "/bff/settings",
+		});
+		expect(initial.json().settings.speechLanguageHints).toEqual(["uk"]);
+
+		const both = await patch(["uk", "en"]);
+		expect(both.statusCode).toBe(200);
+		expect(both.json().speechLanguageHints).toEqual(["uk", "en"]);
+
+		const automatic = await patch([]);
+		expect(automatic.statusCode).toBe(200);
+		expect(automatic.json().speechLanguageHints).toEqual([]);
+
+		for (const invalid of [
+			["xx yy"],
+			Array.from({ length: 11 }, () => "en"),
+			"uk",
+			[1],
+		]) {
+			expect((await patch(invalid)).statusCode).toBe(400);
+		}
+	} finally {
+		await server.close();
+		await library.close();
+		await rm(dataDir, { force: true, recursive: true });
+	}
+});

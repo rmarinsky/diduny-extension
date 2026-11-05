@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { AxeBuilder } from "@axe-core/playwright";
 import { type Page, expect, test } from "@playwright/test";
 import Fastify from "fastify";
@@ -33,7 +34,7 @@ test("all web views pass axe and remain usable without horizontal scrolling at 2
 	const e2eLibrary = createE2eLibrary();
 	const bff = await buildServer({
 		library: e2eLibrary.library,
-		staticDir: new URL("../web/dist", import.meta.url).pathname,
+		staticDir: fileURLToPath(new URL("../web/dist", import.meta.url)),
 		upstreamUrl: serverUrl(upstream),
 	});
 	await bff.listen({ host: "localhost", port: 0 });
@@ -66,6 +67,9 @@ test("all web views pass axe and remain usable without horizontal scrolling at 2
 		await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
 		await expectNoAxeViolations(page);
+		await page.getByText("Paste-in translation", { exact: true }).click();
+		await expect(page.getByLabel("Text to translate")).toBeVisible();
+		await expectNoAxeViolations(page);
 		expect(
 			await page
 				.locator("button, input:not([type=checkbox]), select")
@@ -82,6 +86,17 @@ test("all web views pass axe and remain usable without horizontal scrolling at 2
 		await expectNoAxeViolations(page);
 		await page.getByRole("button", { name: "Settings" }).click();
 		await expectNoAxeViolations(page);
+
+		await page.emulateMedia({ colorScheme: "dark" });
+		await expectNoAxeViolations(page);
+		await page.getByRole("button", { name: "Library" }).click();
+		await expectNoAxeViolations(page);
+		await page.getByRole("button", { name: "Dictation" }).click();
+		await expectNoAxeViolations(page);
+		await page.keyboard.press("Alt+Shift+P");
+		await expectNoAxeViolations(page);
+		await page.keyboard.press("Escape");
+		await page.getByRole("button", { name: "Settings" }).click();
 
 		await page.evaluate(() => {
 			document.documentElement.style.zoom = "2";
