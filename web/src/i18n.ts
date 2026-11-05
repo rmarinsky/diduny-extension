@@ -1,6 +1,5 @@
 import i18next, { type i18n as I18n } from "i18next";
 import ICU from "i18next-icu";
-import { initReactI18next } from "react-i18next";
 import { en } from "./locales/en";
 import { uk } from "./locales/uk";
 
@@ -24,7 +23,7 @@ export function createI18n(locale: UiLocale = "en") {
 }
 
 const i18n = i18next.createInstance();
-void i18n.use(ICU).use(initReactI18next).init(config("en"));
+void i18n.use(ICU).init(config("en"));
 
 export default i18n;
 
