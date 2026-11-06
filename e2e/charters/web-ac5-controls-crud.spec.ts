@@ -165,7 +165,7 @@ test("AC5 web: Clear, then Ctrl+Z, restores the document; a Speedrunner's double
 		await expect(document).toHaveValue("");
 		await expect(clear).toBeDisabled();
 		await document.focus();
-		await page.keyboard.press("Control+Z");
+		await page.keyboard.press("ControlOrMeta+Z");
 		await expect(document).toHaveValue("Keep this text");
 	}
 });

@@ -9,6 +9,7 @@ import {
 	installSupportedBrowserCapabilities,
 } from "./support/browser-capabilities";
 import { createE2eLibrary } from "./support/fake-library";
+import { modifierButtonName, shortcutLabel } from "./support/shortcut-labels";
 
 function serverUrl(server: ReturnType<typeof Fastify>) {
 	const address = server.server.address();
@@ -196,12 +197,20 @@ test("the web library searches server-side and edits, copies, plays, and deletes
 			.poll(() => e2eLibrary.settings().dictationShortcut)
 			.toBe("Alt+Shift+M");
 		await page.getByRole("button", { name: "Dictation" }).click();
-		await expect(page.getByText("Shortcut: Alt + Shift + M")).toBeVisible();
+		await expect(
+			page.getByText(`Shortcut: ${shortcutLabel("Alt+Shift+M")}`),
+		).toBeVisible();
 		await page.getByRole("button", { name: "Settings" }).click();
 		// Build Ctrl+R from the toggles instead of pressing it, so the browser never reloads.
-		await page.getByRole("button", { exact: true, name: "Alt" }).click();
-		await page.getByRole("button", { exact: true, name: "Shift" }).click();
-		await page.getByRole("button", { exact: true, name: "Ctrl" }).click();
+		await page
+			.getByRole("button", { exact: true, name: modifierButtonName("Alt") })
+			.click();
+		await page
+			.getByRole("button", { exact: true, name: modifierButtonName("Shift") })
+			.click();
+		await page
+			.getByRole("button", { exact: true, name: modifierButtonName("Ctrl") })
+			.click();
 		await page.getByLabel("Key", { exact: true }).press("r");
 		await page.getByRole("button", { name: "Save shortcut" }).click();
 		await expect(

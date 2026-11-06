@@ -119,7 +119,7 @@ test("TC-04: Clear can be undone with Ctrl+Z, so typed text is not lost", async 
 
 	// BUG-W3: the cleared text could not be restored.
 	await document.focus();
-	await page.keyboard.press("Control+Z");
+	await page.keyboard.press("ControlOrMeta+Z");
 	await expect(document).toHaveValue("Important paragraph");
 	await expect(page.getByRole("button", { name: "Clear" })).toBeEnabled();
 });

@@ -7,6 +7,7 @@ import { buildServer } from "../server";
 import { DEFAULT_SETTINGS } from "../src/core/settings";
 import { installSupportedBrowserCapabilities } from "./support/browser-capabilities";
 import { createE2eLibrary } from "./support/fake-library";
+import { modifierButtonName, shortcutLabel } from "./support/shortcut-labels";
 
 function serverUrl(server: ReturnType<typeof Fastify>) {
 	const address = server.server.address();
@@ -85,9 +86,14 @@ test("settings: word chips, shortcut toggles, typing speed, instant language swi
 		await expectNoAxeViolations(page);
 
 		await page.getByLabel("Key", { exact: true }).press("Alt+Shift+K");
-		await expect(page.getByText("Preview: Alt + Shift + K")).toBeVisible();
 		await expect(
-			page.getByRole("button", { exact: true, name: "Alt" }),
+			page.getByText(`Preview: ${shortcutLabel("Alt+Shift+K")}`),
+		).toBeVisible();
+		await expect(
+			page.getByRole("button", {
+				exact: true,
+				name: modifierButtonName("Alt"),
+			}),
 		).toHaveAttribute("aria-pressed", "true");
 		await page.getByRole("button", { name: "Save shortcut" }).click();
 		await expect
