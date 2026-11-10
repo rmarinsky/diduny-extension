@@ -14,6 +14,7 @@ import {
 	test,
 	watchStateTrail,
 } from "./support/extension-harness";
+import { chromeCommandShortcut } from "./support/shortcut-labels";
 
 const TAB_CAPTURE_NOT_INVOKED =
 	"Chrome lets Diduny record a tab only after you click the Diduny toolbar button on it. Click it on the meeting tab, then start the meeting recording.";
@@ -88,16 +89,16 @@ test("TC-27: translation dictation has a shortcut after install, Settings lists 
 			shortcuts.map((command) => [command.name, command.shortcut]),
 		),
 	).toMatchObject({
-		"start-meeting": "Alt+Shift+M",
-		"toggle-recording": "Alt+Shift+V",
-		"toggle-translation": "Alt+V",
+		"start-meeting": chromeCommandShortcut("Alt+Shift+M"),
+		"toggle-recording": chromeCommandShortcut("Alt+Shift+V"),
+		"toggle-translation": chromeCommandShortcut("Alt+V"),
 	});
 
 	const options = await openExtensionPage("options.html");
 	const list = options.getByRole("list", { name: "Keyboard shortcuts" });
 	await expect(
 		list.getByRole("listitem").filter({ hasText: "translation dictation" }),
-	).toContainText("Alt+V");
+	).toContainText(chromeCommandShortcut("Alt+V"));
 	await expect(list.getByRole("listitem")).toHaveCount(3);
 	const shortcutsPage = context.waitForEvent("page");
 	await options.getByRole("button", { name: "Change shortcuts" }).click();

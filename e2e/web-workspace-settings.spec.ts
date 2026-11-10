@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { shortcutLabel } from "./support/shortcut-labels";
 import {
 	TEST_EMAIL,
 	clipboardText,
@@ -208,6 +209,10 @@ test("TC-34: the Ukrainian interface applies to every visible text and survives 
 		"Ctrl",
 		"Meta",
 		"Win",
+		// macOS key names ("⌥ Option", "⌃ Control", "⌘ Command").
+		"Option",
+		"Control",
+		"Command",
 		"Enter",
 		"English",
 		"cloud",
@@ -307,7 +312,9 @@ test("TC-35: Reset settings asks first, lists what it resets, and keeps retentio
 		page.getByLabel("Announce final live transcript"),
 	).not.toBeChecked();
 	await expect(page.getByLabel("Recording microphone")).toHaveValue("");
-	await expect(page.getByText("Preview: Alt + Shift + V")).toBeVisible();
+	await expect(
+		page.getByText(`Preview: ${shortcutLabel("Alt+Shift+V")}`),
+	).toBeVisible();
 	await expect(page.getByLabel("Translation source language")).toHaveValue(
 		"uk",
 	);

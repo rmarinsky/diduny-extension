@@ -1,3 +1,4 @@
+import { shortcutLabel } from "./support/shortcut-labels";
 import {
 	dictate,
 	dictationDocument,
@@ -12,9 +13,12 @@ test("TC-09: a plain-key shortcut types inside the document and toggles dictatio
 }) => {
 	const { library, page } = await workspace();
 	await page.getByRole("button", { name: "Settings", exact: true }).click();
-	const pressedModifiers = page
-		.getByRole("group", { name: "Toggle dictation" })
-		.getByRole("button", { pressed: true });
+	const shortcutGroup = page.getByRole("group", { name: "Toggle dictation" });
+	// count() does not wait, so let the saved shortcut render before clearing its modifiers.
+	await expect(shortcutGroup.getByLabel("Key", { exact: true })).toHaveValue(
+		/./,
+	);
+	const pressedModifiers = shortcutGroup.getByRole("button", { pressed: true });
 	while ((await pressedModifiers.count()) > 0)
 		await pressedModifiers.first().click();
 	await page.getByLabel("Key", { exact: true }).press("d");
@@ -52,7 +56,9 @@ test("TC-10: Settings refuses a reserved shortcut (Ctrl+R) and a shortcut withou
 	const key = page.getByLabel("Key", { exact: true });
 
 	await key.press("Control+r");
-	await expect(page.getByText("Preview: Ctrl + R")).toBeVisible();
+	await expect(
+		page.getByText(`Preview: ${shortcutLabel("Ctrl+R")}`),
+	).toBeVisible();
 	await page.getByRole("button", { name: "Save shortcut" }).click();
 	await expect(
 		page.getByText("Ctrl+R is reserved by this browser and cannot be used."),
@@ -156,7 +162,7 @@ test("TC-26: after a reload the shortcut hint never shows the default shortcut b
 		settings: { dictationShortcut: "Alt+V" },
 	});
 	const hint = page.locator(".meter-row .shortcut");
-	await expect(hint).toHaveText("Shortcut: Alt + V");
+	await expect(hint).toHaveText(`Shortcut: ${shortcutLabel("Alt+V")}`);
 
 	// Hold the settings so the page renders before they arrive.
 	let release: () => void = () => {};
@@ -170,11 +176,11 @@ test("TC-26: after a reload the shortcut hint never shows the default shortcut b
 	await page.reload();
 	await expect(dictationDocument(page)).toBeVisible();
 	// BUG-W5: the hint read "Shortcut: Alt + Shift + V" until settings loaded.
-	await expect(hint).not.toContainText("Alt + Shift + V");
+	await expect(hint).not.toContainText(shortcutLabel("Alt+Shift+V"));
 	release();
-	await expect(hint).toHaveText("Shortcut: Alt + V");
+	await expect(hint).toHaveText(`Shortcut: ${shortcutLabel("Alt+V")}`);
 
 	await page.unroute("**/bff/settings");
 	await reloadWorkspace(page);
-	await expect(hint).toHaveText("Shortcut: Alt + V");
+	await expect(hint).toHaveText(`Shortcut: ${shortcutLabel("Alt+V")}`);
 });
