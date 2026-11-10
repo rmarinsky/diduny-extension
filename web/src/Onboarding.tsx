@@ -1,5 +1,5 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { type Child, useEffect, useRef, useState } from "hono/jsx/dom";
+import { targetChecked } from "../../lib/dom-events";
 import { AppBar } from "./ThemeToggle";
 import { userErrorMessage } from "./errors";
 import {
@@ -13,6 +13,7 @@ import {
 	updateRetentionPolicy,
 	updateWorkspaceSettings,
 } from "./settings";
+import { useTranslation } from "./useTranslation";
 
 type MicrophoneState = "denied" | "granted" | "idle" | "unsupported";
 type Step = "delivery" | "engine";
@@ -44,7 +45,7 @@ function DeliveryFlow({
 	onFinish,
 	status,
 }: {
-	afterChoices?: ReactNode;
+	afterChoices?: Child;
 	choices: OnboardingChoices;
 	disabled?: boolean;
 	finishLabel: string;
@@ -59,15 +60,14 @@ function DeliveryFlow({
 	const firstRender = useRef(true);
 
 	// Move focus to the heading of each new page; on first render only when asked to.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: step is the trigger
 	useEffect(() => {
 		if (!firstRender.current || focusOnMount) title.current?.focus();
 		firstRender.current = false;
 	}, [step, focusOnMount]);
 
 	return (
-		<section aria-labelledby="delivery-flow-title" className="card flow">
-			<p className="note">
+		<section aria-labelledby="delivery-flow-title" class="card flow">
+			<p class="note">
 				{t("onboarding.step", {
 					current: step === "delivery" ? 1 : 2,
 					total: 2,
@@ -79,9 +79,9 @@ function DeliveryFlow({
 						{t("onboarding.delivery.title")}
 					</h2>
 					<DeliveryExplanation />
-					<div className="card-actions">
+					<div class="card-actions">
 						<button
-							className="primary"
+							class="primary"
 							onClick={() => setStep("engine")}
 							type="button"
 						>
@@ -96,58 +96,58 @@ function DeliveryFlow({
 					</h2>
 					<p>{t("onboarding.provider.cloud")}</p>
 					<p>{t("onboarding.provider.noSubstitution")}</p>
-					<label className="checkbox" htmlFor="onboarding-never-save">
+					<label class="checkbox" for="onboarding-never-save">
 						<input
 							checked={choices.neverSaveRecordings}
 							disabled={disabled}
 							id="onboarding-never-save"
 							onChange={(event) =>
-								onChoiceChange({ neverSaveRecordings: event.target.checked })
+								onChoiceChange({ neverSaveRecordings: targetChecked(event) })
 							}
 							type="checkbox"
 						/>
 						{t("onboarding.retention.neverChoice")}
 					</label>
 					{choices.neverSaveRecordings ? (
-						<p className="note">{t("onboarding.retention.neverNote")}</p>
+						<p class="note">{t("onboarding.retention.neverNote")}</p>
 					) : null}
-					<label className="checkbox" htmlFor="onboarding-cleanup">
+					<label class="checkbox" for="onboarding-cleanup">
 						<input
 							checked={choices.textCleanupEnabled}
 							disabled={disabled}
 							id="onboarding-cleanup"
 							onChange={(event) =>
-								onChoiceChange({ textCleanupEnabled: event.target.checked })
+								onChoiceChange({ textCleanupEnabled: targetChecked(event) })
 							}
 							type="checkbox"
 						/>
 						{t("onboarding.choices.cleanup")}
 					</label>
-					<label className="checkbox" htmlFor="onboarding-announce">
+					<label class="checkbox" for="onboarding-announce">
 						<input
 							checked={choices.announceLiveTranscript}
 							disabled={disabled}
 							id="onboarding-announce"
 							onChange={(event) =>
-								onChoiceChange({ announceLiveTranscript: event.target.checked })
+								onChoiceChange({ announceLiveTranscript: targetChecked(event) })
 							}
 							type="checkbox"
 						/>
 						{t("onboarding.choices.announce")}
 					</label>
 					{afterChoices}
-					<p aria-live="polite" className="status">
+					<p aria-live="polite" class="status">
 						{status ?? ""}
 					</p>
-					<div className="card-actions">
+					<div class="card-actions">
 						<button
-							className="secondary"
+							class="secondary"
 							onClick={() => setStep("delivery")}
 							type="button"
 						>
 							{t("onboarding.back")}
 						</button>
-						<button className="primary" onClick={onFinish} type="button">
+						<button class="primary" onClick={onFinish} type="button">
 							{finishLabel}
 						</button>
 					</div>
@@ -204,26 +204,26 @@ export function StartPage({
 	}
 
 	return (
-		<main className="shell start">
+		<main class="shell start">
 			<AppBar />
-			<p className="lead">{t("onboarding.intro")}</p>
+			<p class="lead">{t("onboarding.intro")}</p>
 			<DeliveryFlow
 				afterChoices={
-					<div className="microphone-choice">
+					<div class="microphone-choice">
 						<h3>{t("onboarding.microphone.title")}</h3>
 						<p>{t("onboarding.microphone.body")}</p>
 						<p>{t("onboarding.microphone.allowAlways")}</p>
-						<p className="note">{t("onboarding.microphone.optional")}</p>
-						<div className="card-actions">
+						<p class="note">{t("onboarding.microphone.optional")}</p>
+						<div class="card-actions">
 							<button
-								className="secondary"
+								class="secondary"
 								disabled={microphone === "granted"}
 								onClick={() => void requestMicrophone()}
 								type="button"
 							>
 								{t("onboarding.microphone.allow")}
 							</button>
-							<p aria-live="polite" className="status">
+							<p aria-live="polite" class="status">
 								{microphone === "granted"
 									? t("onboarding.microphone.granted")
 									: microphone === "denied"

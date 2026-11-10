@@ -6,7 +6,7 @@
  *
  * Auth state is derived by asking the SW for the current session on mount.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "hono/jsx/dom";
 import { crashLog } from "../../../lib/crash-log";
 import { onMessage } from "../../../lib/messaging/bridge";
 
@@ -103,6 +103,7 @@ export function useAuth() {
 				setUser({ email: res.email });
 				setStep("authenticated");
 			} else {
+				setUser(null);
 				setStep("unauthenticated");
 				setError(NO_SESSION_MESSAGE);
 			}
@@ -117,6 +118,12 @@ export function useAuth() {
 			setLoading(false);
 		}
 	}, []);
+
+	useEffect(() => {
+		const revalidate = () => void refresh();
+		window.addEventListener("focus", revalidate);
+		return () => window.removeEventListener("focus", revalidate);
+	}, [refresh]);
 
 	const openBffSignIn = useCallback(async () => {
 		setError(null);

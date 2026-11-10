@@ -1,5 +1,5 @@
-import { type KeyboardEvent, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useState } from "hono/jsx/dom";
+import { targetValue } from "../../lib/dom-events";
 import {
 	shortcutKeyFromEvent,
 	shortcutModifiers,
@@ -12,6 +12,7 @@ import {
 	shortcutPlatform,
 	toggleModifier,
 } from "./shortcut-editor";
+import { useTranslation } from "./useTranslation";
 
 const passThroughKeys = new Set(["Enter", "Escape", "Tab"]);
 
@@ -29,7 +30,7 @@ export function ShortcutField({
 	const { t } = useTranslation();
 	const [platform] = useState(() => shortcutPlatform());
 
-	function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+	function onKeyDown(event: KeyboardEvent) {
 		if (passThroughKeys.has(event.key)) return;
 		// Recording a chord such as Alt+Shift+P must not also fire the app's own shortcuts.
 		event.preventDefault();
@@ -57,16 +58,13 @@ export function ShortcutField({
 	}
 
 	return (
-		<fieldset
-			aria-describedby="dictation-shortcut-help"
-			className="shortcut-field"
-		>
+		<fieldset aria-describedby="dictation-shortcut-help" class="shortcut-field">
 			<legend>{t("settings.toggleDictation")}</legend>
-			<div className="shortcut-row">
+			<div class="shortcut-row">
 				{shortcutModifiers.map((modifier) => (
 					<button
-						aria-pressed={value.modifiers.includes(modifier)}
-						className="toggle"
+						aria-pressed={value.modifiers.includes(modifier) ? "true" : "false"}
+						class="toggle"
 						key={modifier}
 						onClick={() => onChange(toggleModifier(value, modifier))}
 						type="button"
@@ -74,10 +72,10 @@ export function ShortcutField({
 						{modifierLabel(modifier, platform)}
 					</button>
 				))}
-				<span aria-hidden="true" className="shortcut-plus">
+				<span aria-hidden="true" class="shortcut-plus">
 					+
 				</span>
-				<label className="shortcut-key" htmlFor="dictation-shortcut-key">
+				<label class="shortcut-key" for="dictation-shortcut-key">
 					{t("settings.shortcutKey")}
 					<input
 						autoCapitalize="off"
@@ -85,7 +83,7 @@ export function ShortcutField({
 						id="dictation-shortcut-key"
 						onChange={(event) => {
 							// Virtual keyboards report "Unidentified" keydowns; read the typed character instead.
-							const typed = parseShortcut(event.target.value.slice(-1)).key;
+							const typed = parseShortcut(targetValue(event).slice(-1)).key;
 							if (typed) onChange({ ...value, key: typed });
 						}}
 						onKeyDown={onKeyDown}
@@ -94,10 +92,10 @@ export function ShortcutField({
 					/>
 				</label>
 			</div>
-			<p className="hint" id="dictation-shortcut-help">
+			<p class="hint" id="dictation-shortcut-help">
 				{t("settings.shortcutHelp")}
 			</p>
-			<output className="shortcut-preview">
+			<output class="shortcut-preview">
 				{value.key
 					? t("settings.shortcutPreview", {
 							shortcut: displayShortcut(value, platform),

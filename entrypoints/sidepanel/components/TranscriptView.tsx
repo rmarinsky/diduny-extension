@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef } from "hono/jsx/dom";
+import { targetValue } from "../../../lib/dom-events";
 import { type LiveText, LiveTranscript } from "./LiveTranscript";
 
 interface Props {
@@ -44,17 +45,17 @@ export function TranscriptView({
 	}
 
 	return (
-		<div className="transcript">
-			{deliveryNotice && <p className="delivery-notice">{deliveryNotice}</p>}
-			<div className="transcript-header">
+		<div class="transcript">
+			{deliveryNotice && <p class="delivery-notice">{deliveryNotice}</p>}
+			<div class="transcript-header">
 				<h3>Transcript</h3>
 				<div>
 					{finalText && (
 						<>
-							<button type="button" className="btn btn-ghost" onClick={onCopy}>
+							<button type="button" class="btn btn-ghost" onClick={onCopy}>
 								{copied ? "Copied!" : "Copy"}
 							</button>
-							<button type="button" className="btn btn-ghost" onClick={clear}>
+							<button type="button" class="btn btn-ghost" onClick={clear}>
 								Clear
 							</button>
 						</>
@@ -63,8 +64,8 @@ export function TranscriptView({
 			</div>
 			<textarea
 				aria-label="Transcript"
-				className="transcript-text"
-				onChange={(event) => onEdit(event.target.value)}
+				class="transcript-text"
+				onChange={(event) => onEdit(targetValue(event))}
 				placeholder="Your dictation appears here. You can type or edit it."
 				ref={field}
 				value={finalText}

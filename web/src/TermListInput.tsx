@@ -1,6 +1,7 @@
-import { type KeyboardEvent, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useState } from "hono/jsx/dom";
+import { targetValue } from "../../lib/dom-events";
 import { MAX_TERMS, MAX_TERM_LENGTH, addTerms, splitDraft } from "./term-list";
+import { useTranslation } from "./useTranslation";
 
 /**
  * Word list edited as removable chips. Enter or comma adds the typed entry;
@@ -30,7 +31,7 @@ export function TermListInput({
 		if (text.trim()) onChange(addTerms(terms, text));
 	}
 
-	function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+	function onKeyDown(event: KeyboardEvent) {
 		if ((event.key === "Enter" && draft.trim()) || event.key === ",") {
 			event.preventDefault();
 			commit();
@@ -43,14 +44,14 @@ export function TermListInput({
 	}
 
 	return (
-		<div className="term-field">
-			<label htmlFor={id}>{label}</label>
-			<p className="hint" id={`${id}-hint`}>
+		<div class="term-field">
+			<label for={id}>{label}</label>
+			<p class="hint" id={`${id}-hint`}>
 				{hint}
 			</p>
-			<div className="term-box">
+			<div class="term-box">
 				{terms.length ? (
-					<ul aria-label={label} className="term-chips">
+					<ul aria-label={label} class="term-chips">
 						{terms.map((term) => (
 							<li key={term}>
 								<span>{term}</span>
@@ -75,13 +76,13 @@ export function TermListInput({
 					maxLength={MAX_TERM_LENGTH}
 					onBlur={() => commit()}
 					onChange={(event) => {
-						const next = splitDraft(terms, event.target.value);
+						const next = splitDraft(terms, targetValue(event));
 						setDraft(next.draft);
 						if (next.terms !== terms) onChange(next.terms);
 					}}
 					onKeyDown={onKeyDown}
 					onPaste={(event) => {
-						const text = event.clipboardData.getData("text");
+						const text = event.clipboardData?.getData("text") ?? "";
 						if (!/[,;\r\n\t]/.test(text)) return;
 						event.preventDefault();
 						commit(`${draft}${text}`);

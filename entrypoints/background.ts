@@ -46,6 +46,10 @@ import {
 	SAME_TRANSLATION_LANGUAGE_MESSAGE,
 	getRecordingPreferences,
 } from "../lib/recording-preferences";
+import {
+	type CaptureTerminalDecision,
+	createCaptureTerminalLifecycle,
+} from "../lib/recording/capture-terminal-lifecycle";
 import type { RecordingMode, RecordingState } from "../lib/types";
 import { INPUT_TIMING } from "../src/core/constants";
 import { EXTENSION_DICTATION_EVENT } from "../web/src/dictation";
@@ -58,10 +62,11 @@ export default defineBackground(() => {
 	/** Bumped when a recording is discarded, so a start still waiting for the microphone gives up. */
 	let startGeneration = 0;
 	let micPermissionTabId: number | undefined;
-	const completedSources = new Set<"mic" | "tab">();
-	const persistedSources = new Set<"mic" | "tab">();
 	const KEEPALIVE_ALARM = "recording-keepalive";
 	const DELIVERY_SESSION_STORAGE_KEY = "didunyDeliverySession";
+	const captureLifecycle = createCaptureTerminalLifecycle(
+		chrome.storage.session,
+	);
 	let deliverySession: DeliverySession | undefined;
 	let commandPress: CommandPress | undefined;
 	let commandPressTimer: ReturnType<typeof setTimeout> | undefined;
@@ -128,16 +133,30 @@ export default defineBackground(() => {
 		}
 	});
 
-	// Recover state on SW restart: if offscreen doc exists, we were recording
-	chrome.offscreen
-		.hasDocument()
-		.then((exists) => {
-			if (exists) {
+	// Recover state on SW restart from browser-owned session storage.
+	const startupReady = captureLifecycle
+		.resume()
+		.then(async (terminal) => {
+			if (terminal?.shouldClose) {
+				await finishCapture(terminal);
+				if (terminal.cleanupRequested)
+					await captureLifecycle.cleanup(terminal.captureId, closeOffscreen);
+				return;
+			}
+			if (terminal?.pendingDelivery) {
+				const completion = await completeTranscriptDelivery(
+					terminal.captureId,
+					terminal.pendingDelivery.source,
+					terminal.pendingDelivery.text,
+				);
+				if (completion.shouldClose) return;
+			}
+			if (await chrome.offscreen.hasDocument()) {
 				currentState = "recording";
 				updateBadge("recording");
 			}
 		})
-		.catch(() => {});
+		.catch((error) => logError("bg:recovery", error));
 
 	// ── Auth message handler ────────────────────────────────────────────────────
 	// The raw chrome.runtime API keeps the response channel open for BFF calls.
@@ -199,6 +218,7 @@ export default defineBackground(() => {
 
 	// ── Keyboard shortcut ───────────────────────────────────────────────────────
 	chrome.commands.onCommand.addListener(async (command) => {
+		await startupReady;
 		if (currentState === "recording") {
 			await stopRecording();
 			return;
@@ -287,66 +307,66 @@ export default defineBackground(() => {
 					targetTabId: msg.targetTabId,
 					translation: msg.translation,
 				});
-				break;
+				return true;
 			}
 			case "stop-recording": {
 				await stopRecording();
-				break;
+				return true;
 			}
 			case "capture-ready": {
+				if (!captureLifecycle.isCurrent(msg.captureId)) return true;
 				if (currentState === "starting") await setState("recording");
-				break;
+				return true;
 			}
 			case "capture-tokens": {
+				if (!captureLifecycle.isCurrent(msg.captureId)) return true;
 				await sendMessage({
 					type: "realtime-tokens",
 					tokens: msg.tokens,
 					source: msg.source,
 				});
-				break;
+				return true;
 			}
 			case "capture-complete": {
-				await deliverTranscript(msg.text);
-				await sendMessage({
-					type: "transcription-complete",
-					text: msg.text,
-					source: msg.source,
-				});
-				completedSources.add(msg.source);
-				if (persistedSources.has(msg.source)) {
-					completedSources.delete(msg.source);
-					persistedSources.delete(msg.source);
-				}
-				if (completedSources.size === 0) {
-					await setState("success");
-					await closeOffscreen();
-				}
-				break;
+				const completion = await captureLifecycle.captureComplete(
+					msg.captureId,
+					msg.source,
+					msg.text,
+				);
+				if (!completion.accepted) return true;
+				await completeTranscriptDelivery(
+					completion.captureId,
+					msg.source,
+					msg.text,
+				);
+				return true;
 			}
 			case "capture-persisted": {
-				if (completedSources.has(msg.source)) {
-					completedSources.delete(msg.source);
-				} else {
-					persistedSources.add(msg.source);
-				}
-				if (completedSources.size === 0 && persistedSources.size === 0) {
-					await setState("success");
-					await closeOffscreen();
-				}
-				break;
+				await finishCapture(
+					await captureLifecycle.capturePersisted(msg.captureId, msg.source),
+				);
+				return true;
 			}
 			case "capture-error": {
 				// The stored grant was stale; the next record click reopens the permission page.
 				if (msg.reason === "microphone-blocked")
 					await chrome.storage.local.remove(MIC_GRANTED_STORAGE_KEY);
-				completedSources.clear();
-				persistedSources.clear();
-				await clearDeliveryStatus();
-				await setState("error", msg.error);
-				await closeOffscreen();
-				break;
+				const failure = await captureLifecycle.captureFailed(
+					msg.captureId,
+					msg.error,
+				);
+				if (!failure.accepted) return true;
+				stopKeepalive();
+				if (!failure.pendingDelivery) await clearDeliveryStatus();
+				await finishCapture(failure);
+				return true;
+			}
+			case "close-offscreen": {
+				await captureLifecycle.cleanup(msg.captureId, closeOffscreen);
+				return true;
 			}
 		}
+		return false;
 	});
 
 	// ── Recording helpers ───────────────────────────────────────────────────────
@@ -370,6 +390,9 @@ export default defineBackground(() => {
 			"info",
 			`mode=${mode}, lang=${language}, diarization=${diarization}`,
 		);
+		await startupReady;
+		// The worker may have recovered a running capture while this start waited.
+		if (!canStart()) return;
 		if (translation && translation.targetLanguage === language) {
 			await setState("error", SAME_TRANSLATION_LANGUAGE_MESSAGE);
 			return;
@@ -378,6 +401,7 @@ export default defineBackground(() => {
 		startInFlight = true;
 		const generation = startGeneration;
 		try {
+			const previousState = currentState;
 			const [session, bffOrigin, microphoneDeviceId] = await Promise.all([
 				getBffAuthSession(),
 				getBffOrigin(),
@@ -389,9 +413,11 @@ export default defineBackground(() => {
 				await setState("idle");
 				return;
 			}
-
-			completedSources.clear();
-			persistedSources.clear();
+			const capture = captureLifecycle.begin(closeOffscreen);
+			if (!(await capture.ready)) {
+				await setState(previousState);
+				return;
+			}
 			await clearDeliveryStatus();
 			const delivery =
 				mode !== "meeting" ? await prepareDeliveryTarget(bffOrigin) : undefined;
@@ -420,6 +446,7 @@ export default defineBackground(() => {
 			startKeepalive();
 			await sendToOffscreenWithRetry({
 				type: "start-capture",
+				captureId: capture.id,
 				mode,
 				bffOrigin,
 				language,
@@ -444,6 +471,7 @@ export default defineBackground(() => {
 	}
 
 	async function stopRecording() {
+		await startupReady;
 		if (!(await chrome.offscreen.hasDocument().catch(() => false))) {
 			// Nothing is capturing any more, so there is no result to wait for.
 			stopKeepalive();
@@ -461,8 +489,6 @@ export default defineBackground(() => {
 		startGeneration += 1;
 		const capturing = await chrome.offscreen.hasDocument().catch(() => false);
 		if (!capturing && currentState !== "starting") return;
-		completedSources.clear();
-		persistedSources.clear();
 		if (micPermissionTabId !== undefined)
 			await chrome.tabs.remove(micPermissionTabId).catch(() => {});
 		// The offscreen document answers once its capture and scratch audio are gone.
@@ -541,7 +567,24 @@ export default defineBackground(() => {
 		}
 	}
 
-	async function deliverTranscript(text: string) {
+	async function completeTranscriptDelivery(
+		captureId: string,
+		source: Extract<Message, { type: "capture-complete" }>["source"],
+		text: string,
+	) {
+		await deliverTranscript(text, captureId);
+		await sendMessage({ type: "transcription-complete", text, source });
+		const completion = await captureLifecycle.deliveryFinished(
+			captureId,
+			source,
+		);
+		await finishCapture(completion);
+		if (completion.cleanupRequested)
+			await captureLifecycle.cleanup(captureId, closeOffscreen);
+		return completion;
+	}
+
+	async function deliverTranscript(text: string, deliveryId: string) {
 		const session = await getDeliverySession();
 		if (!session) return;
 
@@ -557,12 +600,13 @@ export default defineBackground(() => {
 			if (text) {
 				let result =
 					session.editor === "quill"
-						? await deliverQuillTranscript(session, text)
+						? await deliverQuillTranscript(session, text, deliveryId)
 						: undefined;
 				if (result?.inserted !== true) {
 					result = await chrome.tabs.sendMessage(
 						session.tabId,
 						{
+							deliveryId,
 							type: "diduny:deliver-transcript",
 							text,
 						},
@@ -602,10 +646,11 @@ export default defineBackground(() => {
 	async function deliverQuillTranscript(
 		session: DeliverySession,
 		text: string,
+		deliveryId: string,
 	) {
 		try {
 			const [result] = await chrome.scripting.executeScript({
-				args: [text],
+				args: [text, deliveryId],
 				func: deliverToQuill,
 				target: { frameIds: [session.frameId], tabId: session.tabId },
 				world: "MAIN",
@@ -807,5 +852,13 @@ export default defineBackground(() => {
 		if (existing) {
 			await chrome.offscreen.closeDocument();
 		}
+	}
+
+	async function finishCapture(decision: CaptureTerminalDecision) {
+		if (!decision.outcome || !captureLifecycle.isCurrent(decision.captureId))
+			return;
+		if (decision.outcome.kind === "error")
+			await setState("error", decision.outcome.error);
+		else await setState("success");
 	}
 });

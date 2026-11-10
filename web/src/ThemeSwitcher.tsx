@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useState } from "hono/jsx/dom";
+import { targetValue } from "../../lib/dom-events";
 import {
 	type ThemePreference,
 	applyThemePreference,
@@ -8,6 +8,7 @@ import {
 	saveThemePreference,
 	themePreferences,
 } from "./theme";
+import { useTranslation } from "./useTranslation";
 
 export function ThemeSwitcher() {
 	const { t } = useTranslation();
@@ -22,11 +23,11 @@ export function ThemeSwitcher() {
 	}
 
 	return (
-		<label className="theme-switcher" htmlFor="theme-preference">
+		<label class="theme-switcher" for="theme-preference">
 			{t("theme.label")}
 			<select
 				id="theme-preference"
-				onChange={(event) => choose(parseThemePreference(event.target.value))}
+				onChange={(event) => choose(parseThemePreference(targetValue(event)))}
 				value={preference}
 			>
 				{themePreferences.map((option) => (
@@ -43,7 +44,7 @@ export function ThemeSwitcher() {
 export function AppBar() {
 	const { t } = useTranslation();
 	return (
-		<header className="app-bar">
+		<header class="app-bar">
 			<h1>{t("app.title")}</h1>
 			<ThemeSwitcher />
 		</header>

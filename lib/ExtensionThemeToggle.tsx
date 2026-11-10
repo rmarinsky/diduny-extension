@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState } from "hono/jsx/dom";
 import { ThemeToggleButton } from "../web/src/ThemeToggleButton";
 import { applyThemePreference, nextTheme } from "../web/src/theme";
 import {

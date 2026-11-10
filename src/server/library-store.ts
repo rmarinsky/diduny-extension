@@ -395,12 +395,19 @@ export class LibraryStore implements LibraryPort {
 		recording: NewLibraryRecording,
 		stagedPath: string,
 		contentType: string,
+		recordingId?: string,
 	) {
 		if (this.getRetentionPolicy(categoryFor(recording.type)) === "never") {
 			await this.unlink(stagedPath).catch(() => undefined);
 			return null;
 		}
-		const id = crypto.randomUUID();
+		const id = recordingId ?? crypto.randomUUID();
+		if (!isRecordingId(id)) throw new Error("invalid recording id");
+		const existing = recordingId ? await this.open(recordingId) : null;
+		if (existing) {
+			await this.unlink(stagedPath).catch(() => undefined);
+			return existing;
+		}
 		const fileName = `${id}.${mediaExtension(contentType)}`;
 		const targetPath = this.safeMediaPath(fileName);
 		if (!targetPath) throw new Error("unsafe generated media name");
@@ -419,6 +426,7 @@ export class LibraryStore implements LibraryPort {
 		recording: NewLibraryRecording,
 		stream: NodeJS.ReadableStream,
 		contentType: string,
+		recordingId?: string,
 	) {
 		if (this.getRetentionPolicy(categoryFor(recording.type)) === "never") {
 			for await (const _chunk of stream) {
@@ -432,7 +440,12 @@ export class LibraryStore implements LibraryPort {
 		);
 		try {
 			await pipeline(stream, createWriteStream(stagedPath));
-			return await this.saveStaged(recording, stagedPath, contentType);
+			return await this.saveStaged(
+				recording,
+				stagedPath,
+				contentType,
+				recordingId,
+			);
 		} finally {
 			await this.unlink(stagedPath).catch(() => undefined);
 		}

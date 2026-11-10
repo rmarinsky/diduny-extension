@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState } from "hono/jsx/dom";
 import {
 	type LogEntry,
 	clearCrashLogs,
 	getCrashLogs,
 } from "../../../lib/crash-log";
+import { targetChecked, targetValue } from "../../../lib/dom-events";
 import type { RecordingMode, RecordingState } from "../../../lib/types";
 
 interface Props {
@@ -63,33 +64,33 @@ export function RecordingControls({
 	};
 
 	return (
-		<div className="controls">
-			<div className="controls-header">
-				<span className="user-email">{userEmail}</span>
+		<div class="controls">
+			<div class="controls-header">
+				<span class="user-email">{userEmail}</span>
 				<div>
 					<button
 						type="button"
-						className="btn btn-ghost"
+						class="btn btn-ghost"
 						onClick={() => void chrome.runtime.openOptionsPage()}
 					>
 						Settings
 					</button>
-					<button type="button" className="btn btn-ghost" onClick={toggleLogs}>
+					<button type="button" class="btn btn-ghost" onClick={toggleLogs}>
 						Logs
 					</button>
-					<button type="button" className="btn btn-ghost" onClick={onLogout}>
+					<button type="button" class="btn btn-ghost" onClick={onLogout}>
 						Logout
 					</button>
 				</div>
 			</div>
 
 			{logs && (
-				<div className="crash-logs">
-					<div className="crash-logs-header">
+				<div class="crash-logs">
+					<div class="crash-logs-header">
 						<span>Logs ({logs.length})</span>
 						<button
 							type="button"
-							className="btn btn-ghost"
+							class="btn btn-ghost"
 							onClick={() => {
 								clearCrashLogs();
 								setLogs([]);
@@ -98,24 +99,20 @@ export function RecordingControls({
 							Clear
 						</button>
 					</div>
-					<div className="crash-logs-list">
-						{logs.length === 0 && (
-							<div className="crash-log-empty">No logs</div>
-						)}
+					<div class="crash-logs-list">
+						{logs.length === 0 && <div class="crash-log-empty">No logs</div>}
 						{logs.map((entry, i) => (
 							<div
 								key={`${entry.ts}-${i}`}
-								className={`crash-log-entry ${entry.level}`}
+								class={`crash-log-entry ${entry.level}`}
 							>
-								<div className="crash-log-meta">
-									<span className="crash-log-time">
-										{entry.ts.slice(11, 19)}
-									</span>
-									<span className="crash-log-ctx">{entry.ctx}</span>
+								<div class="crash-log-meta">
+									<span class="crash-log-time">{entry.ts.slice(11, 19)}</span>
+									<span class="crash-log-ctx">{entry.ctx}</span>
 								</div>
-								<div className="crash-log-msg">{entry.msg}</div>
+								<div class="crash-log-msg">{entry.msg}</div>
 								{entry.stack && (
-									<pre className="crash-log-stack">{entry.stack}</pre>
+									<pre class="crash-log-stack">{entry.stack}</pre>
 								)}
 							</div>
 						))}
@@ -123,11 +120,11 @@ export function RecordingControls({
 				</div>
 			)}
 
-			<div className="mode-toggle">
+			<div class="mode-toggle">
 				<button
 					type="button"
-					aria-pressed={mode === "translation"}
-					className={mode === "translation" ? "active" : ""}
+					aria-pressed={mode === "translation" ? "true" : "false"}
+					class={mode === "translation" ? "active" : ""}
 					onClick={() => onModeChange("translation")}
 					disabled={isRecording || isStarting || isProcessing}
 				>
@@ -135,8 +132,8 @@ export function RecordingControls({
 				</button>
 				<button
 					type="button"
-					aria-pressed={mode === "voice"}
-					className={mode === "voice" ? "active" : ""}
+					aria-pressed={mode === "voice" ? "true" : "false"}
+					class={mode === "voice" ? "active" : ""}
 					onClick={() => onModeChange("voice")}
 					disabled={isRecording || isStarting || isProcessing}
 				>
@@ -144,8 +141,8 @@ export function RecordingControls({
 				</button>
 				<button
 					type="button"
-					aria-pressed={mode === "meeting"}
-					className={mode === "meeting" ? "active" : ""}
+					aria-pressed={mode === "meeting" ? "true" : "false"}
+					class={mode === "meeting" ? "active" : ""}
 					onClick={() => onModeChange("meeting")}
 					disabled={isRecording || isStarting || isProcessing}
 				>
@@ -153,11 +150,11 @@ export function RecordingControls({
 				</button>
 			</div>
 
-			<div className="settings-row">
+			<div class="settings-row">
 				<select
 					aria-label="Spoken language"
 					value={language}
-					onChange={(e) => onLanguageChange(e.target.value)}
+					onChange={(e) => onLanguageChange(targetValue(e))}
 					disabled={isRecording || isStarting || isProcessing}
 				>
 					<option value="uk">Ukrainian</option>
@@ -171,7 +168,7 @@ export function RecordingControls({
 						<select
 							value={translationTargetLanguage}
 							onChange={(e) =>
-								onTranslationTargetLanguageChange(e.target.value)
+								onTranslationTargetLanguageChange(targetValue(e))
 							}
 							disabled={isRecording || isStarting || isProcessing}
 						>
@@ -186,7 +183,7 @@ export function RecordingControls({
 						<input
 							type="checkbox"
 							checked={diarization}
-							onChange={(e) => onDiarizationChange(e.target.checked)}
+							onChange={(e) => onDiarizationChange(targetChecked(e))}
 							disabled={isRecording || isStarting || isProcessing}
 						/>
 						Speakers
@@ -195,7 +192,7 @@ export function RecordingControls({
 			</div>
 
 			{mode === "meeting" && (
-				<div className="hint-text">
+				<div class="hint-text">
 					Records the current browser tab and your microphone. Native meeting
 					apps and system audio are not available.
 				</div>
@@ -204,27 +201,27 @@ export function RecordingControls({
 			<button
 				type="button"
 				aria-label={isRecording ? "Stop recording" : "Start recording"}
-				className={`record-btn ${isRecording ? "recording" : ""}`}
+				class={`record-btn ${isRecording ? "recording" : ""}`}
 				onClick={onToggleRecording}
 				disabled={!canRecord}
 			>
-				<span className="dot" />
+				<span class="dot" />
 			</button>
 
-			<div className={`state-label ${state}`}>{stateLabels[state]}</div>
+			<div class={`state-label ${state}`}>{stateLabels[state]}</div>
 			{canRecord && (
-				<div className="record-hint">
+				<div class="record-hint">
 					{isRecording ? "Click again to stop" : "Click to start"}
 				</div>
 			)}
 			{isStarting && waitingForMicrophone && (
-				<output className="record-hint">
+				<output class="record-hint">
 					Allow microphone access in the Diduny tab that opened, then come back
 					here.
 				</output>
 			)}
 
-			{error && <div className="error-msg">{error}</div>}
+			{error && <div class="error-msg">{error}</div>}
 		</div>
 	);
 }

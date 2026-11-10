@@ -40,6 +40,36 @@ accepts its browser-controlled originless Fetch Metadata combination. Set
 `DIDUNY_EXTENSION_ORIGIN` only when deploying a separately signed package with
 a different Chrome extension ID.
 
+## Release an installable extension
+
+```sh
+bun run release:extension
+```
+
+This command runs the full validation suite, then launches Chromium through
+Playwright with the built MV3 extension installed and active. Only after those
+checks pass does it create `.output/diduny-extension-<version>-chrome.zip` for
+the Chrome Web Store or a versioned GitHub release.
+
+A merge into protected `main` triggers a release gate in GitHub Actions. The
+workflow confirms that the exact commit is associated with a merged pull request
+targeting `main`, but this check does not replace pull-request-only protection
+on `main` with bypasses forbidden. A non-cancelling queue retains up to 100
+pending merge runs and serializes their release work. If a backlog exceeds that
+capacity, GitHub cancels the overflow run; after capacity returns, use **Re-run
+all jobs** for that run. The merge must carry a package version that has not
+been released before. After a green build and browser test, the workflow
+reserves `extension-v<version>` at that exact commit and attaches the ZIP to the
+corresponding GitHub Release. An already released version, a failed build, or a
+failed browser test publishes nothing. Protect `extension-v*` tags from
+force-updates and deletion: the workflow makes only a normal tag push and
+refuses a tag that does not point to its verified commit.
+
+For a local installation, open `chrome://extensions`, enable **Developer
+mode**, choose **Load unpacked**, and select `.output/chrome-mv3`. End users
+install the versioned package through the Chrome Web Store after it is
+published; Chrome does not support drag-installing a ZIP on macOS or Windows.
+
 ## Verification
 
 ```sh

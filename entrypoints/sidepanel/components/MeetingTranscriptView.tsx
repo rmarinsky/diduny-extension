@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "hono/jsx/dom";
 import { type LiveText, LiveTranscript } from "./LiveTranscript";
 
 interface SourceProps {
@@ -19,9 +19,9 @@ function SourcePanel({ label, finalText, resultCount }: SourceProps) {
 	if (!finalText) return null;
 
 	return (
-		<div className="source-panel">
-			<div className="source-label">{label}</div>
-			<div className="transcript-text" ref={text}>
+		<div class="source-panel">
+			<div class="source-label">{label}</div>
+			<div class="transcript-text" ref={text}>
 				{finalText}
 			</div>
 		</div>
@@ -53,23 +53,23 @@ export function MeetingTranscriptView({
 	if (!hasText && !live) return null;
 
 	return (
-		<div className="transcript">
+		<div class="transcript">
 			{hasText && (
 				<>
-					<div className="transcript-header">
+					<div class="transcript-header">
 						<h3>Meeting Transcript</h3>
 						<div>
-							<button type="button" className="btn btn-ghost" onClick={onCopy}>
+							<button type="button" class="btn btn-ghost" onClick={onCopy}>
 								{copied ? "Copied!" : "Copy all"}
 							</button>
 							{confirmingClear ? (
 								<>
-									<span className="confirm-text">
+									<span class="confirm-text">
 										Clear the meeting transcript?
 									</span>
 									<button
 										type="button"
-										className="btn btn-ghost"
+										class="btn btn-ghost"
 										onClick={() => {
 											setConfirmingClear(false);
 											onClear();
@@ -79,7 +79,7 @@ export function MeetingTranscriptView({
 									</button>
 									<button
 										type="button"
-										className="btn btn-ghost"
+										class="btn btn-ghost"
 										onClick={() => setConfirmingClear(false)}
 									>
 										Cancel
@@ -88,7 +88,7 @@ export function MeetingTranscriptView({
 							) : (
 								<button
 									type="button"
-									className="btn btn-ghost"
+									class="btn btn-ghost"
 									onClick={() => setConfirmingClear(true)}
 								>
 									Clear
@@ -96,7 +96,7 @@ export function MeetingTranscriptView({
 							)}
 						</div>
 					</div>
-					<div className="meeting-sources">
+					<div class="meeting-sources">
 						<SourcePanel
 							label="Shared Audio"
 							finalText={tabText}

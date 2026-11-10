@@ -1,5 +1,5 @@
-import { type FormEvent, useEffect, useState } from "react";
-import { createRoot } from "react-dom/client";
+import { useEffect, useState } from "hono/jsx/dom";
+import { render } from "hono/jsx/dom";
 import { ExtensionThemeToggle } from "../../lib/ExtensionThemeToggle";
 import {
 	getDefaultMicrophoneId,
@@ -15,6 +15,7 @@ import {
 	getDisabledDeliveryOrigins,
 	setDeliveryEnabled,
 } from "../../lib/delivery/site-settings";
+import { targetValue } from "../../lib/dom-events";
 import { applyStoredTheme } from "../../lib/theme-storage";
 import "./style.css";
 
@@ -33,9 +34,7 @@ function Status({
 }: { message: Message | null; section: Section }) {
 	if (message?.section !== section) return null;
 	return (
-		<output className={message.error ? "error" : undefined}>
-			{message.text}
-		</output>
+		<output class={message.error ? "error" : undefined}>{message.text}</output>
 	);
 }
 
@@ -95,11 +94,14 @@ function Options() {
 		setMessage((current) => (current?.section === section ? null : current));
 
 	// The browser's own URL check blocks the submit, so show its reason here too.
-	const reportInvalid =
-		(section: Section) => (event: FormEvent<HTMLInputElement>) =>
-			report(section, event.currentTarget.validationMessage, true);
+	const reportInvalid = (section: Section) => (event: Event) =>
+		report(
+			section,
+			(event.currentTarget as HTMLInputElement).validationMessage,
+			true,
+		);
 
-	const submit = async (event: FormEvent) => {
+	const submit = async (event: Event) => {
 		event.preventDefault();
 		try {
 			const saved = await setBffOrigin(origin);
@@ -117,7 +119,7 @@ function Options() {
 		}
 	};
 
-	const saveMicrophone = async (event: FormEvent) => {
+	const saveMicrophone = async (event: Event) => {
 		event.preventDefault();
 		try {
 			await setDefaultMicrophoneId(microphoneId || null);
@@ -130,7 +132,7 @@ function Options() {
 		}
 	};
 
-	const disableSite = async (event: FormEvent) => {
+	const disableSite = async (event: Event) => {
 		event.preventDefault();
 		const normalized = deliveryOrigin(site);
 		if (!normalized) {
@@ -151,21 +153,21 @@ function Options() {
 
 	return (
 		<main>
-			<div className="page-header">
+			<div class="page-header">
 				<h1>Diduny settings</h1>
 				<ExtensionThemeToggle />
 			</div>
 			<section>
 				<h2>Connection</h2>
 				<form onSubmit={submit}>
-					<label htmlFor="bff-origin">Local BFF origin</label>
+					<label for="bff-origin">Local BFF origin</label>
 					<input
 						aria-describedby="bff-origin-hint"
 						id="bff-origin"
 						type="url"
 						value={origin}
 						onChange={(event) => {
-							setOrigin(event.target.value);
+							setOrigin(targetValue(event));
 							clearReport("connection");
 						}}
 						onInvalid={reportInvalid("connection")}
@@ -180,11 +182,11 @@ function Options() {
 			<section>
 				<h2>Microphone</h2>
 				<form onSubmit={saveMicrophone}>
-					<label htmlFor="default-microphone">Default microphone</label>
+					<label for="default-microphone">Default microphone</label>
 					<select
 						id="default-microphone"
 						value={microphoneId}
-						onChange={(event) => setMicrophoneId(event.target.value)}
+						onChange={(event) => setMicrophoneId(targetValue(event))}
 					>
 						<option value="">System default</option>
 						{microphones.map((microphone, index) => (
@@ -201,15 +203,13 @@ function Options() {
 			<section>
 				<h2>Sites</h2>
 				<form onSubmit={disableSite}>
-					<label htmlFor="delivery-site">
-						Disable direct delivery on a site
-					</label>
+					<label for="delivery-site">Disable direct delivery on a site</label>
 					<input
 						id="delivery-site"
 						type="url"
 						value={site}
 						onChange={(event) => {
-							setSite(event.target.value);
+							setSite(targetValue(event));
 							clearReport("sites");
 						}}
 						onInvalid={reportInvalid("sites")}
@@ -268,5 +268,4 @@ function Options() {
 
 const root = document.getElementById("root");
 // Apply the saved theme first so the page never flashes the wrong one.
-if (root)
-	void applyStoredTheme().then(() => createRoot(root).render(<Options />));
+if (root) void applyStoredTheme().then(() => render(<Options />, root));

@@ -17,6 +17,7 @@ function serverUrl(server: ReturnType<typeof Fastify>, hostname = "127.0.0.1") {
 }
 
 test("loaded extension signs in through the mock proxy BFF, delivers dictation, and saves it", async () => {
+	test.setTimeout(120_000);
 	const accessToken = "access-token-should-never-reach-page";
 	const refreshToken = "refresh-token-should-never-reach-page";
 	const tokenFragments = [accessToken, refreshToken];
@@ -91,11 +92,25 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 	const upstreamUrl = serverUrl(mock.server, "localhost");
 	const fixtureUrl = serverUrl(fixtureServer, "localhost");
 	const e2eLibrary = createE2eLibrary();
+	const extensionLibraryPosts: Array<{
+		idempotencyKey: string | undefined;
+		status: number;
+	}> = [];
 
 	const bff = await buildServer({
 		library: e2eLibrary.library,
 		staticDir: resolve("web/dist"),
 		upstreamUrl,
+	});
+	bff.addHook("onResponse", async (request, reply) => {
+		if (request.method !== "POST" || request.url !== "/bff/extension/library")
+			return;
+		const idempotencyKey = request.headers["idempotency-key"];
+		extensionLibraryPosts.push({
+			idempotencyKey:
+				typeof idempotencyKey === "string" ? idempotencyKey : undefined,
+			status: reply.statusCode,
+		});
 	});
 	await bff.listen({ host: "localhost", port: 0 });
 	const bffUrl = serverUrl(bff, "localhost");
@@ -136,26 +151,35 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 			(await context.waitForEvent("serviceworker", { timeout: 10_000 }));
 		const extensionId = new URL(worker.url()).host;
 
+		await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+			origin: new URL(fixtureUrl).origin,
+		});
 		const fixture = await context.newPage();
 		await fixture.goto(`${fixtureUrl}/fixture`);
 		await fixture.locator("#target").focus();
+		await fixture.evaluate(() =>
+			navigator.clipboard.writeText("clipboard must remain unchanged"),
+		);
 
 		const options = await context.newPage();
 		await options.goto(`chrome-extension://${extensionId}/options.html`);
 		await options.locator("#bff-origin").fill(bffUrl);
 		await options.getByRole("button", { name: "Save", exact: true }).click();
 		await expect(options.locator("output")).toContainText("Saved");
-		expect(
-			(await options.evaluate(() => chrome.commands.getAll())).map(
-				(command) => command.name,
-			),
-		).toEqual(
+		const registeredCommands = await options.evaluate(() =>
+			chrome.commands.getAll(),
+		);
+		expect(registeredCommands.map((command) => command.name)).toEqual(
 			expect.arrayContaining([
 				"toggle-recording",
 				"toggle-translation",
 				"start-meeting",
 			]),
 		);
+		expect(
+			registeredCommands.find((command) => command.name === "toggle-recording")
+				?.shortcut,
+		).toBeTruthy();
 		await options.locator("#default-microphone").selectOption({ index: 1 });
 		await options.getByRole("button", { name: "Save microphone" }).click();
 		await expect(options.locator("output")).toContainText("microphone");
@@ -249,6 +273,31 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 			await expect(panel.getByText("Done")).toBeVisible();
 			await expect(liveTranscript).toBeHidden();
 		};
+		// The panel keeps every delivered result below a --- line, so its entries count deliveries.
+		const savedTranscriptCount = async () => {
+			const value = await panel
+				.getByLabel("Transcript", { exact: true })
+				.inputValue()
+				.catch(() => "");
+			return value ? value.split("\n---\n").length : 0;
+		};
+		const terminalCaptureId = () =>
+			panel.evaluate(
+				() =>
+					new Promise<string | undefined>((resolve) => {
+						chrome.storage.session.get(
+							"didunyCaptureTerminalState",
+							(result) => {
+								const state = result.didunyCaptureTerminalState;
+								resolve(
+									state && typeof state.captureId === "string"
+										? state.captureId
+										: undefined,
+								);
+							},
+						);
+					}),
+			);
 		await dictate({
 			diarization: true,
 			// Stopping right after "Recording..." can beat the first audio frame on a slow machine.
@@ -283,10 +332,260 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 				{ endMs: 480, speaker: "1", startMs: 0, text: "Mock transcript" },
 			]);
 		expect(mock.transcriptions()).toHaveLength(0);
+		await expect.poll(savedTranscriptCount).toBe(1);
+		expect(await fixture.evaluate(() => navigator.clipboard.readText())).toBe(
+			"clipboard must remain unchanged",
+		);
+
+		const targetBeforeCaptureReplay = await fixture
+			.locator("#target")
+			.inputValue();
+		const recordingsBeforeCaptureReplay = e2eLibrary.recordings().length;
+		const savedTranscriptCountBeforeCaptureReplay =
+			await savedTranscriptCount();
+		const replayCaptureId = await terminalCaptureId();
+		if (!replayCaptureId)
+			throw new Error("Expected a completed capture id for replay");
+		await panel.evaluate((captureId) => {
+			chrome.runtime.sendMessage({
+				captureId,
+				source: "mic",
+				text: "Mock transcript",
+				type: "capture-complete",
+			});
+			chrome.runtime.sendMessage({
+				captureId,
+				source: "mic",
+				type: "capture-persisted",
+			});
+		}, replayCaptureId);
+		await expect(panel.getByText("Done")).toBeVisible();
+
+		await fixture.bringToFront();
+		await fixture.locator("#target").focus();
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({
+				diarization: false,
+				language: "uk",
+				mode: "voice",
+				type: "start-recording",
+			});
+		});
+		await expect(panel.getByText("Recording...")).toBeVisible();
+		await fixture.locator("#disabled-target").focus();
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({ type: "stop-recording" });
+		});
+		await expect(panel.getByText("Done")).toBeVisible();
+		await expect(fixture.locator("#target")).toHaveValue(
+			`${targetBeforeCaptureReplay}Mock transcript`,
+		);
+		await expect(fixture.locator("#disabled-target")).toHaveValue("");
+		await expect
+			.poll(() => e2eLibrary.recordings().length)
+			.toBe(recordingsBeforeCaptureReplay + 1);
+		await expect
+			.poll(savedTranscriptCount)
+			.toBe(savedTranscriptCountBeforeCaptureReplay + 1);
+
+		const recordingsBeforeDuplicateStart = e2eLibrary.recordings().length;
+		const targetBeforeDuplicateStart = await fixture
+			.locator("#target")
+			.inputValue();
+		const realtimeConfigsBeforeDuplicateStart = () =>
+			mock
+				.realtimeFrames()
+				.filter(
+					(frame) =>
+						!frame.isBinary &&
+						typeof frame.data === "string" &&
+						frame.data.includes('"audio_format"'),
+				).length;
+		const configCountBeforeDuplicateStart =
+			realtimeConfigsBeforeDuplicateStart();
+		await fixture.bringToFront();
+		await fixture.locator("#target").focus();
+		await panel.evaluate(() => {
+			const start = {
+				diarization: false,
+				language: "uk",
+				mode: "voice",
+				type: "start-recording",
+			};
+			chrome.runtime.sendMessage(start);
+			chrome.runtime.sendMessage(start);
+		});
+		await expect(panel.getByText("Recording...")).toBeVisible();
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({ type: "stop-recording" });
+		});
+		await expect(panel.getByText("Done")).toBeVisible();
+		await expect
+			.poll(() => e2eLibrary.recordings().length)
+			.toBe(recordingsBeforeDuplicateStart + 1);
+		await expect(fixture.locator("#target")).toHaveValue(
+			`${targetBeforeDuplicateStart}Mock transcript`,
+		);
+		expect(realtimeConfigsBeforeDuplicateStart()).toBe(
+			configCountBeforeDuplicateStart + 1,
+		);
+
+		const recordingsBeforeWorkerTermination = e2eLibrary.recordings().length;
+		const targetBeforeWorkerTermination = await fixture
+			.locator("#target")
+			.inputValue();
+		await fixture.bringToFront();
+		await fixture.locator("#target").focus();
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({
+				diarization: false,
+				language: "uk",
+				mode: "voice",
+				type: "start-recording",
+			});
+		});
+		await expect(panel.getByText("Recording...")).toBeVisible();
+		const cdp = await context.newCDPSession(panel);
+		const workerVersions = new Map<
+			string,
+			{ runningStatus: string; scriptURL: string; versionId: string }
+		>();
+		cdp.on("ServiceWorker.workerVersionUpdated", ({ versions }) => {
+			for (const version of versions)
+				workerVersions.set(version.versionId, version);
+		});
+		await cdp.send("ServiceWorker.enable");
+		const didunyWorker = () =>
+			[...workerVersions.values()].find((version) =>
+				version.scriptURL.startsWith(`chrome-extension://${extensionId}/`),
+			);
+		await expect
+			.poll(() => didunyWorker()?.runningStatus, { timeout: 10_000 })
+			.toBe("running");
+		const runningWorker = didunyWorker();
+		if (!runningWorker)
+			throw new Error("Could not find the Diduny service-worker version");
+		await cdp.send("ServiceWorker.stopWorker", {
+			versionId: runningWorker.versionId,
+		});
+		await expect
+			.poll(() => didunyWorker()?.runningStatus, { timeout: 10_000 })
+			.toBe("stopped");
+		await panel.evaluate(
+			() =>
+				new Promise((resolve) =>
+					chrome.runtime.sendMessage({ type: "getBffSession" }, resolve),
+				),
+		);
+		await expect
+			.poll(() => didunyWorker()?.runningStatus, { timeout: 10_000 })
+			.toBe("running");
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({ type: "stop-recording" });
+		});
+		await expect(panel.getByText("Done")).toBeVisible();
+		await expect
+			.poll(() => e2eLibrary.recordings().length)
+			.toBe(recordingsBeforeWorkerTermination + 1);
+		await expect(fixture.locator("#target")).toHaveValue(
+			`${targetBeforeWorkerTermination}Mock transcript`,
+		);
+
+		const recordingsBeforeAmbiguousLibraryFailure =
+			e2eLibrary.recordings().length;
+		const librarySaveIdsBeforeAmbiguousLibraryFailure =
+			e2eLibrary.saveRecordingIds().length;
+		const libraryPostsBeforeAmbiguousLibraryFailure =
+			extensionLibraryPosts.length;
+		const binaryRealtimeFramesBeforeAmbiguousLibraryFailure = mock
+			.realtimeFrames()
+			.filter((frame) => frame.isBinary && frame.data.length > 0).length;
+		e2eLibrary.failNextSave();
+		await fixture.bringToFront();
+		await fixture.locator("#target").focus();
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({
+				diarization: false,
+				language: "uk",
+				mode: "voice",
+				type: "start-recording",
+			});
+		});
+		await expect(panel.getByText("Recording...")).toBeVisible();
+		await expect
+			.poll(
+				() =>
+					mock
+						.realtimeFrames()
+						.filter((frame) => frame.isBinary && frame.data.length > 0).length,
+				{ timeout: 10_000 },
+			)
+			.toBeGreaterThan(binaryRealtimeFramesBeforeAmbiguousLibraryFailure);
+		await panel.evaluate(() => {
+			chrome.runtime.sendMessage({ type: "stop-recording" });
+		});
+		await expect(panel.getByText("Error", { exact: true })).toBeVisible();
+		await expect
+			.poll(() => e2eLibrary.recordings().length)
+			.toBe(recordingsBeforeAmbiguousLibraryFailure + 1);
+		const failedRecording = e2eLibrary.recordings().at(-1);
+		if (!failedRecording)
+			throw new Error("Expected the ambiguous library save to persist a row");
+		expect(
+			e2eLibrary
+				.saveRecordingIds()
+				.slice(librarySaveIdsBeforeAmbiguousLibraryFailure),
+		).toEqual([failedRecording.id]);
+		expect(
+			extensionLibraryPosts
+				.slice(libraryPostsBeforeAmbiguousLibraryFailure)
+				.filter((post) => post.idempotencyKey === failedRecording.id),
+		).toEqual([{ idempotencyKey: failedRecording.id, status: 201 }]);
+
+		await fixture.bringToFront();
+		await fixture.locator("#target").focus();
+		await dictate();
+		await expect
+			.poll(() => e2eLibrary.recordings().length)
+			.toBe(recordingsBeforeAmbiguousLibraryFailure + 2);
+		await expect
+			.poll(
+				() =>
+					extensionLibraryPosts
+						.slice(libraryPostsBeforeAmbiguousLibraryFailure)
+						.filter((post) => post.idempotencyKey === failedRecording.id)
+						.length,
+			)
+			.toBe(2);
+		const recoveryRows = e2eLibrary
+			.recordings()
+			.slice(recordingsBeforeAmbiguousLibraryFailure);
+		expect(
+			recoveryRows.filter((row) => row.id === failedRecording.id),
+		).toHaveLength(1);
+		expect(
+			recoveryRows.find((row) => row.id === failedRecording.id),
+		).toMatchObject({ status: "transcribed" });
+		expect(new Set(recoveryRows.map((row) => row.id)).size).toBe(2);
+		expect(
+			extensionLibraryPosts
+				.slice(libraryPostsBeforeAmbiguousLibraryFailure)
+				.filter((post) => post.idempotencyKey === failedRecording.id),
+		).toEqual([
+			{ idempotencyKey: failedRecording.id, status: 201 },
+			{ idempotencyKey: failedRecording.id, status: 200 },
+		]);
+		expect(
+			e2eLibrary
+				.saveRecordingIds()
+				.slice(librarySaveIdsBeforeAmbiguousLibraryFailure)
+				.filter((id) => id === failedRecording.id),
+		).toHaveLength(1);
 
 		await fixture.bringToFront();
 		await fixture.locator("#target").focus();
 		const panelTranscript = panel.getByLabel("Transcript", { exact: true });
+		const panelTranscriptBeforeTranslation = await panelTranscript.inputValue();
 		await dictate({
 			mode: "translation",
 			whileRecording: async () => {
@@ -319,15 +618,22 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 				await expect(
 					liveTranscript.getByTestId("live-provisional-text"),
 				).toHaveText("words");
-				await expect(panelTranscript).toHaveValue("Mock transcript");
+				await expect(panelTranscript).toHaveValue(
+					panelTranscriptBeforeTranslation,
+				);
 			},
 		});
 		// Each recording's result lands below a --- line in the side panel, as in the web app.
 		await expect(panelTranscript).toHaveValue(
-			"Mock transcript\n---\nMock transcript",
+			`${panelTranscriptBeforeTranslation}\n---\nMock transcript`,
 		);
 		// The panel transcript is editable; later dictation lands below the typed text.
 		await panelTranscript.fill("Typed in the panel");
+		expect(
+			extensionLibraryPosts
+				.slice(libraryPostsBeforeAmbiguousLibraryFailure)
+				.filter((post) => post.idempotencyKey === failedRecording.id),
+		).toHaveLength(2);
 		const transcription = mock.transcriptions().at(-1);
 		if (!transcription) throw new Error("Expected extension transcription");
 		expect(transcription).toMatchObject({
@@ -428,6 +734,16 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 			localStorage: Object.entries(localStorage),
 			sessionStorage: Object.entries(sessionStorage),
 		}));
+		const extensionStorage = await panel.evaluate(
+			() =>
+				new Promise<{ local: object; session: object }>((resolve) => {
+					chrome.storage.local.get(null, (local) => {
+						chrome.storage.session.get(null, (session) =>
+							resolve({ local, session }),
+						);
+					});
+				}),
+		);
 		for (const tokenFragment of tokenFragments) {
 			expect(pageStorage.cookie, "document.cookie").not.toContain(
 				tokenFragment,
@@ -440,6 +756,10 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 				JSON.stringify(pageStorage.sessionStorage),
 				"sessionStorage",
 			).not.toContain(tokenFragment);
+			expect(
+				JSON.stringify(extensionStorage),
+				"extension storage",
+			).not.toContain(tokenFragment);
 			for (const response of responseBodies) {
 				expect(
 					response.body,
@@ -447,6 +767,26 @@ test("loaded extension signs in through the mock proxy BFF, delivers dictation, 
 				).not.toContain(tokenFragment);
 			}
 		}
+		await webLogin.getByRole("button", { name: "Sign out" }).click();
+		await webLogin
+			.getByRole("dialog", { name: "Sign out of Diduny?" })
+			.getByRole("button", { name: "Sign out" })
+			.click();
+		await expect(webLogin.getByLabel("Email")).toBeVisible();
+		expect(
+			await panel.evaluate(
+				() =>
+					new Promise((resolve) =>
+						chrome.runtime.sendMessage({ type: "getBffSession" }, resolve),
+					),
+			),
+		).toEqual({ authenticated: false });
+		await panel.bringToFront();
+		// Headless Chromium does not emit focus for extension pages.
+		await panel.evaluate(() => window.dispatchEvent(new Event("focus")));
+		await expect(
+			panel.getByRole("button", { name: "Open Diduny sign-in" }),
+		).toBeVisible();
 	} finally {
 		await context?.close();
 		bff.server.closeAllConnections?.();

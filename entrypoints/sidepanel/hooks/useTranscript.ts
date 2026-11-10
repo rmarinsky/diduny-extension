@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "hono/jsx/dom";
 import { onMessage } from "../../../lib/messaging/bridge";
 import { appendTranscript } from "../../../web/src/dictation";
 

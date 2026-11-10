@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef } from "hono/jsx/dom";
 
 /**
  * Modal confirmation built on the native <dialog>: showModal() provides the
@@ -34,8 +34,8 @@ export function ConfirmDialog({
 		<dialog
 			aria-describedby="confirm-dialog-body"
 			aria-labelledby="confirm-dialog-title"
-			className="confirm-dialog"
-			onCancel={(event) => {
+			class="confirm-dialog"
+			onCancel={(event: Event) => {
 				event.preventDefault();
 				onCancel();
 			}}
@@ -43,9 +43,9 @@ export function ConfirmDialog({
 		>
 			<h2 id="confirm-dialog-title">{title}</h2>
 			<p id="confirm-dialog-body">{body}</p>
-			<div className="dialog-actions">
+			<div class="dialog-actions">
 				<button
-					className="secondary"
+					class="secondary"
 					onClick={onCancel}
 					ref={cancelButton}
 					type="button"

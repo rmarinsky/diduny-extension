@@ -17,8 +17,8 @@ export function ThemeToggleButton({
 	return (
 		<button
 			aria-label={label}
-			aria-pressed={theme === "dark"}
-			className="theme-toggle secondary"
+			aria-pressed={theme === "dark" ? "true" : "false"}
+			class="theme-toggle secondary"
 			onClick={onToggle}
 			type="button"
 		>

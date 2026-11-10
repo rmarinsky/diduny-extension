@@ -1,6 +1,7 @@
-import { useTranslation } from "react-i18next";
+import { targetValue } from "../../lib/dom-events";
 import { dictationLanguages, ownLanguageName } from "./languages";
 import type { TranslationPair } from "./translation";
+import { useTranslation } from "./useTranslation";
 
 /**
  * From ⇄ To pickers for a translation pair. Choosing the language already on
@@ -45,14 +46,14 @@ export function TranslationLanguages({
 	return (
 		<fieldset
 			aria-label={label}
-			className="translation-languages"
+			class="translation-languages"
 			disabled={disabled}
 		>
-			<label htmlFor={`${idPrefix}-source`}>
+			<label for={`${idPrefix}-source`}>
 				{t("translation.from")}
 				<select
 					id={`${idPrefix}-source`}
-					onChange={(event) => chooseSource(event.target.value)}
+					onChange={(event) => chooseSource(targetValue(event))}
 					value={sourceLanguage}
 				>
 					{dictationLanguages.map((language) => (
@@ -64,7 +65,7 @@ export function TranslationLanguages({
 			</label>
 			<button
 				aria-label={t("translation.swap")}
-				className="swap secondary"
+				class="swap secondary"
 				onClick={() => onChange(swapped)}
 				title={t("translation.swap")}
 				type="button"
@@ -84,11 +85,11 @@ export function TranslationLanguages({
 					<path d="M4 8h15M15 4l4 4-4 4M20 16H5M9 12l-4 4 4 4" />
 				</svg>
 			</button>
-			<label htmlFor={`${idPrefix}-target`}>
+			<label for={`${idPrefix}-target`}>
 				{t("translation.to")}
 				<select
 					id={`${idPrefix}-target`}
-					onChange={(event) => chooseTarget(event.target.value)}
+					onChange={(event) => chooseTarget(targetValue(event))}
 					value={targetLanguage}
 				>
 					{dictationLanguages.map((language) => (

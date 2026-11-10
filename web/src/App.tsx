@@ -1,13 +1,11 @@
 import {
-	type FormEvent,
-	type PointerEvent as ReactPointerEvent,
+	createPortal,
 	useCallback,
 	useEffect,
 	useRef,
 	useState,
-} from "react";
-import { createPortal } from "react-dom";
-import { useTranslation } from "react-i18next";
+} from "hono/jsx/dom";
+import { targetChecked, targetValue } from "../../lib/dom-events";
 import {
 	isValidEmail,
 	isValidOtp,
@@ -99,6 +97,7 @@ import {
 	translationResultText,
 	translationUrl,
 } from "./translation";
+import { useTranslation } from "./useTranslation";
 import "./style.css";
 
 type AuthState = "checking" | "otp-sent" | "signed-in" | "signed-out";
@@ -219,19 +218,19 @@ function LiveTranscriptPanel({
 }) {
 	const { t } = useTranslation();
 	return (
-		<div className="live-transcript-panel">
+		<div class="live-transcript-panel">
 			<section
-				aria-hidden={announceLiveTranscript ? undefined : true}
+				aria-hidden={announceLiveTranscript ? undefined : "true"}
 				aria-label={t("liveTranscript.title")}
-				className="live-transcript"
+				class="live-transcript"
 			>
 				<h2>{t("liveTranscript.title")}</h2>
 				<p aria-live={announceLiveTranscript ? "polite" : undefined}>
-					<span className="token-state">{t("liveTranscript.final")}</span>
+					<span class="token-state">{t("liveTranscript.final")}</span>
 					<span data-testid="live-final-text">{liveFinalText}</span>
 				</p>
-				<p aria-hidden="true" className="provisional-token">
-					<span className="token-state">{t("liveTranscript.provisional")}</span>
+				<p aria-hidden="true" class="provisional-token">
+					<span class="token-state">{t("liveTranscript.provisional")}</span>
 					<span data-testid="live-provisional-text">{liveProvisionalText}</span>
 				</p>
 			</section>
@@ -250,7 +249,7 @@ export function App() {
 	const missingCapabilities = missingBrowserCapabilities(capabilities);
 	if (missingCapabilities.length) {
 		return (
-			<main className="shell capability-gate">
+			<main class="shell capability-gate">
 				<h1>{t("app.unsupportedBrowser")}</h1>
 				<p>{t("app.unsupportedBrowserIntro")}</p>
 				<ul>
@@ -480,12 +479,16 @@ export function App() {
 		let didRecover = false;
 		for (const recording of recovered) {
 			try {
-				await saveToLibrary({
-					audio: recording.audio,
-					durationSeconds: recording.durationSeconds,
-					status: "partiallyRecovered",
-					text: recording.text || t("recovery.untitledText"),
-				});
+				await saveToLibrary(
+					{
+						audio: recording.audio,
+						durationSeconds: recording.durationSeconds,
+						status: "partiallyRecovered",
+						text: recording.text || t("recovery.untitledText"),
+					},
+					undefined,
+					recording.id,
+				);
 				await storage.discard(recording.id);
 				didRecover = true;
 			} catch {
@@ -606,6 +609,10 @@ export function App() {
 			setStatus(t("status.cancelled"));
 		}
 	}, [closeFloatingPanel, releaseRecordingLock, t]);
+	const cancelCaptureRef = useRef(cancelCapture);
+	useEffect(() => {
+		cancelCaptureRef.current = cancelCapture;
+	}, [cancelCapture]);
 
 	const finishCapture = useCallback(async () => {
 		stopHoldWhenReadyRef.current = false;
@@ -728,17 +735,21 @@ export function App() {
 			);
 			void completeScratch()
 				.then((recording) =>
-					saveToLibrary({
-						audio: recording.audio,
-						durationSeconds: recording.durationSeconds,
-						...(translationMode
-							? {
-									status: "translated" as const,
-									type: "translation" as const,
-								}
-							: {}),
-						text: transcriptionText,
-					}),
+					saveToLibrary(
+						{
+							audio: recording.audio,
+							durationSeconds: recording.durationSeconds,
+							...(translationMode
+								? {
+										status: "translated" as const,
+										type: "translation" as const,
+									}
+								: {}),
+							text: transcriptionText,
+						},
+						undefined,
+						recording.id,
+					),
 				)
 				.then(async () => {
 					await capture.scratch.discard();
@@ -959,12 +970,22 @@ export function App() {
 		t,
 	]);
 
-	useEffect(() => {
-		const toggleFromShortcut = () => {
-			if (captureRef.current) void finishCapture();
-			else void startCapture();
-		};
-		const onShortcut = (event: KeyboardEvent) => {
+	const toggleFromShortcut = () => {
+		if (captureRef.current) void finishCapture();
+		else void startCapture();
+	};
+	// hono/jsx re-subscribes effects a tick after a render, so a key pressed in that gap
+	// would be lost. One window listener calls the handlers from the latest render.
+	const shortcutHandlers = useRef({
+		onExtensionShortcut() {},
+		onShortcut(_event: KeyboardEvent) {},
+	});
+	shortcutHandlers.current = {
+		onExtensionShortcut() {
+			if (confirmingSignOut || isCommandPaletteOpen) return;
+			toggleFromShortcut();
+		},
+		onShortcut(event: KeyboardEvent) {
 			if (confirmingSignOut) return;
 			if (event.key === "Escape" && isCommandPaletteOpen) {
 				event.preventDefault();
@@ -996,11 +1017,14 @@ export function App() {
 				return;
 			event.preventDefault();
 			toggleFromShortcut();
-		};
-		const onExtensionShortcut = () => {
-			if (confirmingSignOut || isCommandPaletteOpen) return;
-			toggleFromShortcut();
-		};
+		},
+	};
+
+	useEffect(() => {
+		const onShortcut = (event: KeyboardEvent) =>
+			shortcutHandlers.current.onShortcut(event);
+		const onExtensionShortcut = () =>
+			shortcutHandlers.current.onExtensionShortcut();
 		window.addEventListener("keydown", onShortcut);
 		window.addEventListener(EXTENSION_DICTATION_EVENT, onExtensionShortcut);
 		return () => {
@@ -1010,23 +1034,13 @@ export function App() {
 				onExtensionShortcut,
 			);
 		};
-	}, [
-		cancelCapture,
-		cancelTranscription,
-		closeCommandPalette,
-		confirmingSignOut,
-		dictationShortcut,
-		finishCapture,
-		isCommandPaletteOpen,
-		openCommandPalette,
-		startCapture,
-	]);
+	}, []);
 
 	function toggleCapture() {
 		void (isRecording ? finishCapture() : startCapture());
 	}
 
-	function startHoldCapture(event: ReactPointerEvent<HTMLButtonElement>) {
+	function startHoldCapture(event: PointerEvent) {
 		if (event.button !== 0 || captureRef.current || captureState !== "idle")
 			return;
 		holdCaptureRef.current = true;
@@ -1056,9 +1070,9 @@ export function App() {
 
 	useEffect(
 		() => () => {
-			void cancelCapture();
+			void cancelCaptureRef.current();
 		},
-		[cancelCapture],
+		[],
 	);
 
 	function clearSignInFields() {
@@ -1068,7 +1082,7 @@ export function App() {
 		setOtpError("");
 	}
 
-	async function sendOtp(event: FormEvent<HTMLFormElement>) {
+	async function sendOtp(event: Event) {
 		event.preventDefault();
 		const address = normalizeEmail(email);
 		if (!isValidEmail(address)) {
@@ -1099,7 +1113,7 @@ export function App() {
 		}
 	}
 
-	async function verifyOtp(event: FormEvent<HTMLFormElement>) {
+	async function verifyOtp(event: Event) {
 		event.preventDefault();
 		const code = normalizeOtp(otp);
 		if (!isValidOtp(code)) {
@@ -1270,7 +1284,7 @@ export function App() {
 	}
 
 	if (authState === "checking") {
-		return <main className="shell">{t("app.checkingSession")}</main>;
+		return <main class="shell">{t("app.checkingSession")}</main>;
 	}
 
 	if (onboardingOpen && authState !== "signed-in") {
@@ -1286,22 +1300,22 @@ export function App() {
 
 	if (authState !== "signed-in") {
 		return (
-			<main className="shell auth">
+			<main class="shell auth">
 				<AppBar />
 				<p>{t("auth.description")}</p>
 				{/* Keys stop React reusing the "Use another email" button as the email form submit mid-click, which submitted an empty address. */}
 				{authState === "otp-sent" ? (
 					// noValidate: a malformed or refused code is explained inline below the field, not in a browser tooltip.
 					<form key="otp" noValidate onSubmit={verifyOtp}>
-						<label htmlFor="otp">{t("auth.oneTimeCode")}</label>
+						<label for="otp">{t("auth.oneTimeCode")}</label>
 						<input
 							aria-describedby={otpError ? "otp-error" : undefined}
-							aria-invalid={otpError ? true : undefined}
+							aria-invalid={otpError ? "true" : undefined}
 							autoComplete="one-time-code"
 							id="otp"
 							inputMode="numeric"
 							onChange={(event) => {
-								setOtp(event.target.value);
+								setOtp(targetValue(event));
 								setOtpError("");
 							}}
 							pattern="[0-9]{6}"
@@ -1309,13 +1323,13 @@ export function App() {
 							value={otp}
 						/>
 						{otpError ? (
-							<p className="field-error" id="otp-error">
+							<p class="field-error" id="otp-error">
 								{otpError}
 							</p>
 						) : null}
 						<button type="submit">{t("auth.signIn")}</button>
 						<button
-							className="secondary"
+							class="secondary"
 							onClick={chooseAnotherEmail}
 							type="button"
 						>
@@ -1325,16 +1339,16 @@ export function App() {
 				) : (
 					// noValidate: the browser's type=email rule refuses international addresses; isValidEmail decides.
 					<form key="email" noValidate onSubmit={sendOtp}>
-						<label htmlFor="email">{t("auth.email")}</label>
+						<label for="email">{t("auth.email")}</label>
 						<input
 							aria-describedby={emailError ? "email-error" : undefined}
-							aria-invalid={emailError ? true : undefined}
+							aria-invalid={emailError ? "true" : undefined}
 							autoCapitalize="off"
 							autoComplete="email"
 							id="email"
 							inputMode="email"
 							onChange={(event) => {
-								setEmail(event.target.value);
+								setEmail(targetValue(event));
 								setEmailError("");
 							}}
 							ref={emailInput}
@@ -1344,18 +1358,18 @@ export function App() {
 							value={email}
 						/>
 						{emailError ? (
-							<p className="field-error" id="email-error">
+							<p class="field-error" id="email-error">
 								{emailError}
 							</p>
 						) : null}
 						<button type="submit">{t("auth.sendCode")}</button>
 					</form>
 				)}
-				<p aria-live="polite" className="status">
+				<p aria-live="polite" class="status">
 					{status}
 				</p>
 				<button
-					className="secondary"
+					class="secondary"
 					onClick={() => setOnboardingOpen(true)}
 					type="button"
 				>
@@ -1371,21 +1385,21 @@ export function App() {
 		targetLanguage: translationTargetLanguage,
 	};
 	return (
-		<main className="shell workspace">
+		<main class="shell workspace">
 			<header>
-				<div className="brand-block">
+				<div class="brand-block">
 					<h1>
 						<button
-							className="brand"
+							class="brand"
 							onClick={() => showView("dictation")}
 							type="button"
 						>
 							{t("app.title")}
 						</button>
 					</h1>
-					<p className="account">{signedInEmail}</p>
+					<p class="account">{signedInEmail}</p>
 				</div>
-				<div className="workspace-actions">
+				<div class="workspace-actions">
 					<nav aria-label={t("app.workspace")}>
 						<button
 							aria-current={view === "dictation" ? "page" : undefined}
@@ -1460,31 +1474,31 @@ export function App() {
 					revision={workspaceRevision}
 				/>
 			) : (
-				<div className="dictation">
+				<div class="dictation">
 					<fieldset
 						aria-describedby="language-hints-hint"
-						className="language-hints"
+						class="language-hints"
 						disabled={captureState !== "idle" || translationMode}
 					>
 						<legend>{t("dictation.languages")}</legend>
 						{dictationLanguages.map((code) => (
 							<label
-								className="checkbox pill"
-								htmlFor={`language-hint-${code}`}
+								class="checkbox pill"
+								for={`language-hint-${code}`}
 								key={code}
 							>
 								<input
 									checked={speechLanguageHints.includes(code)}
 									id={`language-hint-${code}`}
 									onChange={(event) =>
-										void toggleLanguageHint(code, event.target.checked)
+										void toggleLanguageHint(code, targetChecked(event))
 									}
 									type="checkbox"
 								/>
 								<span lang={code}>{ownLanguageName(code)}</span>
 							</label>
 						))}
-						<p className="hint" id="language-hints-hint">
+						<p class="hint" id="language-hints-hint">
 							{translationMode
 								? t("dictation.languagesInTranslation", {
 										source: ownLanguageName(translationSourceLanguage),
@@ -1492,13 +1506,13 @@ export function App() {
 								: t("dictation.languagesHint")}
 						</p>
 					</fieldset>
-					<div className="translation-row">
-						<label className="checkbox" htmlFor="translation-mode">
+					<div class="translation-row">
+						<label class="checkbox" for="translation-mode">
 							<input
 								checked={translationMode}
 								disabled={captureState !== "idle"}
 								id="translation-mode"
-								onChange={(event) => setTranslationMode(event.target.checked)}
+								onChange={(event) => setTranslationMode(targetChecked(event))}
 								type="checkbox"
 							/>
 							{t("dictation.translationMode")}
@@ -1513,30 +1527,34 @@ export function App() {
 					</div>
 					<textarea
 						aria-label={t("dictation.document")}
-						className="document"
+						class="document"
 						ref={documentInput}
-						onChange={(event) => setDocumentText(event.target.value)}
+						onChange={(event) => setDocumentText(targetValue(event))}
 						placeholder={t("dictation.documentPlaceholder")}
 						value={documentText}
 					/>
 					{/* While a hold is active only its button stays visible; the others keep their space so it never moves. */}
 					<div
-						className={holding ? "controls holding" : "controls"}
+						class={holding ? "controls holding" : "controls"}
 						ref={controlsRef}
 					>
 						{/* Both labels share one cell, so switching to "Stop" never resizes the button and shifts the hold button. */}
 						<button
-							className="toggle"
+							class="toggle"
 							disabled={captureState === "sending"}
 							onClick={toggleCapture}
 							type="button"
 						>
-							<span aria-hidden={isRecording}>{t("dictation.start")}</span>
-							<span aria-hidden={!isRecording}>{t("dictation.stop")}</span>
+							<span aria-hidden={isRecording ? "true" : undefined}>
+								{t("dictation.start")}
+							</span>
+							<span aria-hidden={!isRecording ? "true" : undefined}>
+								{t("dictation.stop")}
+							</span>
 						</button>
 						<button
-							aria-pressed={holding}
-							className="hold"
+							aria-pressed={holding ? "true" : "false"}
+							class="hold"
 							disabled={captureState !== "idle" && !holding}
 							onContextMenu={(event) => event.preventDefault()}
 							onPointerCancel={stopHoldCapture}
@@ -1571,7 +1589,7 @@ export function App() {
 							{t("dictation.copy")}
 						</button>
 						<button
-							className="secondary"
+							class="secondary"
 							disabled={!documentText}
 							onClick={clearDocument}
 							type="button"
@@ -1579,13 +1597,13 @@ export function App() {
 							{t("dictation.clear")}
 						</button>
 					</div>
-					<div className="meter-row">
+					<div class="meter-row">
 						<div
 							aria-label={t("dictation.microphoneLevel")}
 							aria-valuemax={100}
 							aria-valuemin={0}
 							aria-valuenow={Math.round(level * 100)}
-							className="meter"
+							class="meter"
 							role="progressbar"
 							tabIndex={0}
 						>
@@ -1600,14 +1618,14 @@ export function App() {
 						</output>
 						<p
 							aria-live="polite"
-							className="status"
+							class="status"
 							ref={statusElement}
 							tabIndex={-1}
 						>
 							{status}
 						</p>
 						{/* Until the saved settings arrive the shortcut is unknown; showing the default would be wrong. */}
-						<p className="shortcut">
+						<p class="shortcut">
 							{settingsLoaded
 								? t(
 										firesInTextFields(dictationShortcut)
@@ -1642,13 +1660,15 @@ export function App() {
 							)
 						: null}
 					<details
-						className="paste-translation"
-						onToggle={(event) => setPasteOpen(event.currentTarget.open)}
+						class="paste-translation"
+						onToggle={(event: Event) =>
+							setPasteOpen((event.currentTarget as HTMLDetailsElement).open)
+						}
 						open={pasteOpen}
 					>
 						<summary>{t("dictation.pasteTitle")}</summary>
-						<div className="paste-body">
-							<p className="hint">{t("dictation.pasteDescription")}</p>
+						<div class="paste-body">
+							<p class="hint">{t("dictation.pasteDescription")}</p>
 							<TranslationLanguages
 								disabled={captureState !== "idle"}
 								idPrefix="paste-translation"
@@ -1656,11 +1676,11 @@ export function App() {
 								onChange={(pair) => void changeTranslationLanguages(pair)}
 								pair={translationPair}
 							/>
-							<label htmlFor="translation-text">
+							<label for="translation-text">
 								{t("dictation.textToTranslate")}
 								<textarea
 									id="translation-text"
-									onChange={(event) => setTranslationText(event.target.value)}
+									onChange={(event) => setTranslationText(targetValue(event))}
 									value={translationText}
 								/>
 							</label>
@@ -1673,15 +1693,13 @@ export function App() {
 							</button>
 							<p
 								aria-live="polite"
-								className={
-									pasteMessage?.failed ? "status field-error" : "status"
-								}
+								class={pasteMessage?.failed ? "status field-error" : "status"}
 							>
 								{pasteMessage?.text}
 							</p>
 							<output
 								aria-label={t("dictation.translationResult")}
-								className="translation-result"
+								class="translation-result"
 							>
 								{translationResult}
 							</output>

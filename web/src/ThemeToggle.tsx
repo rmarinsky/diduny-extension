@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useState } from "hono/jsx/dom";
 import { ThemeToggleButton } from "./ThemeToggleButton";
 import {
 	type ResolvedTheme,
@@ -10,6 +9,7 @@ import {
 	saveThemePreference,
 	systemPrefersDark,
 } from "./theme";
+import { useTranslation } from "./useTranslation";
 
 export function ThemeToggle() {
 	const { t } = useTranslation();
@@ -39,7 +39,7 @@ export function ThemeToggle() {
 export function AppBar() {
 	const { t } = useTranslation();
 	return (
-		<header className="app-bar">
+		<header class="app-bar">
 			<h1>{t("app.title")}</h1>
 			<ThemeToggle />
 		</header>

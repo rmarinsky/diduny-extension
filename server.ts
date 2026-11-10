@@ -78,6 +78,7 @@ export interface BffLibrary {
 		recording: NewLibraryRecording,
 		stream: NodeJS.ReadableStream,
 		contentType: string,
+		recordingId?: string,
 	): Promise<LibraryDetail | null>;
 	setRetentionPolicy(
 		category: RetentionCategory,
@@ -620,6 +621,29 @@ export async function buildServer({
 	const requestStartedAt = new WeakMap<FastifyRequest, number>();
 	const rateWindows = new Map<string, { count: number; resetAt: number }>();
 	const maxRateWindows = 1024;
+	const consumeRateWindow = (
+		key: string,
+		limit: { limit: number; windowMs: number },
+	) => {
+		const now = Date.now();
+		for (const [windowKey, window] of rateWindows) {
+			if (window.resetAt <= now) rateWindows.delete(windowKey);
+		}
+		const current = rateWindows.get(key);
+		if (!current && rateWindows.size >= maxRateWindows) {
+			const oldest = rateWindows.keys().next().value;
+			if (oldest) rateWindows.delete(oldest);
+		}
+		const window =
+			current && current.resetAt > now
+				? current
+				: { count: 0, resetAt: now + limit.windowMs };
+		if (window.count >= limit.limit)
+			return Math.ceil((window.resetAt - now) / 1_000);
+		window.count += 1;
+		rateWindows.set(key, window);
+		return null;
+	};
 	const log = (
 		level: LogLevel,
 		event: string,
@@ -633,27 +657,13 @@ export async function buildServer({
 		const path = requestPath(request);
 		const limit = rateLimitFor(path);
 		if (!limit) return done();
-		const now = Date.now();
-		for (const [key, window] of rateWindows) {
-			if (window.resetAt <= now) rateWindows.delete(key);
-		}
-		if (rateWindows.size >= maxRateWindows) {
-			const oldest = rateWindows.keys().next().value;
-			if (oldest) rateWindows.delete(oldest);
-		}
 		const key = `${path}:ip:${request.ip}`;
-		const current = rateWindows.get(key);
-		const window =
-			current && current.resetAt > now
-				? current
-				: { count: 0, resetAt: now + limit.windowMs };
-		if (window.count >= limit.limit) {
-			reply.header("retry-after", Math.ceil((window.resetAt - now) / 1_000));
+		const retryAfter = consumeRateWindow(key, limit);
+		if (retryAfter !== null) {
+			reply.header("retry-after", retryAfter);
 			reply.code(429).send({ error: "rate_limited" });
 			return;
 		}
-		window.count += 1;
-		rateWindows.set(key, window);
 		done();
 	});
 	server.addHook("onSend", (_request, reply, payload, done) => {
@@ -698,7 +708,12 @@ export async function buildServer({
 	const maxPendingLibrarySavesPerSession = 8;
 	const pendingLibrarySaves = new Map<
 		string,
-		{ createdAt: number; recording: NewLibraryRecording; sessionId: string }
+		{
+			createdAt: number;
+			recording: NewLibraryRecording;
+			sessionId: string;
+			uploading: boolean;
+		}
 	>();
 	await server.register(websocket);
 	server.addContentTypeParser(
@@ -860,6 +875,19 @@ export async function buildServer({
 		const email = (request.body as { email?: unknown } | undefined)?.email;
 		if (!isValidEmail(email))
 			return reply.code(400).send({ error: "invalid_email" });
+		const limit = rateLimitFor(requestPath(request));
+		const retryAfter = limit
+			? consumeRateWindow(
+					`${requestPath(request)}:email:${createHash("sha256")
+						.update(email.trim().toLowerCase())
+						.digest("hex")}`,
+					limit,
+				)
+			: null;
+		if (retryAfter !== null) {
+			reply.header("retry-after", retryAfter);
+			return reply.code(429).send({ error: "rate_limited" });
+		}
 		try {
 			await authGateway.sendOtp(email);
 			return reply.code(204).send();
@@ -929,7 +957,7 @@ export async function buildServer({
 			await library.setRetentionPolicy(settings.category, settings.policy);
 			return library.getRetentionPolicies();
 		});
-		const stageLibrarySave = (
+		const stageLibrarySave = async (
 			request: FastifyRequest,
 			reply: FastifyReply,
 			sessionId: string,
@@ -938,21 +966,42 @@ export async function buildServer({
 			if (!recording) {
 				return reply.code(400).send({ error: "invalid_recording" });
 			}
+			const idempotencyKey = request.headers["idempotency-key"];
+			if (
+				idempotencyKey !== undefined &&
+				(typeof idempotencyKey !== "string" ||
+					!validRecordingId(idempotencyKey))
+			) {
+				return reply.code(400).send({ error: "invalid_idempotency_key" });
+			}
+			if (idempotencyKey) {
+				if (await library.open(idempotencyKey)) {
+					pendingLibrarySaves.delete(idempotencyKey);
+					return reply.code(200).send({ id: idempotencyKey, saved: true });
+				}
+				const pending = pendingLibrarySaves.get(idempotencyKey);
+				if (pending) {
+					return pending.sessionId === sessionId
+						? reply.code(201).send({ id: idempotencyKey })
+						: reply.code(409).send({ error: "idempotency_key_conflict" });
+				}
+			}
 			const now = Date.now();
 			let pendingForSession = 0;
 			for (const [id, pending] of pendingLibrarySaves) {
-				if (pending.createdAt < now - 10 * 60 * 1000)
+				if (!pending.uploading && pending.createdAt < now - 10 * 60 * 1000)
 					pendingLibrarySaves.delete(id);
 				else if (pending.sessionId === sessionId) pendingForSession += 1;
 			}
 			if (pendingForSession >= maxPendingLibrarySavesPerSession) {
 				return reply.code(429).send({ error: "too_many_pending_recordings" });
 			}
-			const id = crypto.randomUUID();
+			const id = idempotencyKey ?? crypto.randomUUID();
 			pendingLibrarySaves.set(id, {
 				createdAt: now,
 				recording,
 				sessionId,
+				uploading: false,
 			});
 			return reply.code(201).send({ id });
 		};
@@ -966,6 +1015,7 @@ export async function buildServer({
 				return reply.code(400).send({ error: "invalid_recording_id" });
 			const pending = pendingLibrarySaves.get(id);
 			if (!pending || pending.sessionId !== sessionId) {
+				if (request.body instanceof Readable) request.body.resume();
 				return reply.code(404).send({ error: "pending_recording_not_found" });
 			}
 			const contentType = request.headers["content-type"];
@@ -978,15 +1028,23 @@ export async function buildServer({
 			if (!isReadableStream(request.body)) {
 				return reply.code(415).send({ error: "audio_stream_required" });
 			}
+			if (pending.uploading) {
+				if (request.body instanceof Readable) request.body.resume();
+				return reply.code(409).send({ error: "recording_upload_in_progress" });
+			}
+			pending.uploading = true;
 			try {
 				const saved = await library.saveStream(
 					pending.recording,
 					request.body,
 					contentType,
+					id,
 				);
 				pendingLibrarySaves.delete(id);
 				return reply.code(201).send(saved ?? { saved: false });
 			} catch {
+				pending.createdAt = Date.now();
+				pending.uploading = false;
 				return reply.code(500).send({ error: "library_save_failed" });
 			}
 		};

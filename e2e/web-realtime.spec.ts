@@ -143,3 +143,121 @@ test("web dictation streams PCM through the BFF and delivers the realtime transc
 		await upstream.close();
 	}
 });
+
+test("web dictation holds a Web Lock across tabs and releases it when the active page closes", async () => {
+	let realtimeConnections = 0;
+	let transcriptionRequests = 0;
+	let activeUpstreamSockets = 0;
+	const upstream = Fastify();
+	await upstream.register(websocket);
+	upstream.get("/api/v1/usage/me", async () => ({ remaining_seconds: 60 }));
+	upstream.post("/api/v1/auth/send-otp", async () => ({}));
+	upstream.post("/api/v1/auth/verify-otp", async () => ({
+		accessToken: "web-lock-token",
+		accessTokenExpiresAt: Date.now() + 300_000,
+		refreshToken: "web-lock-refresh",
+		user: { email: "web-lock@example.com" },
+	}));
+	upstream.post("/api/v1/transcriptions", async () => {
+		transcriptionRequests += 1;
+		return { text: "HTTP fallback should not run", tokens: [] };
+	});
+	upstream.get("/api/v1/realtime", { websocket: true }, (socket) => {
+		realtimeConnections += 1;
+		activeUpstreamSockets += 1;
+		socket.on("close", () => {
+			activeUpstreamSockets -= 1;
+		});
+		socket.send('{"type":"proxy_ready"}');
+	});
+	await upstream.listen({ host: "localhost", port: 0 });
+	const bff = await buildServer({
+		library: createE2eLibrary().library,
+		staticDir: new URL("../web/dist", import.meta.url).pathname,
+		upstreamUrl: serverUrl(upstream),
+	});
+	await bff.listen({ host: "localhost", port: 0 });
+	const bffUrl = serverUrl(bff);
+	const browser = await chromium.launch({
+		channel: "chromium",
+		headless: true,
+	});
+	const context = await browser.newContext();
+	await installSupportedBrowserCapabilities(context);
+	await installFakeDictationCapture(context);
+	const pageA = await context.newPage();
+
+	try {
+		await pageA.goto(`${bffUrl}/`);
+		await pageA.getByLabel("Email").fill("web-lock@example.com");
+		await pageA.getByRole("button", { name: "Send one-time code" }).click();
+		await pageA.getByLabel("One-time code").fill("123456");
+		await pageA.getByRole("button", { name: "Sign in", exact: true }).click();
+		await pageA.getByRole("button", { name: "Start dictation" }).click();
+		await expect(pageA.getByText("Listening…")).toBeVisible();
+		await expect.poll(() => realtimeConnections).toBe(1);
+
+		const pageB = await context.newPage();
+		await pageB.goto(`${bffUrl}/`);
+		await expect(
+			pageB.getByRole("button", { name: "Start dictation" }),
+		).toBeVisible();
+		const heldLockNames = () =>
+			pageB.evaluate(async () => {
+				const snapshot = await navigator.locks.query();
+				return (snapshot?.held ?? []).map((lock) => lock.name);
+			});
+		await expect.poll(heldLockNames).toContain("diduny-recording");
+		expect(
+			await pageB.evaluate(() =>
+				navigator.locks.request(
+					"diduny-recording",
+					{ ifAvailable: true, mode: "exclusive" },
+					(lock) => Boolean(lock),
+				),
+			),
+		).toBe(false);
+		const upstreamCallsBeforeBlockedStart = {
+			realtimeConnections,
+			transcriptionRequests,
+		};
+		await pageB.getByRole("button", { name: "Start dictation" }).click();
+		await expect(
+			pageB.getByText("Recording is active in another tab."),
+		).toBeVisible();
+		expect(realtimeConnections).toBe(
+			upstreamCallsBeforeBlockedStart.realtimeConnections,
+		);
+		expect(transcriptionRequests).toBe(
+			upstreamCallsBeforeBlockedStart.transcriptionRequests,
+		);
+
+		await pageA.close({ runBeforeUnload: false });
+		await expect.poll(() => activeUpstreamSockets).toBe(0);
+		await expect
+			.poll(() =>
+				pageB.evaluate(() =>
+					navigator.locks.request(
+						"diduny-recording",
+						{ ifAvailable: true, mode: "exclusive" },
+						(lock) => Boolean(lock),
+					),
+				),
+			)
+			.toBe(true);
+
+		await pageB.getByRole("button", { name: "Start dictation" }).click();
+		await expect(pageB.getByText("Listening…")).toBeVisible();
+		await expect.poll(() => realtimeConnections).toBe(2);
+		expect(transcriptionRequests).toBe(0);
+		await pageB.getByRole("button", { name: "Cancel" }).click();
+		await expect(pageB.getByText("Dictation cancelled.")).toBeVisible();
+		await expect.poll(() => activeUpstreamSockets).toBe(0);
+	} finally {
+		bff.server.closeAllConnections?.();
+		upstream.server.closeAllConnections?.();
+		await browser.close();
+		await bff.close();
+		await upstream.close();
+	}
+});

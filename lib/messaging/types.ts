@@ -62,6 +62,7 @@ export type MicrophonePermission = {
 // Background → Offscreen
 export type StartCapture = {
 	type: "start-capture";
+	captureId: string;
 	mode: RecordingMode;
 	bffOrigin: string;
 	language: string;
@@ -73,7 +74,7 @@ export type StartCapture = {
 export type StopCapture = { type: "stop-capture" };
 
 // Offscreen → Background
-export type CaptureReady = { type: "capture-ready" };
+export type CaptureReady = { type: "capture-ready"; captureId: string };
 
 // Background → Offscreen: force-close on logout (per ADR-0005 logout flow)
 export type ForceClose = { type: "forceClose" };
@@ -81,23 +82,28 @@ export type ForceClose = { type: "forceClose" };
 // Offscreen → Background
 export type CaptureTokens = {
 	type: "capture-tokens";
+	captureId: string;
 	tokens: TranscriptionToken[];
 	source: AudioSource;
 };
 export type CaptureComplete = {
 	type: "capture-complete";
+	captureId: string;
 	text: string;
 	source: AudioSource;
 };
 export type CapturePersisted = {
 	type: "capture-persisted";
+	captureId: string;
 	source: AudioSource;
 };
 export type CaptureError = {
 	type: "capture-error";
+	captureId: string;
 	error: string;
 	reason?: "microphone-blocked";
 };
+export type CloseOffscreen = { type: "close-offscreen"; captureId: string };
 
 export type Message =
 	// Recording
@@ -116,4 +122,5 @@ export type Message =
 	| CaptureTokens
 	| CaptureComplete
 	| CapturePersisted
-	| CaptureError;
+	| CaptureError
+	| CloseOffscreen;

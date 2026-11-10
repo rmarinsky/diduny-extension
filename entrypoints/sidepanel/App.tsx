@@ -15,7 +15,7 @@ export function App() {
 	if (auth.step !== "authenticated") {
 		return (
 			<>
-				<div className="topbar">
+				<div class="topbar">
 					<ExtensionThemeToggle />
 				</div>
 				<AuthScreen
@@ -38,7 +38,7 @@ export function App() {
 
 	return (
 		<>
-			<div className="topbar">
+			<div class="topbar">
 				<ExtensionThemeToggle />
 			</div>
 			<RecordingControls
