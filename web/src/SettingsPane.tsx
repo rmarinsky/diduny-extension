@@ -287,6 +287,7 @@ export function SettingsPane({
 	// A save here already shows what it stored; its own revision bump reloads only the
 	// statistics, so edits not saved yet in other sections are not overwritten.
 	const ownChange = useRef(false);
+	const loadedRevision = useRef<number | null>(null);
 	const settingsChanged = () => {
 		ownChange.current = true;
 		onSettingsChanged();
@@ -328,7 +329,9 @@ export function SettingsPane({
 	}, []);
 
 	useEffect(() => {
-		void revision;
+		// hono/jsx can run this effect twice for one revision; reload once per revision.
+		if (loadedRevision.current === revision) return;
+		loadedRevision.current = revision;
 		const keepForm = ownChange.current;
 		ownChange.current = false;
 		void refresh({ keepForm });
