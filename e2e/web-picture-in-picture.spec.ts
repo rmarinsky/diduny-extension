@@ -95,7 +95,11 @@ test("the optional floating live panel receives tokens and returns safely to the
 		const closed = floating.waitForEvent("close");
 		await floating
 			.getByRole("button", { name: "Return live panel to page" })
-			.click();
+			.click()
+			// The click closes this window; only that expected close may end the click early.
+			.catch((error) => {
+				if (!floating.isClosed()) throw error;
+			});
 		await closed;
 		await expect(page.getByTestId("live-final-text")).toHaveText("Floating ");
 		await page.getByRole("button", { name: "Cancel" }).click();

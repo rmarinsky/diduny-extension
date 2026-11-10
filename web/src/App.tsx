@@ -970,12 +970,22 @@ export function App() {
 		t,
 	]);
 
-	useEffect(() => {
-		const toggleFromShortcut = () => {
-			if (captureRef.current) void finishCapture();
-			else void startCapture();
-		};
-		const onShortcut = (event: KeyboardEvent) => {
+	const toggleFromShortcut = () => {
+		if (captureRef.current) void finishCapture();
+		else void startCapture();
+	};
+	// hono/jsx re-subscribes effects a tick after a render, so a key pressed in that gap
+	// would be lost. One window listener calls the handlers from the latest render.
+	const shortcutHandlers = useRef({
+		onExtensionShortcut() {},
+		onShortcut(_event: KeyboardEvent) {},
+	});
+	shortcutHandlers.current = {
+		onExtensionShortcut() {
+			if (confirmingSignOut || isCommandPaletteOpen) return;
+			toggleFromShortcut();
+		},
+		onShortcut(event: KeyboardEvent) {
 			if (confirmingSignOut) return;
 			if (event.key === "Escape" && isCommandPaletteOpen) {
 				event.preventDefault();
@@ -1007,11 +1017,14 @@ export function App() {
 				return;
 			event.preventDefault();
 			toggleFromShortcut();
-		};
-		const onExtensionShortcut = () => {
-			if (confirmingSignOut || isCommandPaletteOpen) return;
-			toggleFromShortcut();
-		};
+		},
+	};
+
+	useEffect(() => {
+		const onShortcut = (event: KeyboardEvent) =>
+			shortcutHandlers.current.onShortcut(event);
+		const onExtensionShortcut = () =>
+			shortcutHandlers.current.onExtensionShortcut();
 		window.addEventListener("keydown", onShortcut);
 		window.addEventListener(EXTENSION_DICTATION_EVENT, onExtensionShortcut);
 		return () => {
@@ -1021,17 +1034,7 @@ export function App() {
 				onExtensionShortcut,
 			);
 		};
-	}, [
-		cancelCapture,
-		cancelTranscription,
-		closeCommandPalette,
-		confirmingSignOut,
-		dictationShortcut,
-		finishCapture,
-		isCommandPaletteOpen,
-		openCommandPalette,
-		startCapture,
-	]);
+	}, []);
 
 	function toggleCapture() {
 		void (isRecording ? finishCapture() : startCapture());

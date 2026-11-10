@@ -113,6 +113,7 @@ test("clears the email and code when going back and after a confirmed sign-out",
 		await expect(signOut).toBeFocused();
 
 		await signOut.click();
+		await expect(dialog).toBeVisible();
 		await page.keyboard.press("Escape");
 		await expect(dialog).toHaveCount(0);
 		await expect(page.getByLabel("Dictation document")).toBeVisible();
