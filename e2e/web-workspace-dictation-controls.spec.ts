@@ -13,9 +13,12 @@ test("TC-09: a plain-key shortcut types inside the document and toggles dictatio
 }) => {
 	const { library, page } = await workspace();
 	await page.getByRole("button", { name: "Settings", exact: true }).click();
-	const pressedModifiers = page
-		.getByRole("group", { name: "Toggle dictation" })
-		.getByRole("button", { pressed: true });
+	const shortcutGroup = page.getByRole("group", { name: "Toggle dictation" });
+	// count() does not wait, so let the saved shortcut render before clearing its modifiers.
+	await expect(shortcutGroup.getByLabel("Key", { exact: true })).toHaveValue(
+		/./,
+	);
+	const pressedModifiers = shortcutGroup.getByRole("button", { pressed: true });
 	while ((await pressedModifiers.count()) > 0)
 		await pressedModifiers.first().click();
 	await page.getByLabel("Key", { exact: true }).press("d");
