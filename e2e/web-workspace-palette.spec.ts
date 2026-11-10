@@ -1,3 +1,4 @@
+import { shortcutLabel } from "./support/shortcut-labels";
 import {
 	clipboardText,
 	dictationDocument,
@@ -113,7 +114,7 @@ test("TC-41: a dictation shortcut that collides with the command palette is refu
 
 	await page.getByRole("button", { name: "Dictation", exact: true }).click();
 	await expect(page.locator(".meter-row .shortcut")).toHaveText(
-		"Shortcut: Alt + V",
+		`Shortcut: ${shortcutLabel("Alt+V")}`,
 	);
 	await page.getByRole("button", { name: "Dictation", exact: true }).focus();
 	await page.keyboard.press("Alt+Shift+P");

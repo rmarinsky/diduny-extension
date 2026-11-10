@@ -64,7 +64,7 @@ test("TC-07: Clear can be undone with Ctrl+Z, and focus stays in the panel", asy
 	await expect(panel.getByRole("button", { name: "Clear" })).toBeHidden();
 	await expect(transcript).toBeFocused();
 
-	await panel.keyboard.press("Control+Z");
+	await panel.keyboard.press("ControlOrMeta+Z");
 	await expect(transcript).toHaveValue(before);
 });
 
@@ -149,6 +149,6 @@ test("TC-10: Copy writes the whole Transcript and shows 'Copied!' for about 2 se
 	await fixture.bringToFront();
 	const message = fixture.getByLabel("Message");
 	await message.focus();
-	await fixture.keyboard.press("Control+V");
+	await fixture.keyboard.press("ControlOrMeta+V");
 	await expect(message).toHaveValue(text);
 });

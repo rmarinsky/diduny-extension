@@ -284,6 +284,13 @@ export function SettingsPane({
 		useState("en");
 	const [typingTestText, setTypingTestText] = useState("");
 	const resetReturnFocus = useRef<HTMLButtonElement>(null);
+	// A save here already shows what it stored; its own revision bump reloads only the
+	// statistics, so edits not saved yet in other sections are not overwritten.
+	const ownChange = useRef(false);
+	const settingsChanged = () => {
+		ownChange.current = true;
+		onSettingsChanged();
+	};
 	// The test runs from the first key to the last, so a pause before saving doesn't count.
 	const typingTestTiming = useRef<{ firstAt: number; lastAt: number } | null>(
 		null,
@@ -292,10 +299,11 @@ export function SettingsPane({
 	const say = (section: NoticeSection, text: string) =>
 		setNotice({ section, text });
 
-	const refresh = useCallback(async () => {
+	const refresh = useCallback(async ({ keepForm = false } = {}) => {
 		try {
 			const next = await getWorkspaceSettings();
 			setSnapshot(next);
+			if (keepForm) return;
 			setAnnounceLiveTranscript(next.settings.announceLiveTranscript);
 			setCleanupEnabled(next.settings.textCleanupEnabled);
 			setShortcut(parseShortcut(next.settings.dictationShortcut));
@@ -321,7 +329,9 @@ export function SettingsPane({
 
 	useEffect(() => {
 		void revision;
-		void refresh();
+		const keepForm = ownChange.current;
+		ownChange.current = false;
+		void refresh({ keepForm });
 	}, [refresh, revision]);
 
 	async function saveCleanup(event: Event) {
@@ -336,7 +346,7 @@ export function SettingsPane({
 			setFillerWords(settings.fillerWords);
 			setLexicon(settings.protectedLexicon);
 			say("cleanup", t("settings.cleanupSaved"));
-			onSettingsChanged();
+			settingsChanged();
 		} catch (error) {
 			say("cleanup", errorMessage(error, t));
 		}
@@ -350,7 +360,7 @@ export function SettingsPane({
 			const retention = await updateRetentionPolicy(category, policy);
 			setSnapshot((current) => (current ? { ...current, retention } : current));
 			say("retention", t("settings.retentionSaved"));
-			onSettingsChanged();
+			settingsChanged();
 		} catch (error) {
 			say("retention", errorMessage(error, t));
 		}
@@ -362,7 +372,7 @@ export function SettingsPane({
 			microphoneDeviceId: deviceId,
 		});
 		setSnapshot((current) => (current ? { ...current, settings } : current));
-		onSettingsChanged();
+		settingsChanged();
 	}
 
 	async function saveShortcut(event: Event) {
@@ -396,7 +406,7 @@ export function SettingsPane({
 				"shortcut",
 				t("settings.shortcutSaved", { shortcut: settings.dictationShortcut }),
 			);
-			onSettingsChanged();
+			settingsChanged();
 		} catch (error) {
 			say("shortcut", errorMessage(error, t));
 		}
@@ -430,7 +440,7 @@ export function SettingsPane({
 			setTranslationSourceLanguage(settings.translationSourceLanguage);
 			setTranslationTargetLanguage(settings.translationTargetLanguage);
 			say("translation", t("settings.translationSaved"));
-			onSettingsChanged();
+			settingsChanged();
 		} catch (error) {
 			say("translation", errorMessage(error, t));
 		}
@@ -445,7 +455,7 @@ export function SettingsPane({
 			await setUiLocale(settings.uiLocale);
 			// `t` from this render still speaks the old language; confirm in the new one.
 			say("interfaceLanguage", i18n.t("settings.interfaceLanguageSaved"));
-			onSettingsChanged();
+			settingsChanged();
 		} catch (error) {
 			say("interfaceLanguage", errorMessage(error, t));
 		}
@@ -460,7 +470,7 @@ export function SettingsPane({
 			setSnapshot((current) => (current ? { ...current, settings } : current));
 			setAnnounceLiveTranscript(settings.announceLiveTranscript);
 			say("accessibility", t("settings.accessibilitySaved"));
-			onSettingsChanged();
+			settingsChanged();
 		} catch (error) {
 			say("accessibility", errorMessage(error, t));
 		}
@@ -485,7 +495,7 @@ export function SettingsPane({
 				typingSpeedWordsPerMinute: Math.round(wordsPerMinute),
 			});
 			await refresh();
-			onSettingsChanged();
+			settingsChanged();
 			say("statistics", t("settings.typingSpeedSaved"));
 		} catch (error) {
 			say("statistics", errorMessage(error, t));
@@ -532,7 +542,7 @@ export function SettingsPane({
 			typingTestTiming.current = null;
 			setTypingTestText("");
 			await refresh();
-			onSettingsChanged();
+			settingsChanged();
 			say(
 				"statistics",
 				t("settings.typingMeasuredSaved", { speed: wordsPerMinute }),
@@ -548,7 +558,7 @@ export function SettingsPane({
 			const settings = await updateWorkspaceSettings(resettableSettings);
 			await setUiLocale(settings.uiLocale);
 			await refresh();
-			onSettingsChanged();
+			settingsChanged();
 			say("reset", i18n.t("settings.resetDone"));
 		} catch (error) {
 			say("reset", errorMessage(error, i18n.t.bind(i18n)));

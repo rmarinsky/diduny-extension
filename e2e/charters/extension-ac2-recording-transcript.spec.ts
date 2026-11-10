@@ -17,6 +17,7 @@ import {
 	stateLabel,
 	test,
 } from "../support/extension-harness";
+import { endOfTextKey } from "../support/shortcut-labels";
 import { signIn } from "../support/web-workspace";
 
 // Charter AC2 (extension): Record/Stop and the panel's Transcript under a
@@ -108,7 +109,7 @@ const actions: CharterAction<Model>[] = [
 			const word = ` typed${Math.floor(random() * 1_000)}`;
 			await model.panel.bringToFront();
 			await panelTranscript(model.panel).click();
-			await model.panel.keyboard.press("Control+End");
+			await model.panel.keyboard.press(endOfTextKey);
 			await model.panel.keyboard.type(word);
 			model.transcript += word;
 		}),
@@ -129,7 +130,7 @@ const actions: CharterAction<Model>[] = [
 		name: "Undo the Clear with Ctrl+Z",
 		run: notUndo(async (model) => {
 			await expect(panelTranscript(model.panel)).toBeFocused();
-			await model.panel.keyboard.press("Control+Z");
+			await model.panel.keyboard.press("ControlOrMeta+Z");
 			model.transcript = model.cleared;
 		}),
 	},
